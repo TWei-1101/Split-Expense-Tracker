@@ -11,6 +11,19 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
+    <style>
+        /* 修正：強制讓 Safari/iOS 顯示自定義按鈕，並移除輸入框原生的增減控制項 */
+        /* 這可以防止 Safari/iOS 的原生控制項干擾我們自定義的 + / - 按鈕 */
+        input[type='number'] {
+            -moz-appearance: textfield; /* Firefox */
+        }
+        input[type='number']::-webkit-inner-spin-button,
+        input[type='number']::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+    </style>
+    
     <script>
         // 設定 Tailwind CSS 顏色
         tailwind.config = {
@@ -104,7 +117,7 @@
         /**
          * 支出 Modal (核心邏輯獨立 - 定義在 App 外部以提高穩定性)
          */
-        const ExpenseModal = React.memo(({ db, userId, members, getInitialShares, state, onClose, getDisplayName }) => { // <--- 修正: 加入 getDisplayName
+        const ExpenseModal = React.memo(({ db, userId, members, getInitialShares, state, onClose, getDisplayName }) => {
             const [newExpense, setNewExpense] = useState({
                 description: '',
                 amount: '',
@@ -232,7 +245,7 @@
                 <div className="bg-white rounded-xl w-full max-w-lg shadow-2xl transform transition-transform duration-300 scale-100">
                   <div className="p-6 border-b flex justify-between items-center">
                     <h3 className="text-xl font-bold text-gray-800">{modalTitle}</h3>
-                    <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-100 text-gray-600">
+                    <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-100 text-gray-600 transition hover:scale-110 transform">
                       <X className="w-6 h-6" />
                     </button>
                   </div>
@@ -311,23 +324,26 @@
                               <span className={`font-medium ${isPayer ? 'text-primaryColor-700' : 'text-gray-700'}`}>
                                 {displayMember} {isPayer && '(付款人)'}
                               </span>
-                              <div className="flex items-center space-x-2">
+                              {/* 修正：增加 flex-shrink-0 確保按鈕不會在 Safari 上被擠壓或隱藏 */}
+                              <div className="flex items-center space-x-2 flex-shrink-0">
                                 <button
                                   onClick={() => handleShareChange(member, -1)}
                                   type="button"
-                                  className="p-1 bg-red-100 text-red-600 rounded-full hover:bg-red-200 transition"
+                                  // 優化: 獨立按鈕樣式
+                                  className="p-1.5 bg-red-50 text-red-600 rounded-lg transition hover:scale-105 transform hover:bg-red-100 shadow-sm border border-red-200"
                                   aria-label="減少份數"
                                 >
-                                  <Minus className="w-4 h-4" />
+                                  <Minus className="w-5 h-5" />
                                 </button>
                                 <span className="w-8 text-center font-bold text-lg text-gray-800">{currentShares}</span>
                                 <button
                                   onClick={() => handleShareChange(member, 1)}
                                   type="button"
-                                  className="p-1 bg-green-100 text-green-600 rounded-full hover:bg-green-200 transition"
+                                  // 優化: 獨立按鈕樣式
+                                  className="p-1.5 bg-green-50 text-green-600 rounded-lg transition hover:scale-105 transform hover:bg-green-100 shadow-sm border border-green-200"
                                   aria-label="增加份數"
                                 >
-                                  <Plus className="w-4 h-4" />
+                                  <Plus className="w-5 h-5" />
                                 </button>
                                 <span className="text-sm text-gray-500 w-8 text-right">份</span>
                               </div>
@@ -396,10 +412,21 @@
                 }
             };
             
-
-            const handleTempShareChange = (name, value) => {
+            // 修正: 處理臨時份數的增減
+            const handleTempShareChange = (name, delta) => {
+                setTempDefaultShares(prev => {
+                    const currentShares = prev[name] || 0;
+                    const newShares = Math.max(0, currentShares + delta);
+                    return {
+                        ...prev,
+                        [name]: newShares,
+                    };
+                });
+            };
+            
+            // 處理直接輸入 (仍保留以防萬一，但主要使用按鈕)
+            const handleTempInputChange = (name, value) => {
                 const shareCount = parseInt(value, 10);
-                // 允許非負整數或空字串
                 if (shareCount >= 0 || value === '') {
                     setTempDefaultShares(prev => ({
                         ...prev,
@@ -407,6 +434,7 @@
                     }));
                 }
             };
+
             
             if (!isMemberModalOpen) return null;
 
@@ -416,7 +444,7 @@
                   <div className="bg-white rounded-xl w-full max-w-2xl shadow-2xl transform transition-transform duration-300 scale-100">
                       <div className="p-6 border-b flex justify-between items-center">
                           <h3 className="text-xl font-bold text-gray-800">管理分帳成員與預設份數</h3>
-                          <button onClick={() => setIsMemberModalOpen(false)} className="p-1 rounded-full hover:bg-gray-100 text-gray-600">
+                          <button onClick={() => setIsMemberModalOpen(false)} className="p-1 rounded-full hover:bg-gray-100 text-gray-600 transition hover:scale-110 transform">
                               <X className="w-6 h-6" />
                           </button>
                       </div>
@@ -440,7 +468,7 @@
                                   />
                                   <button
                                       onClick={handleAddMemberInternal} // 使用 Modal 內部函式
-                                      className={`px-4 py-2 rounded-lg text-white font-semibold transition ${
+                                      className={`px-4 py-2 rounded-lg text-white font-semibold transition hover:scale-105 transform ${
                                           newMemberName.trim() === '' || isLoading
                                           ? 'bg-gray-400 cursor-not-allowed'
                                           : `bg-${primaryColor}-600 hover:bg-${primaryColor}-700`
@@ -466,21 +494,45 @@
                                               {getDisplayName(member)}
                                           </span>
                                           <div className="flex items-center space-x-3">
+                                            
+                                            {/* 新增 Minus 按鈕 */}
+                                            <button
+                                                onClick={() => handleTempShareChange(member, -1)}
+                                                type="button"
+                                                className="p-1.5 bg-red-50 text-red-600 rounded-lg transition hover:scale-105 transform hover:bg-red-100 shadow-sm border border-red-200"
+                                                aria-label="減少份數"
+                                            >
+                                                <Minus className="w-5 h-5" />
+                                            </button>
+                                            
+                                            {/* 修正：將 input 放在按鈕之間 */}
                                             <input
                                                 key={`shares-input-${member}`} 
                                                 type="number"
                                                 min="0"
+                                                // 使用內部狀態
                                                 value={tempDefaultShares[member] === 0 ? 0 : tempDefaultShares[member] || 1}
-                                                onChange={(e) => handleTempShareChange(member, e.target.value)}
+                                                onChange={(e) => handleTempInputChange(member, e.target.value)}
                                                 placeholder="1"
                                                 className="w-16 border border-gray-300 rounded-lg p-2 text-center focus:ring-primaryColor-500 focus:border-primaryColor-500"
                                                 disabled={isLoading}
                                             />
+                                            
+                                            {/* 新增 Plus 按鈕 */}
+                                            <button
+                                                onClick={() => handleTempShareChange(member, 1)}
+                                                type="button"
+                                                className="p-1.5 bg-green-50 text-green-600 rounded-lg transition hover:scale-105 transform hover:bg-green-100 shadow-sm border border-green-200"
+                                                aria-label="增加份數"
+                                            >
+                                                <Plus className="w-5 h-5" />
+                                            </button>
+                                            
                                             <span className="text-gray-500">份</span>
                                             {member !== userId && (
                                                 <button
                                                     onClick={() => handleDeleteMember(member)}
-                                                    className="p-1 text-red-500 hover:bg-red-100 rounded-full transition ml-auto"
+                                                    className="p-1 text-red-500 hover:bg-red-100 rounded-full transition hover:scale-110 transform ml-auto"
                                                     disabled={isLoading}
                                                     aria-label="刪除成員"
                                                 >
@@ -497,7 +549,7 @@
                           <button
                               onClick={() => handleSaveDefaultShares(tempDefaultShares)}
                               disabled={isLoading}
-                              className={`flex items-center px-6 py-3 rounded-full text-white font-semibold transition duration-150 shadow-md ${
+                              className={`flex items-center px-6 py-3 rounded-full text-white font-semibold transition hover:scale-105 transform duration-150 shadow-md ${
                                   isLoading
                                   ? 'bg-gray-400 cursor-not-allowed'
                                   : `bg-${primaryColor}-600 hover:bg-${primaryColor}-700 hover:shadow-lg`
@@ -933,15 +985,8 @@
           };
 
 
-          /**
-           * 顯示當前用戶 ID，用於分享
-           */
-          const CurrentUserDisplay = ({ userId }) => (
-            <div className="text-xs bg-gray-100 p-2 rounded-lg break-all text-gray-500 mt-2">
-              您的用戶 ID（請分享此 ID 給組員）：
-              <span className="font-mono font-bold text-gray-700 ml-1">{userId}</span>
-            </div>
-          );
+          // --- 移除了 CurrentUserDisplay 元件 ---
+
 
           /**
            * 支出列表元件
@@ -959,7 +1004,8 @@
             return (
               <div className="mt-8">
                 <h2 className="text-2xl font-bold mb-4 text-gray-800 flex items-center">
-                  <CircleDollarSign className="w-6 h-6 mr-2" />
+                  {/* 優化: 增加尺寸並明確顏色 */}
+                  <CircleDollarSign className="w-7 h-7 mr-3 text-primaryColor-500" /> 
                   所有支出 ({sortedExpenses.length})
                 </h2>
                 {sortedExpenses.length === 0 ? (
@@ -993,7 +1039,8 @@
                           <div className="flex space-x-2">
                             <button
                               onClick={() => startEdit(exp)}
-                              className="p-2 text-blue-500 hover:bg-blue-100 rounded-full transition duration-150"
+                              // 優化: 獨立按鈕樣式
+                              className="p-2 text-blue-500 bg-white hover:bg-blue-50 rounded-full transition duration-150 hover:scale-110 transform border border-transparent hover:border-blue-300 shadow-md"
                               aria-label="編輯支出"
                             >
                               <Pencil className="w-5 h-5" />
@@ -1001,7 +1048,8 @@
                             <button
                               onClick={() => deleteExpense(exp.id)}
                               disabled={isLoading}
-                              className="p-2 text-red-500 hover:bg-red-100 rounded-full transition duration-150"
+                              // 優化: 獨立按鈕樣式
+                              className="p-2 text-red-500 bg-white hover:bg-red-50 rounded-full transition duration-150 hover:scale-110 transform border border-transparent hover:border-red-300 shadow-md"
                               aria-label="刪除支出"
                             >
                               <Trash2 className="w-5 h-5" />
@@ -1026,7 +1074,8 @@
             return (
               <div className="mt-8 p-6 bg-white rounded-xl shadow-2xl">
                 <h2 className="text-2xl font-bold mb-4 text-gray-800 flex items-center">
-                  <Users className="w-6 h-6 mr-2" />
+                  {/* 優化: 增加尺寸並明確顏色 */}
+                  <Users className="w-7 h-7 mr-3 text-primaryColor-500" />
                   結餘總結 (清算方案)
                 </h2>
 
@@ -1095,25 +1144,28 @@
                 {/* 標題和主要操作按鈕 */}
                 <header className="py-6 border-b border-gray-200">
                   <h1 className={`text-4xl font-extrabold text-${primaryColor}-700 flex items-center`}>
-                    <CircleDollarSign className="w-10 h-10 mr-3" />
+                    {/* 修正: 將 Pencil 替換為 Pencil 圖示 */}
+                    <Pencil className="w-10 h-10 mr-3" />
                     分帳記帳簿
                   </h1>
                   <p className="text-gray-500 mt-1">輕鬆記錄團體支出，公平分配費用。</p>
-                  {userId && <CurrentUserDisplay userId={userId} />}
+                  {/* 移除了 CurrentUserDisplay 的使用 */}
                 </header>
 
                 {/* 主要功能區塊 */}
                 <div className="mt-6 flex space-x-4">
                   <button
                     onClick={startAdd}
-                    className={`flex-1 flex items-center justify-center px-4 py-3 border border-transparent text-lg font-bold rounded-xl text-white bg-${primaryColor}-500 hover:bg-${primaryColor}-600 focus:outline-none focus:ring-4 focus:ring-${primaryColor}-300 transition duration-300 shadow-xl`}
+                    // 優化: 加入 hover:scale
+                    className={`flex-1 flex items-center justify-center px-4 py-3 border border-transparent text-lg font-bold rounded-xl text-white bg-${primaryColor}-500 hover:bg-${primaryColor}-600 focus:outline-none focus:ring-4 focus:ring-${primaryColor}-300 transition duration-300 shadow-xl hover:scale-[1.03] transform`}
                   >
                     <Plus className="w-6 h-6 mr-2" />
                     新增支出
                   </button>
                   <button
                     onClick={() => setIsMemberModalOpen(true)}
-                    className={`px-4 py-3 border border-${primaryColor}-500 text-lg font-bold rounded-xl text-${primaryColor}-600 bg-white hover:bg-${primaryColor}-50 focus:outline-none focus:ring-4 focus:ring-${primaryColor}-300 transition duration-300 shadow-xl`}
+                    // 優化: 加入 hover:scale
+                    className={`px-4 py-3 border border-${primaryColor}-500 text-lg font-bold rounded-xl text-${primaryColor}-600 bg-white hover:bg-${primaryColor}-50 focus:outline-none focus:ring-4 focus:ring-${primaryColor}-300 transition duration-300 shadow-xl hover:scale-[1.03] transform`}
                     aria-label="管理成員與預設份數"
                   >
                     <Users className="w-6 h-6" />
@@ -1133,7 +1185,7 @@
                     getInitialShares={getInitialShares}
                     state={expenseModalState}
                     onClose={closeExpenseModal}
-                    getDisplayName={getDisplayName} // <--- 修正: 傳遞 getDisplayName
+                    getDisplayName={getDisplayName} 
                 />
                 <MemberManagementModal 
                     db={db}
