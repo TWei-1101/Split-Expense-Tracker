@@ -54,6 +54,8 @@
     <script type="text/babel">
         // 在這裡使用 React 程式碼
         const { useState, useEffect, useCallback, useMemo } = React;
+        
+        // 修正：直接從 firebase 命名空間中解構函式
         const { initializeApp } = firebase;
         const { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } = firebase.auth;
         const { 
@@ -120,6 +122,7 @@
             }
 
             try {
+              // 修正：直接使用全域的 firebase 命名空間
               const app = initializeApp(firebaseConfig);
               const _auth = getAuth(app);
               const _db = getFirestore(app);
@@ -135,8 +138,6 @@
                     payerName: user.uid, 
                   }));
                 }
-                // onAuthStateChanged 應負責最終確認用戶狀態
-                // 我們在下面會手動設置 authReady=true 以避免卡在載入中
               });
               
               // 設置 authReady = true 以允許 UI 渲染，不論驗證結果如何
@@ -1120,9 +1121,10 @@
     </script>
     
     <!-- 引入 Firebase SDKs -->
-    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-firestore-compat.js"></script>
+    <!-- 修正: 將相容模式 SDK 替換為標準模組化模式 SDK (最新版本 9.1.3) -->
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-firestore.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
 </body>
 </html>
