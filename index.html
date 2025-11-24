@@ -1,13 +1,1122 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>expense</title>
-  </head>
-  <body>
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>分帳記帳簿</title>
+    <!-- 引入 Tailwind CSS CDN 以確保樣式在所有環境下都能運作 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 React, ReactDOM, and Babel 獨立版 -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <script>
+        // 設定 Tailwind CSS 顏色
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primaryColor: {
+                            500: '#14b8a6', // teal-500
+                            600: '#0d9488', // teal-600
+                            700: '#0f766e', // teal-700
+                        },
+                    },
+                }
+            }
+        }
+    </script>
+</head>
+<body>
     <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+
+    <!-- 
+        重要：請在這裡填入您的 Firebase 配置！
+        由於這是獨立的 HTML 檔案，您需要手動提供這些變數，否則 App 無法連接到您的資料庫。
+        請將 YOUR_APP_ID 和 { YOUR_FIREBASE_CONFIG_JSON } 替換為實際值。
+    -->
+    <script>
+        const __app_id = "YOUR_APP_ID"; // 例如: 'my-splitwise-app-2025'
+        // 請替換成您自己的 Firebase 專案配置 JSON
+        const __firebase_config = JSON.stringify({
+            apiKey: "AIzaSyB8l7Od781kGHyI9pXMLBXvzt7NuuIyq8c",
+            authDomain: "splite-expense-tracker.firebaseapp.com",
+            projectId: "splite-expense-tracker",
+            storageBucket: "splite-expense-tracker.firebasestorage.app",
+            messagingSenderId: "425612895494",
+            appId: "1:425612895494:web:b5889f1d83cafb41d7ea87",
+            measurementId: "G-FVS0WSGZD9"
+        });
+        const __initial_auth_token = null; // 保持 null 進行匿名登入
+    </script>
+
+    <script type="text/babel">
+        // 在這裡使用 React 程式碼
+        const { useState, useEffect, useCallback, useMemo } = React;
+        const { initializeApp } = firebase;
+        const { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } = firebase.auth;
+        const { 
+            getFirestore, collection, query, onSnapshot, addDoc, doc, deleteDoc, updateDoc, setDoc,
+            serverTimestamp, setLogLevel
+        } = firebase.firestore;
+        
+        // --- 重新定義 Firebase 全域變數以供 React 存取 ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // 設置 Firebase 日誌級別
+        // 修正: 避免在瀏覽器環境中直接存取 process.env 導致 ReferenceError
+        if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'production') {
+          setLogLevel('debug');
+        }
+
+        // 顏色定義
+        const primaryColor = 'teal';
+
+        const { CircleDollarSign, Trash2, Plus, Minus, Users, X, Check, Pencil, UserPlus, UserMinus } = lucide;
+
+        /**
+         * 主要的 App 元件
+         * @returns {JSX.Element}
+         */
+        const App = () => {
+          // --- 應用程式狀態 ---
+          const [db, setDb] = useState(null);
+          const [auth, setAuth] = useState(null);
+          const [userId, setUserId] = useState(null);
+          const [authReady, setAuthReady] = useState(false);
+          const [expenses, setExpenses] = useState([]);
+          
+          // 成員管理狀態
+          const [customMembers, setCustomMembers] = useState([]); // 儲存使用者手動新增的成員名稱 (不包含 userId)
+          const [defaultSharesConfig, setDefaultSharesConfig] = useState({}); // 儲存每個成員的預設份數 { name: shareCount } (非預設值 1)
+          const [members, setMembers] = useState([]); // 儲存所有參與分帳的成員名稱 (包含 userId)
+          
+          // Modal 狀態
+          const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
+          const [newMemberName, setNewMemberName] = useState('');
+          const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+          const [editingExpenseId, setEditingExpenseId] = useState(null); 
+          
+          const [isLoading, setIsLoading] = useState(false);
+          const [error, setError] = useState(null);
+
+          // 新增支出/編輯表單狀態 (用於暫存 Modal 內部的資料)
+          const [newExpense, setNewExpense] = useState({
+            description: '',
+            amount: '',
+            payerName: '',
+            shares: {}, // 紀錄分帳份數
+          });
+
+          // --- 1. Firebase 初始化與驗證 ---
+          useEffect(() => {
+            if (!firebaseConfig) {
+              setError('Firebase configuration is missing.');
+              return;
+            }
+
+            try {
+              const app = initializeApp(firebaseConfig);
+              const _auth = getAuth(app);
+              const _db = getFirestore(app);
+
+              setDb(_db);
+              setAuth(_auth);
+
+              const unsubscribe = onAuthStateChanged(_auth, async (user) => {
+                if (user) {
+                  setUserId(user.uid);
+                  setNewExpense(prev => ({
+                    ...prev,
+                    payerName: user.uid, 
+                  }));
+                }
+                setAuthReady(true);
+              });
+
+              if (initialAuthToken) {
+                signInWithCustomToken(_auth, initialAuthToken)
+                  .catch(err => {
+                    console.error('Custom token sign-in failed, falling back to anonymous:', err);
+                    signInAnonymously(_auth).catch(e => setError(`Auth error: ${e.message}`));
+                  });
+              } else {
+                signInAnonymously(_auth)
+                  .catch(e => setError(`Auth error: ${e.message}`));
+              }
+
+              return () => unsubscribe();
+            } catch (e) {
+              setError(`Firebase initialization failed: ${e.message}`);
+            }
+          }, []);
+
+          // --- 2. 數據獲取 (Firestore 監聽) ---
+          useEffect(() => {
+            // 關鍵修復: 只有當 DB 初始化完成 AND 成功取得 userId (即通過身份驗證) 時才監聽資料
+            if (!authReady || !db || !userId) return; 
+
+            // --- A. 監聽支出記錄 ---
+            const expensesCollectionPath = `artifacts/${appId}/public/data/expenses`;
+            const expensesRef = collection(db, expensesCollectionPath);
+            const expensesQuery = query(expensesRef);
+
+            const unsubscribeExpenses = onSnapshot(expensesQuery, (snapshot) => {
+              const fetchedExpenses = snapshot.docs.map(doc => {
+                const data = doc.data();
+                // 處理 Firestore Timestamp 轉換為 JavaScript Date 物件
+                const timestamp = data.timestamp ? data.timestamp.toDate() : null; 
+                
+                return {
+                  id: doc.id,
+                  ...data,
+                  amount: typeof data.amount === 'number' ? data.amount : parseFloat(data.amount || 0),
+                  shares: data.shares || {},
+                  timestamp: timestamp,
+                };
+              });
+              setExpenses(fetchedExpenses);
+            }, (err) => {
+              console.error("Error listening to expenses:", err);
+              setError(`資料同步失敗: ${err.message}`);
+            });
+
+            // --- B. 監聽成員設定 ---
+            const membersDocPath = `artifacts/${appId}/public/data/settings/members`;
+            const membersDocRef = doc(db, membersDocPath);
+
+            const unsubscribeMembers = onSnapshot(membersDocRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    const list = Array.isArray(data.list) ? data.list : [];
+                    const shares = data.defaultShares || {};
+                    
+                    setCustomMembers(list);
+                    setDefaultSharesConfig(shares); // 儲存所有非預設值 1 的份數設定
+                } else {
+                    setCustomMembers([]);
+                    setDefaultSharesConfig({}); 
+                }
+            }, (err) => {
+                console.error("Error listening to members settings:", err);
+            });
+
+            return () => {
+              unsubscribeExpenses();
+              unsubscribeMembers();
+            };
+          }, [authReady, db, userId]);
+
+          // --- 3. 衍生狀態：計算最終成員清單 ---
+          useEffect(() => {
+            // 總成員清單：包含當前用戶 ID 和自訂成員
+            let currentMembers = [userId].filter(Boolean); 
+            
+            // 過濾掉與 userId 重複的自訂成員，並加入清單
+            customMembers.forEach(name => {
+                if (name !== userId && !currentMembers.includes(name)) {
+                    currentMembers.push(name);
+                }
+            });
+
+            // 將所有成員按字母順序排序
+            setMembers(currentMembers.sort());
+
+          }, [userId, customMembers]);
+
+          /**
+           * 根據當前的成員清單和預設份數配置，產生初始的分帳份數物件
+           */
+          const getInitialShares = useCallback(() => {
+            return members.reduce((acc, name) => {
+                // 使用 defaultSharesConfig 中的設定值，若無則預設為 1 (平均分配)
+                const shareValue = defaultSharesConfig[name] !== undefined ? defaultSharesConfig[name] : 1;
+                acc[name] = shareValue;
+                return acc;
+            }, {});
+          }, [members, defaultSharesConfig]);
+
+          // 當成員清單更新時，如果 Modal 關閉，重設新增表單的分帳份數
+          useEffect(() => {
+            if (!isExpenseModalOpen && userId) {
+                setNewExpense(prev => ({
+                    ...prev,
+                    payerName: prev.payerName || userId,
+                    shares: getInitialShares(), // 使用預設份數初始化
+                }));
+            }
+          }, [members, isExpenseModalOpen, userId, getInitialShares]);
+
+
+          // --- Modal 開啟/關閉和模式控制 ---
+
+          const closeExpenseModal = () => {
+            setIsExpenseModalOpen(false);
+            setEditingExpenseId(null);
+            // 重設表單狀態為預設「新增」狀態 (使用預設份數)
+            setNewExpense({
+              description: '',
+              amount: '',
+              payerName: userId, 
+              shares: getInitialShares(),
+            });
+          };
+
+          const startAdd = () => {
+            setEditingExpenseId(null);
+            // 確保表單狀態為新的，並根據當前 members 列表初始化 shares
+            setNewExpense({
+              description: '',
+              amount: '',
+              payerName: userId,
+              shares: getInitialShares(), // 使用預設份數初始化
+            });
+            setIsExpenseModalOpen(true);
+          };
+          
+          const startEdit = (expense) => {
+            setEditingExpenseId(expense.id);
+            
+            // 載入現有支出資料到表單狀態
+            const initialShares = members.reduce((acc, name) => ({ 
+              ...acc, 
+              [name]: expense.shares[name] !== undefined ? expense.shares[name] : 0 
+            }), {});
+            
+            setNewExpense({
+              description: expense.description,
+              amount: expense.amount,
+              payerName: expense.payerName,
+              shares: initialShares,
+            });
+            setIsExpenseModalOpen(true);
+          };
+
+
+          // --- 4. 支出 CRUD 操作 ---
+
+          /**
+           * 處理表單輸入變化
+           */
+          const handleInputChange = (e) => {
+            const { name, value } = e.target;
+            setNewExpense(prev => ({
+              ...prev,
+              [name]: name === 'amount' ? parseFloat(value) || '' : value,
+            }));
+          };
+
+          /**
+           * 處理份數變化
+           */
+          const handleShareChange = (name, delta) => {
+            setNewExpense(prev => {
+              const currentShares = prev.shares[name] || 0;
+              const newShares = Math.max(0, currentShares + delta);
+              return {
+                ...prev,
+                shares: {
+                  ...prev.shares,
+                  [name]: newShares,
+                },
+              };
+            });
+          };
+
+          /**
+           * 設定為平均分配（每人 1 份）
+           */
+          const setToAverageSplit = () => {
+            const averageShares = members.reduce((acc, name) => ({ ...acc, [name]: 1 }), {});
+            setNewExpense(prev => ({
+              ...prev,
+              shares: averageShares,
+            }));
+          };
+          
+          /**
+           * 儲存（新增或更新）支出記錄
+           */
+          const saveExpense = async () => {
+            if (!db || !userId) return;
+            const isEditing = !!editingExpenseId;
+
+            if (!newExpense.description || newExpense.amount <= 0 || !newExpense.payerName) {
+              console.error('請輸入有效的品項、金額和付款人！');
+              return;
+            }
+
+            setIsLoading(true);
+            setError(null);
+            try {
+              const expenseToSave = {
+                description: newExpense.description,
+                amount: newExpense.amount,
+                payerName: newExpense.payerName,
+                shares: Object.entries(newExpense.shares).reduce((acc, [name, share]) => {
+                  if (share > 0) acc[name] = share;
+                  return acc;
+                }, {}),
+                // 新增/更新時，只有新增時才設定 timestamp
+                ...(isEditing ? {} : { timestamp: serverTimestamp() }), 
+                appId: appId,
+              };
+
+              const collectionPath = `artifacts/${appId}/public/data/expenses`;
+
+              if (isEditing) {
+                const docPath = `${collectionPath}/${editingExpenseId}`;
+                // 編輯時不更新 timestamp
+                await updateDoc(doc(db, docPath), expenseToSave); 
+              } else {
+                await addDoc(collection(db, collectionPath), expenseToSave);
+              }
+
+              closeExpenseModal();
+            } catch (e) {
+              console.error("Error saving document: ", e);
+              setError(`儲存支出失敗: ${e.message}`);
+            } finally {
+              setIsLoading(false);
+            }
+          };
+
+          /**
+           * 刪除支出記錄
+           */
+          const deleteExpense = async (id) => {
+            if (!db) return;
+            console.warn('⚠️ 刪除操作被執行。在實際應用中應使用自定義確認視窗。');
+
+            setIsLoading(true);
+            setError(null);
+            try {
+              const docPath = `artifacts/${appId}/public/data/expenses/${id}`;
+              await deleteDoc(doc(db, docPath));
+            } catch (e) {
+              console.error("Error deleting document: ", e);
+              setError(`刪除支出失敗: ${e.message}`);
+            } finally {
+              setIsLoading(false);
+            }
+          };
+
+          // --- 5. 成員管理邏輯 ---
+          
+          /**
+           * 儲存成員清單和當前的預設份數設定
+           */
+          const saveMembers = async (newMemberList) => {
+            if (!db) return;
+
+            setIsLoading(true);
+            setError(null);
+            try {
+                const docPath = `artifacts/${appId}/public/data/settings/members`;
+                const membersDocRef = doc(db, docPath);
+
+                // 過濾掉空白名稱、與 userId 相同的名稱，並確保名稱唯一
+                const sanitizedList = Array.from(new Set(
+                    newMemberList.filter(name => name.trim() !== '' && name !== userId)
+                ));
+
+                // 整理要儲存的 shares config (只儲存非預設值 1 的份數)
+                const currentShares = {};
+                members.forEach(name => {
+                    const share = defaultSharesConfig[name] !== undefined ? defaultSharesConfig[name] : 1;
+                    if (share !== 1 && share >= 0) {
+                        currentShares[name] = share;
+                    }
+                });
+
+                await setDoc(membersDocRef, { list: sanitizedList, defaultShares: currentShares }, { merge: false });
+            } catch (e) {
+                console.error("Error saving members:", e);
+                setError(`儲存成員清單失敗: ${e.message}`);
+            } finally {
+                setIsLoading(false);
+            }
+          };
+
+          const handleAddMember = async () => {
+            const trimmedName = newMemberName.trim();
+            if (trimmedName && trimmedName !== userId && !customMembers.includes(trimmedName)) {
+                const newMemberList = [...customMembers, trimmedName];
+                await saveMembers(newMemberList); 
+                setNewMemberName('');
+            } else if (trimmedName === userId) {
+                console.log("不能將自己的用戶 ID 新增為成員。");
+            }
+          };
+
+          const handleDeleteMember = async (nameToDelete) => {
+            const newMemberList = customMembers.filter(name => name !== nameToDelete);
+            await saveMembers(newMemberList);
+            
+            // 從預設份數配置中移除此成員
+            setDefaultSharesConfig(prev => {
+                const newState = { ...prev };
+                delete newState[nameToDelete];
+                return newState;
+            });
+          };
+          
+          /**
+           * 儲存預設份數設定
+           */
+          const handleSaveDefaultShares = async (tempShares) => {
+            if (!db) return;
+
+            setIsLoading(true);
+            setError(null);
+            try {
+                const docPath = `artifacts/${appId}/public/data/settings/members`;
+                const membersDocRef = doc(db, docPath);
+
+                const sharesToSave = {};
+                // 整理要儲存的 shares config (只儲存非預設值 1 的份數)
+                members.forEach(name => {
+                    const share = tempShares[name];
+                    if (share !== undefined && share >= 0) {
+                        // 只有當份數不等於 1 時才儲存，以保持資料庫乾淨
+                        if (share !== 1) { 
+                            sharesToSave[name] = share;
+                        }
+                    }
+                });
+                
+                // 保存成員列表 (customMembers) 和新的預設份數
+                await setDoc(membersDocRef, { list: customMembers, defaultShares: sharesToSave }, { merge: false });
+                
+                setIsMemberModalOpen(false);
+            } catch (e) {
+                console.error("Error saving default shares:", e);
+                setError(`儲存預設份數失敗: ${e.message}`);
+            } finally {
+                setIsLoading(false);
+            }
+          };
+
+
+          // --- 6. 分帳計算邏輯 ---
+
+          /**
+           * 計算每個成員的最終餘額（應付/應收）
+           */
+          const calculateBalances = useMemo(() => {
+            const balances = members.reduce((acc, name) => ({ ...acc, [name]: 0 }), {});
+
+            expenses.forEach(expense => {
+              const { amount, payerName, shares } = expense;
+              const totalShares = Object.values(shares).reduce((sum, s) => sum + s, 0);
+
+              if (totalShares === 0) return;
+
+              const costPerShare = amount / totalShares;
+
+              if (balances[payerName] !== undefined) {
+                balances[payerName] += amount;
+              }
+
+              Object.entries(shares).forEach(([member, shareCount]) => {
+                const memberCost = costPerShare * shareCount;
+                if (balances[member] !== undefined) {
+                  balances[member] -= memberCost;
+                }
+              });
+            });
+
+            return balances;
+          }, [expenses, members]);
+
+          /**
+           * 計算清算方案：最少次數的轉帳來結清所有債務
+           */
+          const calculateSettlements = useMemo(() => {
+            const balances = calculateBalances;
+            const settlements = [];
+
+            const creditors = []; 
+            const debtors = []; 
+
+            const mutableBalances = { ...balances };
+
+            // 1. 分離債權人 (Creditors) 和債務人 (Debtors)
+            for (const member in mutableBalances) {
+                const balance = mutableBalances[member];
+                // 容忍小數點誤差 (e.g., $0.01)
+                if (balance >= 1) { // 至少有 1 元以上的結餘
+                    // 對於債權人，我們只關心他們應收的金額
+                    creditors.push({ name: member, amount: balance });
+                } else if (balance <= -1) { // 至少欠 1 元以上的債務
+                    // 對於債務人，我們儲存他們應付的正數金額
+                    debtors.push({ name: member, amount: -balance }); 
+                }
+            }
+
+            let i = 0; 
+            let j = 0; 
+
+            while (i < debtors.length && j < creditors.length) {
+                const debtor = debtors[i];
+                const creditor = creditors[j];
+
+                // 轉帳金額是兩者之間較小者，並且 **四捨五入小數點**
+                // 確保轉帳金額是整數
+                const transferAmount = Math.round(Math.min(debtor.amount, creditor.amount));
+
+                if (transferAmount > 0) { // 確保有至少 1 元的轉帳
+                    settlements.push({
+                        from: debtor.name,
+                        to: creditor.name,
+                        amount: transferAmount,
+                    });
+                }
+
+                // 3. 更新餘額 (使用實際的浮點數進行扣除，以保持清算邏輯準確性)
+                debtor.amount -= transferAmount;
+                creditor.amount -= transferAmount;
+
+                // 4. 移動指針
+                // 只有當剩餘餘額小於 1 時，我們才認為該帳戶「基本上」結清了（因為我們只處理整數轉帳）
+                if (debtor.amount < 1) { 
+                    i++;
+                }
+                if (creditor.amount < 1) {
+                    j++;
+                }
+            }
+            
+            return settlements;
+          }, [calculateBalances]); // 依賴於 calculateBalances 的輸出
+
+          // --- 7. UI 輔助元件 ---
+
+          // 轉換 userId 到顯示名稱
+          const getDisplayName = (member) => member === userId ? '我 (You)' : member;
+          
+          // 格式化時間戳
+          const formatTimestamp = (timestamp) => {
+            if (!timestamp) return '無日期';
+            // 檢查 timestamp 是否為 Firestore Timestamp 物件或 Date 物件
+            const date = timestamp instanceof Date ? timestamp : (timestamp.toDate ? timestamp.toDate() : null);
+            if (!date) return '無日期';
+
+            return date.toLocaleDateString('zh-TW', {
+              year: 'numeric',
+              month: 'numeric',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            });
+          };
+
+
+          /**
+           * 顯示當前用戶 ID，用於分享
+           */
+          const CurrentUserDisplay = ({ userId }) => (
+            <div className="text-xs bg-gray-100 p-2 rounded-lg break-all text-gray-500 mt-2">
+              您的用戶 ID（請分享此 ID 給組員）：
+              <span className="font-mono font-bold text-gray-700 ml-1">{userId}</span>
+            </div>
+          );
+
+          /**
+           * 支出列表元件
+           */
+          const ExpenseList = () => {
+            // 根據 timestamp 進行排序 (新到舊)
+            const sortedExpenses = useMemo(() => {
+                return [...expenses].sort((a, b) => {
+                    const timeA = a.timestamp ? a.timestamp.getTime() : 0;
+                    const timeB = b.timestamp ? b.timestamp.getTime() : 0;
+                    return timeB - timeA; // 降序 (B - A = 新到舊)
+                });
+            }, [expenses]);
+              
+            return (
+              <div className="mt-8">
+                <h2 className="text-2xl font-bold mb-4 text-gray-800 flex items-center">
+                  <CircleDollarSign className="w-6 h-6 mr-2 text-primaryColor-500" />
+                  所有支出 ({sortedExpenses.length})
+                </h2>
+                {sortedExpenses.length === 0 ? (
+                  <p className="text-gray-500 italic p-4 bg-white rounded-xl shadow-inner">目前沒有任何支出記錄。</p>
+                ) : (
+                  <div className="space-y-4">
+                    {sortedExpenses.map((exp) => {
+                      const totalShares = Object.values(exp.shares).reduce((sum, s) => sum + s, 0);
+                      const sharesDetail = Object.entries(exp.shares)
+                        .filter(([, share]) => share > 0)
+                        .map(([name, share]) => `${getDisplayName(name)} (${share}份)`)
+                        .join(', ');
+
+                      return (
+                        <div key={exp.id} className="bg-white p-4 rounded-xl shadow-lg border-l-4 border-primaryColor-400 flex justify-between items-center transition duration-150 hover:shadow-xl">
+                          <div className="flex-grow">
+                            <p className="font-semibold text-lg text-gray-800">{exp.description}</p>
+                            {/* 顯示金額四捨五入 */}
+                            <p className="text-3xl font-extrabold text-primaryColor-600 my-1">NT$ {Math.round(exp.amount).toFixed(0)}</p> 
+                            <p className="text-sm text-gray-600">
+                              <span className="font-medium text-primaryColor-700">付款人:</span> {getDisplayName(exp.payerName)}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              <span className="font-medium">分帳:</span> {sharesDetail || '無人分帳'} (總份數: {totalShares})
+                            </p>
+                            {/* 顯示日期時間 */}
+                            <p className="text-xs text-gray-400 mt-1">
+                              <span className="font-medium">時間:</span> {formatTimestamp(exp.timestamp)}
+                            </p>
+                          </div>
+                          <div className="flex space-x-2">
+                            <button
+                              onClick={() => startEdit(exp)}
+                              className="p-2 text-blue-500 hover:bg-blue-100 rounded-full transition duration-150"
+                              aria-label="編輯支出"
+                            >
+                              <Pencil className="w-5 h-5" />
+                            </button>
+                            <button
+                              onClick={() => deleteExpense(exp.id)}
+                              disabled={isLoading}
+                              className="p-2 text-red-500 hover:bg-red-100 rounded-full transition duration-150"
+                              aria-label="刪除支出"
+                            >
+                              <Trash2 className="w-5 h-5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          };
+
+          /**
+           * 餘額總結元件 (顯示轉帳清單)
+           */
+          const BalanceSummary = () => {
+            const settlements = calculateSettlements;
+            const balances = calculateBalances;
+
+            return (
+              <div className="mt-8 p-6 bg-white rounded-xl shadow-2xl">
+                <h2 className="text-2xl font-bold mb-4 text-gray-800 flex items-center">
+                  <Users className="w-6 h-6 mr-2 text-primaryColor-500" />
+                  結餘總結 (清算方案)
+                </h2>
+
+                {settlements.length === 0 ? (
+                    <p className="text-lg font-medium text-green-600 p-3 bg-green-50 rounded-lg">🎉 所有帳目已結清！</p>
+                ) : (
+                    <div className="space-y-4">
+                        <p className="text-base text-gray-600 mb-4">以下是結清帳目所需的轉帳清單（四捨五入）：</p>
+                        {settlements.map((settlement, index) => (
+                            <div 
+                                key={index} 
+                                className="bg-yellow-50 p-4 rounded-xl shadow-md border-l-4 border-yellow-400 flex items-center"
+                            >
+                                <span className="font-bold text-yellow-800 text-xl mr-3">💸</span>
+                                <div className="flex-grow text-gray-800">
+                                    <p className="text-lg">
+                                        <span className="font-bold text-red-600">{getDisplayName(settlement.from)}</span>
+                                        <span className="mx-2 text-gray-500">應付給</span>
+                                        <span className="font-bold text-green-600">{getDisplayName(settlement.to)}</span>
+                                    </p>
+                                    {/* 顯示轉帳金額四捨五入 */}
+                                    <p className="text-3xl font-extrabold text-yellow-700 mt-1">
+                                        NT$ {settlement.amount.toFixed(0)}
+                                    </p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+                
+                {/* 原始個人結餘列表 (保留作為參考) */}
+                <div className="mt-6 pt-6 border-t border-gray-100">
+                    <h3 className="text-xl font-semibold mb-3 text-gray-700">個人總結餘 (參考)</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {members.map(member => {
+                            const balance = balances[member] || 0;
+                            // 對於參考用的個人結餘，我們使用四捨五入來顯示
+                            const roundBalance = Math.round(balance); 
+                            const isOwed = roundBalance > 0;
+                            const isOwes = roundBalance < 0;
+                            const displayMember = getDisplayName(member);
+
+                            return (
+                                <div 
+                                    key={member} 
+                                    className={`p-3 rounded-lg text-center ${isOwed ? 'bg-green-100' : isOwes ? 'bg-red-100' : 'bg-gray-100'}`}
+                                >
+                                    <p className="font-semibold truncate text-sm" title={displayMember}>{displayMember}</p>
+                                    <p className={`text-xl font-bold mt-0.5 ${isOwed ? 'text-green-700' : isOwes ? 'text-red-700' : 'text-gray-500'}`}>
+                                        {roundBalance.toFixed(0)}
+                                    </p>
+                                    <p className="text-xs text-gray-500">{isOwed ? '應收' : isOwes ? '應付' : '結清'}</p>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <p className="mt-3 text-xs text-gray-500">正數 (應收): 別人欠你；負數 (應付): 你欠別人。(顯示金額已四捨五入)</p>
+                </div>
+              </div>
+            );
+          };
+
+          /**
+           * 支出 Modal (處理新增和編輯)
+           */
+          const ExpenseModal = () => {
+            const isEditing = !!editingExpenseId;
+            const modalTitle = isEditing ? '編輯支出記錄' : '新增支出記錄';
+            const submitText = isEditing ? '儲存修改' : '確認新增支出';
+
+            return (
+              <div className={`fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50 transition-opacity ${isExpenseModalOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+                <div className="bg-white rounded-xl w-full max-w-lg shadow-2xl transform transition-transform duration-300 scale-100">
+                  <div className="p-6 border-b flex justify-between items-center">
+                    <h3 className="text-xl font-bold text-gray-800">{modalTitle}</h3>
+                    <button onClick={closeExpenseModal} className="p-1 rounded-full hover:bg-gray-100 text-gray-600">
+                      <X className="w-6 h-6" />
+                    </button>
+                  </div>
+
+                  <div className="p-6 space-y-5">
+                    {/* 1. 品項與金額 */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label htmlFor="description" className="block text-sm font-medium text-gray-700">品項/描述</label>
+                        <input
+                          type="text"
+                          id="description"
+                          name="description"
+                          value={newExpense.description}
+                          onChange={handleInputChange}
+                          placeholder="例如: 晚餐，電影票"
+                          className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500"
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor="amount" className="block text-sm font-medium text-gray-700">金額 (NT$)</label>
+                        <input
+                          type="number"
+                          id="amount"
+                          name="amount"
+                          value={newExpense.amount}
+                          onChange={handleInputChange}
+                          placeholder="100.00"
+                          className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500"
+                        />
+                      </div>
+                    </div>
+
+                    {/* 2. 付款人 */}
+                    <div>
+                      <label htmlFor="payerName" className="block text-sm font-medium text-gray-700">付款人</label>
+                      <select
+                        id="payerName"
+                        name="payerName"
+                        value={newExpense.payerName}
+                        onChange={handleInputChange}
+                        className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500 bg-white"
+                      >
+                        {members.map(member => (
+                          <option key={member} value={member}>
+                            {getDisplayName(member)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* 3. 分帳份數設定 */}
+                    <div className="pt-4 border-t border-gray-100">
+                      <div className="flex justify-between items-center mb-3">
+                        <label className="text-lg font-bold text-gray-700">分帳份數 (Shares)</label>
+                        <button
+                          onClick={setToAverageSplit}
+                          type="button"
+                          className="text-sm text-primaryColor-600 hover:text-primaryColor-800 font-medium"
+                        >
+                          [設為平均分配]
+                        </button>
+                      </div>
+                      <div className="space-y-3 max-h-48 overflow-y-auto pr-2">
+                        {members.map(member => {
+                          const currentShares = newExpense.shares[member] || 0;
+                          const displayMember = getDisplayName(member);
+                          const isPayer = newExpense.payerName === member;
+
+                          return (
+                            <div key={member} className="flex justify-between items-center bg-gray-50 p-3 rounded-lg border border-gray-200">
+                              <span className={`font-medium ${isPayer ? 'text-primaryColor-700' : 'text-gray-700'}`}>
+                                {displayMember} {isPayer && '(付款人)'}
+                              </span>
+                              <div className="flex items-center space-x-2">
+                                <button
+                                  onClick={() => handleShareChange(member, -1)}
+                                  type="button"
+                                  className="p-1 bg-red-100 text-red-600 rounded-full hover:bg-red-200 transition"
+                                  aria-label="減少份數"
+                                >
+                                  <Minus className="w-4 h-4" />
+                                </button>
+                                <span className="w-8 text-center font-bold text-lg text-gray-800">{currentShares}</span>
+                                <button
+                                  onClick={() => handleShareChange(member, 1)}
+                                  type="button"
+                                  className="p-1 bg-green-100 text-green-600 rounded-full hover:bg-green-200 transition"
+                                  aria-label="增加份數"
+                                >
+                                  <Plus className="w-4 h-4" />
+                                </button>
+                                <span className="text-sm text-gray-500 w-8 text-right">份</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-6 border-t flex justify-end">
+                    <button
+                      onClick={saveExpense}
+                      disabled={isLoading || newExpense.amount <= 0 || !newExpense.description}
+                      className={`flex items-center px-6 py-3 rounded-full text-white font-semibold transition duration-150 shadow-md ${
+                        isLoading || newExpense.amount <= 0 || !newExpense.description
+                          ? 'bg-gray-400 cursor-not-allowed'
+                          : `bg-${primaryColor}-600 hover:bg-${primaryColor}-700 hover:shadow-lg`
+                      }`}
+                    >
+                      {isLoading ? '儲存中...' : (
+                        <>
+                          <Check className="w-5 h-5 mr-2" />
+                          {submitText}
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          };
+          
+          /**
+           * 成員管理 Modal
+           */
+          const MemberManagementModal = () => {
+            // 臨時狀態，用於在 Modal 內編輯預設份數
+            const [tempDefaultShares, setTempDefaultShares] = useState({});
+
+            useEffect(() => {
+                if (isMemberModalOpen) {
+                    // 初始化 temp 狀態：包含所有成員 (包括 userId) 的當前預設份數
+                    const initialShares = members.reduce((acc, name) => {
+                        const shareValue = defaultSharesConfig[name] !== undefined ? defaultSharesConfig[name] : 1;
+                        acc[name] = shareValue;
+                        return acc;
+                    }, {});
+                    setTempDefaultShares(initialShares);
+                }
+            }, [isMemberModalOpen, members, defaultSharesConfig]);
+
+            const handleTempShareChange = (name, value) => {
+                const shareCount = parseInt(value, 10);
+                // 允許非負整數或空字串
+                if (shareCount >= 0 || value === '') {
+                    setTempDefaultShares(prev => ({
+                        ...prev,
+                        [name]: shareCount || 0
+                    }));
+                }
+            };
+
+            return (
+              <div className={`fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50 transition-opacity ${isMemberModalOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+                  <div className="bg-white rounded-xl w-full max-w-2xl shadow-2xl transform transition-transform duration-300 scale-100">
+                      <div className="p-6 border-b flex justify-between items-center">
+                          <h3 className="text-xl font-bold text-gray-800">管理分帳成員與預設份數</h3>
+                          <button onClick={() => setIsMemberModalOpen(false)} className="p-1 rounded-full hover:bg-gray-100 text-gray-600">
+                              <X className="w-6 h-6" />
+                          </button>
+                      </div>
+                      
+                      <div className="p-6 space-y-6">
+                          {/* 新增成員 */}
+                          <div className="border p-4 rounded-lg bg-gray-50">
+                              <h4 className="font-semibold text-lg mb-3 flex items-center text-primaryColor-700">
+                                  <UserPlus className="w-5 h-5 mr-2" /> 新增成員
+                              </h4>
+                              <div className="flex space-x-2">
+                                  <input
+                                      type="text"
+                                      value={newMemberName}
+                                      onChange={(e) => setNewMemberName(e.target.value)}
+                                      onKeyDown={(e) => e.key === 'Enter' && handleAddMember()}
+                                      placeholder="輸入新成員名稱 (例如: 小明)"
+                                      className="flex-grow border border-gray-300 rounded-lg p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500"
+                                      disabled={isLoading}
+                                  />
+                                  <button
+                                      onClick={handleAddMember}
+                                      className={`px-4 py-2 rounded-lg text-white font-semibold transition ${
+                                          newMemberName.trim() === '' || isLoading
+                                          ? 'bg-gray-400 cursor-not-allowed'
+                                          : `bg-${primaryColor}-600 hover:bg-${primaryColor}-700`
+                                      }`}
+                                      disabled={newMemberName.trim() === '' || isLoading}
+                                  >
+                                      新增
+                                  </button>
+                              </div>
+                          </div>
+
+                          {/* 現有成員列表 */}
+                          <div>
+                              <h4 className="font-semibold text-lg mb-3 text-gray-700">設定所有成員的預設份數</h4>
+                              <div className="grid grid-cols-2 gap-x-4 gap-y-2 mb-3 text-sm font-semibold text-gray-600 border-b pb-2">
+                                <span>成員名稱</span>
+                                <span className="flex items-center justify-between">預設份數 (1為平均分配)</span>
+                              </div>
+                              <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
+                                  {members.map(member => (
+                                      <div key={member} className="grid grid-cols-2 gap-4 items-center p-3 rounded-lg border border-gray-200 bg-white shadow-sm">
+                                          <span className={`font-medium ${member === userId ? 'text-primaryColor-700' : 'text-gray-800'} truncate`}>
+                                              {getDisplayName(member)}
+                                          </span>
+                                          <div className="flex items-center space-x-3">
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                value={tempDefaultShares[member] === 0 ? 0 : tempDefaultShares[member] || 1}
+                                                onChange={(e) => handleTempShareChange(member, e.target.value)}
+                                                placeholder="1"
+                                                className="w-16 border border-gray-300 rounded-lg p-2 text-center focus:ring-primaryColor-500 focus:border-primaryColor-500"
+                                                disabled={isLoading}
+                                            />
+                                            <span className="text-gray-500">份</span>
+                                            {member !== userId && (
+                                                <button
+                                                    onClick={() => handleDeleteMember(member)}
+                                                    className="p-1 text-red-500 hover:bg-red-100 rounded-full transition ml-auto"
+                                                    disabled={isLoading}
+                                                    aria-label="刪除成員"
+                                                >
+                                                    <UserMinus className="w-5 h-5" />
+                                                </button>
+                                            )}
+                                          </div>
+                                      </div>
+                                  ))}
+                              </div>
+                          </div>
+                      </div>
+                      <div className="p-6 border-t flex justify-end">
+                          <button
+                              onClick={() => handleSaveDefaultShares(tempDefaultShares)}
+                              disabled={isLoading}
+                              className={`flex items-center px-6 py-3 rounded-full text-white font-semibold transition duration-150 shadow-md ${
+                                  isLoading
+                                  ? 'bg-gray-400 cursor-not-allowed'
+                                  : `bg-${primaryColor}-600 hover:bg-${primaryColor}-700 hover:shadow-lg`
+                              }`}
+                          >
+                              {isLoading ? '儲存中...' : (
+                                  <>
+                                      <Check className="w-5 h-5 mr-2" />
+                                      儲存預設份數
+                                  </>
+                              )}
+                          </button>
+                      </div>
+                  </div>
+              </div>
+            );
+          };
+
+
+          // --- 8. 主渲染 ---
+          if (!authReady) {
+            return (
+              <div className="flex items-center justify-center min-h-screen bg-gray-50">
+                <p className={`text-xl text-${primaryColor}-600`}>應用程式載入中...</p>
+              </div>
+            );
+          }
+
+          if (error) {
+            return (
+              <div className="p-8 bg-red-100 border border-red-400 text-red-700 rounded-lg m-4">
+                <p className="font-bold">發生錯誤:</p>
+                <p>{error}</p>
+                <p className="mt-2 text-sm">請檢查您的 Firebase 設定或網路連線。</p>
+              </div>
+            );
+          }
+
+          return (
+            <div className="min-h-screen bg-gray-50 p-4 sm:p-8">
+              <div className="max-w-4xl mx-auto">
+                {/* 標題和主要操作按鈕 */}
+                <header className="py-6 border-b border-gray-200">
+                  <h1 className={`text-4xl font-extrabold text-${primaryColor}-700 flex items-center`}>
+                    <CircleDollarSign className="w-10 h-10 mr-3" />
+                    分帳記帳簿
+                  </h1>
+                  <p className="text-gray-500 mt-1">輕鬆記錄團體支出，公平分配費用。</p>
+                  {userId && <CurrentUserDisplay userId={userId} />}
+                </header>
+
+                {/* 主要功能區塊 */}
+                <div className="mt-6 flex space-x-4">
+                  <button
+                    onClick={startAdd}
+                    className={`flex-1 flex items-center justify-center px-4 py-3 border border-transparent text-lg font-bold rounded-xl text-white bg-${primaryColor}-500 hover:bg-${primaryColor}-600 focus:outline-none focus:ring-4 focus:ring-${primaryColor}-300 transition duration-300 shadow-xl`}
+                  >
+                    <Plus className="w-6 h-6 mr-2" />
+                    新增支出
+                  </button>
+                  <button
+                    onClick={() => setIsMemberModalOpen(true)}
+                    className={`px-4 py-3 border border-${primaryColor}-500 text-lg font-bold rounded-xl text-${primaryColor}-600 bg-white hover:bg-${primaryColor}-50 focus:outline-none focus:ring-4 focus:ring-${primaryColor}-300 transition duration-300 shadow-xl`}
+                    aria-label="管理成員與預設份數"
+                  >
+                    <Users className="w-6 h-6" />
+                  </button>
+                </div>
+
+                {/* 總結與列表 */}
+                <BalanceSummary />
+                <ExpenseList />
+
+                {/* Modal 區塊 */}
+                <ExpenseModal />
+                <MemberManagementModal />
+              </div>
+
+              {/* Tailwind color class fix, ensuring primaryColor is rendered */}
+              <div className={`text-${primaryColor}-500 bg-${primaryColor}-500 border-${primaryColor}-500 hidden`}></div>
+            </div>
+          );
+        };
+
+        // Render the app
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+    
+    <!-- 引入 Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-firestore-compat.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+</body>
 </html>
