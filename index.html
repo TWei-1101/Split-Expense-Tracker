@@ -33,12 +33,10 @@
 
     <!-- 
         重要：請在這裡填入您的 Firebase 配置！
-        由於這是獨立的 HTML 檔案，您需要手動提供這些變數，否則 App 無法連接到您的資料庫。
-        請將 YOUR_APP_ID 和 { YOUR_FIREBASE_CONFIG_JSON } 替換為實際值。
     -->
     <script>
         const __app_id = "YOUR_APP_ID"; // 例如: 'my-splitwise-app-2025'
-        // 請替換成您自己的 Firebase 專案配置 JSON
+        // 請替換成您自己的 Firebase 專案配置 JSON (已使用您提供的 JSON 結構)
         const __firebase_config = JSON.stringify({
             apiKey: "AIzaSyB8l7Od781kGHyI9pXMLBXvzt7NuuIyq8c",
             authDomain: "splite-expense-tracker.firebaseapp.com",
@@ -51,17 +49,24 @@
         const __initial_auth_token = null; // 保持 null 進行匿名登入
     </script>
 
+    <!-- 
+        使用 Firebase v9 相容模式 (compat)，並透過全域物件提供 v8 服務。
+    -->
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-firestore-compat.js"></script>
+    
+    <!-- 移除了 lucide CDN，改用內聯 SVG 元件 -->
+    
     <script type="text/babel">
         // 在這裡使用 React 程式碼
         const { useState, useEffect, useCallback, useMemo } = React;
         
-        // 修正：直接從 firebase 命名空間中解構函式
-        const { initializeApp } = firebase;
-        const { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } = firebase.auth;
-        const { 
-            getFirestore, collection, query, onSnapshot, addDoc, doc, deleteDoc, updateDoc, setDoc,
-            serverTimestamp, setLogLevel
-        } = firebase.firestore;
+        // 修正：僅從 firebase 全域物件中解構必要的頂層函式和服務命名空間。
+        const { initializeApp, auth, firestore } = firebase;
+        
+        // 取得 V8 風格的 serverTimestamp (必須從 firestore 命名空間取得)
+        const serverTimestamp = firestore.FieldValue.serverTimestamp; 
         
         // --- 重新定義 Firebase 全域變數以供 React 存取 ---
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -69,15 +74,32 @@
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         // 設置 Firebase 日誌級別
-        // 修正: 避免在瀏覽器環境中直接存取 process.env 導致 ReferenceError
         if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'production') {
-          setLogLevel('debug');
+          // setLogLevel('debug'); // V8/Compat API 不直接提供 setLogLevel，通常是透過 app 實例設定
         }
 
         // 顏色定義
         const primaryColor = 'teal';
 
-        const { CircleDollarSign, Trash2, Plus, Minus, Users, X, Check, Pencil, UserPlus, UserMinus } = lucide;
+        // --- 修正: 替換為內聯 SVG 圖標元件 (Lucide 樣式) ---
+        const IconProps = {
+            stroke: "currentColor",
+            strokeWidth: 2,
+            strokeLinecap: "round",
+            strokeLinejoin: "round",
+        };
+        
+        const CircleDollarSign = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v1M12 17v1M16 8h-4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-4a2 2 0 0 0-2-2z"></path></svg>;
+        const Trash2 = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>;
+        const Plus = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>;
+        const Minus = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M5 12h14"></path></svg>;
+        const Users = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>;
+        const X = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>;
+        const Check = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></svg>;
+        const Pencil = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>;
+        const UserPlus = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><line x1="19" x2="19" y1="8" y2="14"></line><line x1="16" x2="22" y1="11" y2="11"></line></svg>;
+        const UserMinus = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><line x1="22" x2="16" y1="11" y2="11"></line></svg>;
+        // --- 圖標元件結束 ---
 
         /**
          * 主要的 App 元件
@@ -122,41 +144,53 @@
             }
 
             try {
-              // 修正：直接使用全域的 firebase 命名空間
+              // V8/Compat 模式：使用 app.auth() 和 app.firestore() 取得服務實例
               const app = initializeApp(firebaseConfig);
-              const _auth = getAuth(app);
-              const _db = getFirestore(app);
+              const _auth = app.auth();
+              // 修正：檢查 firestore 命名空間是否存在 (避免因 CDN 載入不完全導致錯誤)
+              if (!app.firestore) {
+                  throw new Error("Firestore service not available. Check your Firebase CDN links.");
+              }
+              const _db = app.firestore();
 
               setDb(_db);
               setAuth(_auth);
 
-              const unsubscribe = onAuthStateChanged(_auth, async (user) => {
+              // 確保 onAuthStateChanged 立即啟動並在用戶狀態確定後設置 userId
+              // V8/Compat 模式：使用 _auth.onAuthStateChanged
+              const unsubscribe = _auth.onAuthStateChanged(async (user) => {
                 if (user) {
                   setUserId(user.uid);
                   setNewExpense(prev => ({
                     ...prev,
                     payerName: user.uid, 
                   }));
+                } else {
+                  // V8/Compat 模式：使用 _auth.signInAnonymously
+                  await _auth.signInAnonymously().catch(e => setError(`Auth error: ${e.message}`));
                 }
+                // 在 onAuthStateChanged 監聽器第一次運行後，設置為 ready
+                setAuthReady(true);
               });
               
-              // 設置 authReady = true 以允許 UI 渲染，不論驗證結果如何
-              setAuthReady(true); 
-
+              // 在初始載入時，也嘗試立即登入
               if (initialAuthToken) {
-                signInWithCustomToken(_auth, initialAuthToken)
+                // V8/Compat 模式：使用 _auth.signInWithCustomToken
+                _auth.signInWithCustomToken(initialAuthToken)
                   .catch(err => {
                     console.error('Custom token sign-in failed, falling back to anonymous:', err);
-                    signInAnonymously(_auth).catch(e => setError(`Auth error: ${e.message}`));
+                    // 如果自定義登入失敗，讓 onAuthStateChanged 觸發匿名登入
                   });
               } else {
-                signInAnonymously(_auth)
-                  .catch(e => setError(`Auth error: ${e.message}`));
+                // 立即嘗試匿名登入，讓 onAuthStateChanged 處理結果
+                _auth.signInAnonymously()
+                  .catch(e => console.error(`Initial anonymous sign-in failed (handled by onAuthStateChanged): ${e.message}`));
               }
 
               return () => unsubscribe();
             } catch (e) {
-              setError(`Firebase initialization failed: ${e.message}`);
+              // 如果在這裡發生錯誤 (例如 initializeApp 失敗)，可能是因為 CDN 載入問題
+              setError(`Firebase initialization failed: ${e.message}. 請確認您的 Firebase 服務啟用。`);
               setAuthReady(true); // 如果初始化同步失敗，也解鎖 UI
             }
           }, []);
@@ -168,17 +202,18 @@
 
             // --- A. 監聽支出記錄 ---
             const expensesCollectionPath = `artifacts/${appId}/public/data/expenses`;
-            const expensesRef = collection(db, expensesCollectionPath);
-            const expensesQuery = query(expensesRef);
+            // V8/Compat 模式：使用 db.collection()
+            const expensesRef = db.collection(expensesCollectionPath);
 
-            const unsubscribeExpenses = onSnapshot(expensesQuery, (snapshot) => {
-              const fetchedExpenses = snapshot.docs.map(doc => {
-                const data = doc.data();
+            // V8/Compat 模式：使用 collectionRef.onSnapshot()
+            const unsubscribeExpenses = expensesRef.onSnapshot((snapshot) => {
+              const fetchedExpenses = snapshot.docs.map(docSnap => {
+                const data = docSnap.data();
                 // 處理 Firestore Timestamp 轉換為 JavaScript Date 物件
                 const timestamp = data.timestamp ? data.timestamp.toDate() : null; 
                 
                 return {
-                  id: doc.id,
+                  id: docSnap.id, // V8/Compat: docSnap.id (與模組化版本相同)
                   ...data,
                   amount: typeof data.amount === 'number' ? data.amount : parseFloat(data.amount || 0),
                   shares: data.shares || {},
@@ -188,15 +223,23 @@
               setExpenses(fetchedExpenses);
             }, (err) => {
               console.error("Error listening to expenses:", err);
-              setError(`資料同步失敗: ${err.message}`);
+              // 如果發生權限錯誤，我們會嘗試清除 userId，以便重新嘗試認證 (但會保留 authReady=true)
+              if (err.code === 'permission-denied') {
+                  setError(`資料同步失敗：權限不足。請檢查 Firestore 安全規則是否允許匿名/登入使用者讀取。`);
+              } else {
+                  setError(`資料同步失敗: ${err.message}`);
+              }
             });
 
             // --- B. 監聽成員設定 ---
             const membersDocPath = `artifacts/${appId}/public/data/settings/members`;
-            const membersDocRef = doc(db, membersDocPath);
+            // V8/Compat 模式：使用 db.doc()
+            const membersDocRef = db.doc(membersDocPath);
 
-            const unsubscribeMembers = onSnapshot(membersDocRef, (docSnap) => {
-                if (docSnap.exists()) {
+            // V8/Compat 模式：使用 docRef.onSnapshot()
+            const unsubscribeMembers = membersDocRef.onSnapshot((docSnap) => {
+                // 修正: 在 V8/Compat 模式下，exists 是一個屬性，而不是函式
+                if (docSnap.exists) { 
                     const data = docSnap.data();
                     const list = Array.isArray(data.list) ? data.list : [];
                     const shares = data.defaultShares || {};
@@ -376,10 +419,11 @@
 
               if (isEditing) {
                 const docPath = `${collectionPath}/${editingExpenseId}`;
-                // 編輯時不更新 timestamp
-                await updateDoc(doc(db, docPath), expenseToSave); 
+                // V8/Compat 模式：使用 db.doc().update()
+                await db.doc(docPath).update(expenseToSave); 
               } else {
-                await addDoc(collection(db, collectionPath), expenseToSave);
+                // V8/Compat 模式：使用 db.collection().add()
+                await db.collection(collectionPath).add(expenseToSave);
               }
 
               closeExpenseModal();
@@ -402,7 +446,8 @@
             setError(null);
             try {
               const docPath = `artifacts/${appId}/public/data/expenses/${id}`;
-              await deleteDoc(doc(db, docPath));
+              // V8/Compat 模式：使用 db.doc().delete()
+              await db.doc(docPath).delete();
             } catch (e) {
               console.error("Error deleting document: ", e);
               setError(`刪除支出失敗: ${e.message}`);
@@ -423,7 +468,8 @@
             setError(null);
             try {
                 const docPath = `artifacts/${appId}/public/data/settings/members`;
-                const membersDocRef = doc(db, docPath);
+                // V8/Compat 模式：使用 db.doc()
+                const membersDocRef = db.doc(docPath);
 
                 // 過濾掉空白名稱、與 userId 相同的名稱，並確保名稱唯一
                 const sanitizedList = Array.from(new Set(
@@ -439,7 +485,8 @@
                     }
                 });
 
-                await setDoc(membersDocRef, { list: sanitizedList, defaultShares: currentShares }, { merge: false });
+                // V8/Compat 模式：使用 docRef.set()
+                await membersDocRef.set({ list: sanitizedList, defaultShares: currentShares }, { merge: false });
             } catch (e) {
                 console.error("Error saving members:", e);
                 setError(`儲存成員清單失敗: ${e.message}`);
@@ -481,12 +528,14 @@
             setError(null);
             try {
                 const docPath = `artifacts/${appId}/public/data/settings/members`;
-                const membersDocRef = doc(db, docPath);
+                // V8/Compat 模式：使用 db.doc()
+                const membersDocRef = db.doc(docPath);
 
                 const sharesToSave = {};
                 // 整理要儲存的 shares config (只儲存非預設值 1 的份數)
                 members.forEach(name => {
-                    const share = tempShares[name];
+                    // 修正: 使用傳入的參數 tempShares
+                    const share = tempShares[name]; 
                     if (share !== undefined && share >= 0) {
                         // 只有當份數不等於 1 時才儲存，以保持資料庫乾淨
                         if (share !== 1) { 
@@ -495,8 +544,8 @@
                     }
                 });
                 
-                // 保存成員列表 (customMembers) 和新的預設份數
-                await setDoc(membersDocRef, { list: customMembers, defaultShares: sharesToSave }, { merge: false });
+                // V8/Compat 模式：使用 docRef.set()
+                await membersDocRef.set({ list: customMembers, defaultShares: sharesToSave }, { merge: false });
                 
                 setIsMemberModalOpen(false);
             } catch (e) {
@@ -1119,12 +1168,5 @@
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
     </script>
-    
-    <!-- 引入 Firebase SDKs -->
-    <!-- 修正: 將相容模式 SDK 替換為標準模組化模式 SDK (最新版本 9.1.3) -->
-    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-auth.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-firestore.js"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
 </body>
 </html>
