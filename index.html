@@ -115,6 +115,7 @@
           useEffect(() => {
             if (!firebaseConfig) {
               setError('Firebase configuration is missing.');
+              setAuthReady(true); // 如果配置遺失，立即結束載入並顯示錯誤
               return;
             }
 
@@ -134,8 +135,12 @@
                     payerName: user.uid, 
                   }));
                 }
-                setAuthReady(true);
+                // onAuthStateChanged 應負責最終確認用戶狀態
+                // 我們在下面會手動設置 authReady=true 以避免卡在載入中
               });
+              
+              // 設置 authReady = true 以允許 UI 渲染，不論驗證結果如何
+              setAuthReady(true); 
 
               if (initialAuthToken) {
                 signInWithCustomToken(_auth, initialAuthToken)
@@ -151,6 +156,7 @@
               return () => unsubscribe();
             } catch (e) {
               setError(`Firebase initialization failed: ${e.message}`);
+              setAuthReady(true); // 如果初始化同步失敗，也解鎖 UI
             }
           }, []);
 
