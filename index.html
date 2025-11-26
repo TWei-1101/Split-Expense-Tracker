@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>分帳記帳簿</title>
-    <!-- 引入 Tailwind CSS CDN 以確保樣式在所有環境下都能運作 -->
+    <title>分帳記帳簿 (Email 登入與分享)</title>
+    <!-- 引入 Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- 引入 React, ReactDOM, and Babel 獨立版 -->
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
@@ -12,10 +12,9 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
     <style>
-        /* 修正：強制讓 Safari/iOS 顯示自定義按鈕，並移除輸入框原生的增減控制項 */
-        /* 這可以防止 Safari/iOS 的原生控制項干擾我們自定義的 + / - 按鈕 */
+        /* 修正：移除輸入框原生的增減控制項 */
         input[type='number'] {
-            -moz-appearance: textfield; /* Firefox */
+            -moz-appearance: textfield;
         }
         input[type='number']::-webkit-inner-spin-button,
         input[type='number']::-webkit-outer-spin-button {
@@ -46,60 +45,174 @@
 
     <!-- 
         重要：請在這裡填入您的 Firebase 配置！
+        注意：現在需要開啟 Firebase Authentication 的 Email/Password 登入方法
     -->
     <script>
+        // 修正：將這些變數定義在純 JS 區塊，使 Babel 腳本可以訪問
         const __app_id = "YOUR_APP_ID"; // 例如: 'my-splitwise-app-2025'
-        // 請替換成您自己的 Firebase 專案配置 JSON (已使用您提供的 JSON 結構)
+        // 請替換成您自己的 Firebase 專案配置 JSON
         const __firebase_config = JSON.stringify({
-            apiKey: "AIzaSyB8l7Od781kGHyI9pXMLBXvzt7NuuIyq8c",
-            authDomain: "splite-expense-tracker.firebaseapp.com",
-            projectId: "splite-expense-tracker",
-            storageBucket: "splite-expense-tracker.firebasestorage.app",
-            messagingSenderId: "425612895494",
-            appId: "1:425612895494:web:b5889f1d83cafb41d7ea87",
-            measurementId: "G-FVS0WSGZD9"
+            apiKey: "AIzaSyANDhJ--MDYI5SfsHOuuQwVM0sYMM91UFM",
+            authDomain: "splite-expense-tracker-multi.firebaseapp.com",
+            projectId: "splite-expense-tracker-multi",
+            storageBucket: "splite-expense-tracker-multi.firebasestorage.app",
+            messagingSenderId: "10696910340",
+            appId: "1:10696910340:web:2ccda0f7db8ef8af6f3751",
+            measurementId: "G-XCB90NSB43"
         });
-        const __initial_auth_token = null; // 保持 null 進行匿名登入
+        // 匿名登入不再使用，故不需要 __initial_auth_token
+
+        // 新增：請將您的 Gemini API Key 填入此處（目前未使用）
+        const GEMINI_API_KEY = ""; 
     </script>
 
     <!-- 
-        使用 Firebase v9 相容模式 (compat)，並透過全域物件提供 v8 服務。
+        使用 Firebase v9 相容模式 (compat)
     -->
     <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.1.3/firebase-firestore-compat.js"></script>
     
-    <!-- 移除了 lucide CDN，改用內聯 SVG 元件 -->
-    
     <script type="text/babel">
-        // 在這裡使用 React 程式碼
+        // 明確聲明 React 為全域變數，確保 Babel 能夠找到它
+        const React = window.React;
         const { useState, useEffect, useCallback, useMemo } = React;
         
-        // 修正：僅從 firebase 全域物件中解構必要的頂層函式和服務命名空間。
-        const { initializeApp, auth, firestore } = firebase;
-        
-        // 取得 V8 風格的 serverTimestamp (必須從 firestore 命名空間取得)
-        const serverTimestamp = firestore.FieldValue.serverTimestamp; 
-        
-        // --- 重新定義 Firebase 全域變數以供 React 存取 ---
+        // 將全域變數引入 Babel 作用域
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        
+        // 注意：GEMINI_API_KEY 已在頂層的純 JS 區塊中定義，可以直接訪問
+        const { firestore } = firebase;
+        const serverTimestamp = firestore.FieldValue.serverTimestamp; 
+        
+        // --- 匯率設定 (預設值作為備用) ---
+        const DEFAULT_EXCHANGE_RATES = {
+            'TWD': 1.0,   // 基準貨幣：臺幣
+            'USD': 30.5,  // 美金
+            'THB': 0.85,  // 泰銖
+            'EUR': 33.0,  // 歐元
+            'CAD': 22.5,  // 加幣
+            'VND': 0.0013, // 越南盾 (1000 VND ~ 1.3 TWD)
+            'IDR': 0.002, // 印尼盾 (1000 IDR ~ 2 TWD)
+            'JPY': 0.25,  // 日圓
+            'KRW': 0.023, // 韓元 (1000 KRW ~ 23 TWD)
+            'AUD': 20.0,  // 澳幣
+            'NOK': 2.9,   // 挪威克朗
+        };
+		
+		// --- 國家 -> 貨幣 對照表（給 GPS 用） ---
+		const COUNTRY_CURRENCY_MAP = {
+			TW: 'TWD',
+			US: 'USD',
+			CA: 'CAD',
+			AU: 'AUD',
+			JP: 'JPY',
+			KR: 'KRW',
+			TH: 'THB',
+			VN: 'VND',
+			ID: 'IDR',
+			NO: 'NOK',
+			// 歐洲常見國家 -> 歐元
+			FR: 'EUR',
+			DE: 'EUR',
+			ES: 'EUR',
+			IT: 'EUR',
+			NL: 'EUR',
+			BE: 'EUR',
+			PT: 'EUR',
+		};
+		
+        const CURRENCIES = Object.keys(DEFAULT_EXCHANGE_RATES);
+        const DEFAULT_CURRENCY = 'TWD';
 
-        // 設置 Firebase 日誌級別
-        if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'production') {
-          // setLogLevel('debug'); // V8/Compat API 不直接提供 setLogLevel，通常是透過 app 實例設定
-        }
+        // --- 匯率獲取函式：每 4 小時更新一次 + 可顯示更新時間 ---
+		const fetchExchangeRates = async () => {
+			const CACHE_KEY = "exchangeRatesCache";
+			const CACHE_TIME_KEY = "exchangeRatesCacheTime";
+			const FOUR_HOURS = 4 * 60 * 60 * 1000;
 
-        // 顏色定義
-        const primaryColor = 'teal';
+			// 1. 從 localStorage 讀取快取
+			try {
+				const cachedRates = localStorage.getItem(CACHE_KEY);
+				const cachedTime = localStorage.getItem(CACHE_TIME_KEY);
 
-        // --- 修正: 替換為內聯 SVG 圖標元件 (Lucide 樣式) ---
+				if (cachedRates && cachedTime) {
+					const lastUpdate = parseInt(cachedTime, 10);
+					const now = Date.now();
+
+					// 少於 4 小時 → 使用快取
+					if (now - lastUpdate < FOUR_HOURS) {
+						console.log("📦 使用快取匯率（4 小時內）");
+
+						return {
+							rates: JSON.parse(cachedRates),
+							lastUpdate
+						};
+					}
+				}
+			} catch (err) {
+				console.warn("⚠ 讀取匯率快取失敗，將重新抓取。", err);
+			}
+
+			// 2. 超過 4 小時 → 抓取新資料
+			const API_URL = "https://open.er-api.com/v6/latest/TWD";
+
+			try {
+				const res = await fetch(API_URL);
+				if (!res.ok) throw new Error("API 回應錯誤");
+
+				const data = await res.json();
+				if (!data || data.result !== "success") throw new Error("無效匯率資料");
+
+				const processedRates = { [DEFAULT_CURRENCY]: 1.0 };
+
+				CURRENCIES.forEach(code => {
+					if (code === DEFAULT_CURRENCY) return;
+
+					const rateTWDToCode = data.rates[code]; // 1 TWD = x {code}
+					if (typeof rateTWDToCode === "number" && rateTWDToCode > 0) {
+						processedRates[code] = 1 / rateTWDToCode; // 1 {code} = ? TWD
+					} else {
+						processedRates[code] = DEFAULT_EXCHANGE_RATES[code];
+					}
+				});
+
+				const now = Date.now();
+
+				// 3. 寫入 Cache
+				try {
+					localStorage.setItem(CACHE_KEY, JSON.stringify(processedRates));
+					localStorage.setItem(CACHE_TIME_KEY, now.toString());
+				} catch (err) {
+					console.warn("⚠️ 無法寫入快取（可能是無痕模式）", err);
+				}
+
+				console.log("🌐 已抓取最新匯率", processedRates);
+
+				return {
+					rates: processedRates,
+					lastUpdate: now
+				};
+
+			} catch (err) {
+				console.error("❌ 抓取匯率失敗，使用預設匯率", err);
+				const fallbackTime = Date.now();
+
+				return {
+					rates: DEFAULT_EXCHANGE_RATES,
+					lastUpdate: fallbackTime
+				};
+			}
+		};
+
+        // --- 內聯 SVG 圖標元件 (Lucide 樣式) ---
         const IconProps = {
             stroke: "currentColor",
             strokeWidth: 2,
             strokeLinecap: "round",
             strokeLinejoin: "round",
+            fill: "none",
         };
         
         const CircleDollarSign = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v1M12 17v1M16 8h-4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-4a2 2 0 0 0-2-2z"></path></svg>;
@@ -108,20 +221,291 @@
         const Minus = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M5 12h14"></path></svg>;
         const Users = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>;
         const X = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>;
-        const Check = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"></path></svg>;
+        const CircleCheck = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14 9 11"></polyline></svg>;
         const Pencil = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>;
         const UserPlus = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><line x1="19" x2="19" y1="8" y2="14"></line><line x1="16" x2="22" y1="11" y2="11"></line></svg>;
         const UserMinus = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><line x1="22" x2="16" y1="11" y2="11"></line></svg>;
+        const LogOut = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" x2="9" y1="12" y2="12"></line></svg>;
+        const RefreshCw = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.76 2.91L3 8"></path><path d="M3 3v5h5"></path><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.76-2.91L21 16"></path><path d="M21 21v-5h-5"></path></svg>;
+        const Share2 = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"></line><line x1="15.42" x2="8.59" y1="6.51" y2="10.49"></line></svg>;
         // --- 圖標元件結束 ---
 
         /**
-         * 支出 Modal (核心邏輯獨立 - 定義在 App 外部以提高穩定性)
+         * 創建或更新 Firestore 公共 Profile
          */
-        const ExpenseModal = React.memo(({ db, userId, members, getInitialShares, state, onClose, getDisplayName }) => {
+        const createOrUpdatePublicProfile = async (db, uid, displayName, email) => {
+            if (!db || !uid || !displayName) return;
+            const profileDocPath = `artifacts/${appId}/public_profiles/${uid}`;
+            try {
+                await db.doc(profileDocPath).set({ 
+                    displayName: displayName,
+                    email: email,
+                    uid: uid,
+                }, { merge: true });
+            } catch (e) {
+                console.error("Error creating/updating public profile:", e);
+            }
+        };
+        
+        /**
+         * 通用確認提示 Modal
+         */
+        const ConfirmationModal = React.memo(({ isOpen, onClose, onConfirm, title, message, confirmText, confirmColor = 'red' }) => {
+            if (!isOpen) return null;
+
+            const colorClass =
+                confirmColor === 'green'
+                    ? 'bg-green-600 hover:bg-green-700'
+                    : 'bg-red-600 hover:bg-red-700';
+
+            return (
+                <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-[9999] transition-opacity">
+                    <div className="bg-white rounded-xl w-full max-w-sm shadow-2xl transform transition-transform duration-300 scale-100">
+                        <div className="p-6">
+                            <h3 className="text-xl font-bold text-gray-800 mb-4">{title}</h3>
+                            <p className="text-gray-600 mb-6">{message}</p>
+                            <div className="flex justify-end space-x-3">
+                                <button
+                                    onClick={onClose}
+                                    className="px-4 py-2 rounded-full text-gray-700 bg-gray-200 hover:bg-gray-300 transition font-semibold"
+                                >
+                                    取消
+                                </button>
+                                <button
+                                    onClick={onConfirm}
+                                    className={`px-4 py-2 rounded-full text-white font-semibold transition duration-150 shadow-md ${colorClass}`}
+                                >
+                                    {confirmText}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        });
+
+        /**
+         * 認證模態視窗
+         */
+        const AuthModal = React.memo(({ auth, db }) => {
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [nickname, setNickname] = useState('');
+            const [isLogin, setIsLogin] = useState(true);
+            const [error, setError] = useState(null);
+            const [isLoading, setIsLoading] = useState(false);
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setError(null);
+                setIsLoading(true);
+
+                if (!email || !password || (!isLogin && !nickname)) {
+                    setError('請輸入所有必填欄位。');
+                    setIsLoading(false);
+                    return;
+                }
+
+                try {
+                    let userCredential;
+                    let finalDisplayName = nickname.trim();
+
+                    if (isLogin) {
+                        userCredential = await auth.signInWithEmailAndPassword(email, password);
+                        finalDisplayName = userCredential.user.displayName || email;
+                    } else {
+                        userCredential = await auth.createUserWithEmailAndPassword(email, password);
+                        await userCredential.user.updateProfile({
+                            displayName: finalDisplayName
+                        });
+                    }
+                    
+                    if (db) {
+                        await createOrUpdatePublicProfile(db, userCredential.user.uid, finalDisplayName, email);
+                    }
+
+                } catch (e) {
+                    console.error("Auth error:", e.code, e.message);
+                    let displayError = e.message;
+                    if (e.code === 'auth/email-already-in-use') {
+                        displayError = '該電子郵件已被註冊，請直接登入或使用不同郵件。';
+                    } else if (e.code === 'auth/invalid-email') {
+                        displayError = '無效的電子郵件格式。';
+                    } else if (e.code === 'auth/wrong-password' || e.code === 'auth/user-not-found') {
+                        displayError = '電子郵件或密碼錯誤。';
+                    } else if (e.code === 'auth/weak-password') {
+                        displayError = '密碼強度不足，請使用至少 6 個字元。';
+                    }
+                    setError(displayError);
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-gray-900 bg-opacity-95 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-xl w-full max-w-md shadow-2xl p-6 sm:p-8">
+                        <h3 className="text-3xl font-bold text-primaryColor-600 text-center mb-6">
+                            {isLogin ? '登入紀錄簿' : '註冊新帳號'}
+                        </h3>
+                        {error && <p className="text-red-600 bg-red-100 p-3 rounded-lg text-sm mb-4">{error}</p>}
+
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            {!isLogin && (
+                                <div>
+                                    <label htmlFor="nickname" className="block text-sm font-medium text-gray-700">暱稱 (顯示名稱)</label>
+                                    <input
+                                        type="text"
+                                        id="nickname"
+                                        value={nickname}
+                                        onChange={(e) => setNickname(e.target.value)}
+                                        placeholder="請輸入您的暱稱"
+                                        className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500"
+                                        disabled={isLoading}
+                                        required={!isLogin}
+                                    />
+                                </div>
+                            )}
+
+                            <div>
+                                <label htmlFor="email" className="block text-sm font-medium text-gray-700">電子郵件</label>
+                                <input
+                                    type="email"
+                                    id="email"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    placeholder="your.email@example.com"
+                                    className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500"
+                                    disabled={isLoading}
+                                />
+                            </div>
+                            <div>
+                                <label htmlFor="password" className="block text-sm font-medium text-gray-700">密碼 (至少 6 位)</label>
+                                <input
+                                    type="password"
+                                    id="password"
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    placeholder="******"
+                                    className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500"
+                                    disabled={isLoading}
+                                    minLength="6"
+                                />
+                            </div>
+                            <button
+                                type="submit"
+                                disabled={isLoading}
+                                className={
+                                    "w-full flex items-center justify-center px-4 py-3 rounded-full text-white font-semibold transition duration-300 shadow-lg " +
+                                    (isLoading ? "bg-gray-400 cursor-not-allowed" : "bg-primaryColor-600 hover:bg-primaryColor-700")
+                                }
+                            >
+                                {isLoading ? '處理中...' : (isLogin ? '登入' : '註冊')}
+                            </button>
+                        </form>
+
+                        <div className="mt-6 text-center">
+                            <button
+                                onClick={() => { setIsLogin(prev => !prev); setError(null); setNickname(''); }}
+                                className="text-primaryColor-600 hover:text-primaryColor-800 font-medium text-sm"
+                            >
+                                {isLogin ? '還沒有帳號？點此註冊' : '已經有帳號了？點此登入'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        });
+        
+        /**
+         * 紀錄簿共享與切換元件（已移除手動輸入 UID 切換功能）
+         */
+        const CollectionSwitch = React.memo(({ userId, currentCollectionId, getDisplayName, logout, userProfiles }) => {
+            const [copyMessage, setCopyMessage] = useState('');
+
+            // 複製分享連結
+            const handleCopyLink = () => {
+                if (!userId) return;
+
+                const baseUrl = window.location.origin + window.location.pathname;
+                const shareUrl = `${baseUrl}?shareId=${currentCollectionId}`;
+                
+                const tempInput = document.createElement('textarea');
+                tempInput.value = shareUrl;
+                document.body.appendChild(tempInput);
+                tempInput.select();
+                
+                try {
+                    document.execCommand('copy');
+                    setCopyMessage('✨ 連結已複製！');
+                } catch (err) {
+                    console.error('無法複製連結', err);
+                    setCopyMessage('複製失敗，請手動複製網址。');
+                }
+                
+                document.body.removeChild(tempInput);
+                setTimeout(() => setCopyMessage(''), 4000);
+            };
+            
+            const isViewingOwn = currentCollectionId === userId;
+            
+            let collectionDisplay = currentCollectionId;
+            if (userProfiles[currentCollectionId]) {
+                collectionDisplay = userProfiles[currentCollectionId];
+            } else if (currentCollectionId === userId) {
+                collectionDisplay = getDisplayName(userId);
+            } else if (currentCollectionId) {
+                collectionDisplay = `${currentCollectionId.substring(0, 5)}...${currentCollectionId.substring(currentCollectionId.length - 5)}`;
+            }
+            
+            return (
+                <div className="p-4 bg-primaryColor-50 rounded-xl shadow-inner border border-primaryColor-200 mt-4">
+                    {copyMessage && (
+                        <p className="mb-3 p-2 text-sm rounded-lg text-green-700 bg-green-100 transition-opacity duration-500">
+                            {copyMessage}
+                        </p>
+                    )}
+                    <div className="flex justify-between items-start mb-2">
+                        <div>
+                            <p className="text-sm font-semibold text-gray-700">當前紀錄簿擁有者:</p>
+                            <p className="font-extrabold text-lg text-primaryColor-700 truncate" title={currentCollectionId || ''}>
+                                {collectionDisplay || '（無）'} {!isViewingOwn && collectionDisplay && <span className="text-sm font-normal">(共享中)</span>}
+                            </p>
+                        </div>
+                        <button 
+                            onClick={logout}
+                            className="p-2 text-red-600 hover:bg-red-100 rounded-full transition duration-150 transform hover:scale-110 ml-4"
+                            title="登出"
+                        >
+                            <LogOut className="w-6 h-6" />
+                        </button>
+                    </div>
+
+                    <div className="mt-3 pt-3 border-t border-primaryColor-100 space-y-3">
+                        <div className="flex space-x-2">
+                            <button 
+                                onClick={handleCopyLink}
+                                className="flex-1 flex items-center justify-center py-2 px-4 border border-primaryColor-600 text-sm font-bold rounded-lg text-white bg-primaryColor-500 hover:bg-primaryColor-600 transition hover:scale-[1.01] transform"
+                                title="生成並複製可分享的連結"
+                            >
+                                <Share2 className="w-5 h-5 mr-2" />
+                                複製分享連結
+                            </button>                    
+                        </div>
+                    </div>
+                </div>
+            );
+        });
+
+        /**
+         * 支出 Modal (核心邏輯獨立)
+         */
+        const ExpenseModal = React.memo(({ db, currentUserId, members, getInitialShares, state, onClose, getDisplayName, isReadOnly, collectionId, liveExchangeRates, defaultCurrency }) => {
             const [newExpense, setNewExpense] = useState({
                 description: '',
-                amount: '',
-                payerName: userId || '',
+                originalAmount: '',
+                currency: defaultCurrency || DEFAULT_CURRENCY,
+                payerName: currentUserId || '',
                 shares: {}, 
             });
             const [isLoadingModal, setIsLoadingModal] = useState(false);
@@ -131,42 +515,54 @@
             const expenseToEdit = state.editingExpense;
             const modalTitle = isEditing ? '編輯支出記錄' : '新增支出記錄';
             const submitText = isEditing ? '儲存修改' : '確認新增支出';
+            
+            const currentExchangeRate = liveExchangeRates[newExpense.currency] || DEFAULT_EXCHANGE_RATES[newExpense.currency] || 1.0;
+            const amountInTWD = useMemo(() => {
+                const amount = parseFloat(newExpense.originalAmount) || 0;
+                return Math.round(amount * currentExchangeRate);
+            }, [newExpense.originalAmount, currentExchangeRate]);
 
-            // 1. 設置初始狀態 (只在 Modal 開啟或編輯對象變更時運行)
+
             useEffect(() => {
                 if (state.isOpen) {
                     if (isEditing && expenseToEdit) {
-                        // 載入編輯資料
                         const initialShares = members.reduce((acc, name) => ({ 
                             ...acc, 
                             [name]: expenseToEdit.shares[name] !== undefined ? expenseToEdit.shares[name] : 0 
                         }), {});
                         setNewExpense({
                             description: expenseToEdit.description,
-                            amount: expenseToEdit.amount,
+                            originalAmount: expenseToEdit.originalAmount,
+                            currency: expenseToEdit.currency || DEFAULT_CURRENCY,
                             payerName: expenseToEdit.payerName,
                             shares: initialShares,
                         });
                     } else {
-                        // 載入新增預設值
                         setNewExpense({
                             description: '',
-                            amount: '',
-                            payerName: userId || members[0] || '',
+                            originalAmount: '',
+                            currency: defaultCurrency || DEFAULT_CURRENCY,
+                            payerName: currentUserId || members[0] || '',
                             shares: getInitialShares(),
                         });
                     }
                     setModalError(null);
                 }
-            }, [state.isOpen, isEditing, expenseToEdit, members, userId, getInitialShares]);
+            }, [state.isOpen, isEditing, expenseToEdit, members, currentUserId, getInitialShares]);
 
             const handleInputChange = (e) => {
                 const { name, value } = e.target;
-                // 這是關鍵修正：由於我們已經在父層給了 key，這裡的本地狀態更新應該是穩定的。
                 setNewExpense(prev => ({
                     ...prev,
-                    [name]: name === 'amount' ? parseFloat(value) || '' : value,
+                    [name]: name === 'originalAmount' ? (value === '' ? '' : parseFloat(value) || '') : value,
                 }));
+            };
+
+            const handleCurrencyChange = (e) => {
+                 setNewExpense(prev => ({
+                    ...prev,
+                    currency: e.target.value,
+                 }));
             };
 
             const handleShareChange = (name, delta) => {
@@ -192,9 +588,13 @@
             };
 
             const saveExpense = async () => {
-                if (!db || !userId) return;
+                if (isReadOnly) {
+                    setModalError('您正在瀏覽共享紀錄簿，無法進行修改。請切換回您的私有紀錄簿。');
+                    return;
+                }
+                if (!db || !currentUserId) return;
 
-                if (!newExpense.description.trim() || newExpense.amount <= 0 || !newExpense.payerName) {
+                if (!newExpense.description.trim() || newExpense.originalAmount <= 0 || !newExpense.payerName) {
                     setModalError('請輸入有效的品項、金額和付款人！');
                     return;
                 }
@@ -204,24 +604,25 @@
                 try {
                     const expenseToSave = {
                         description: newExpense.description,
-                        amount: newExpense.amount,
+                        originalAmount: newExpense.originalAmount,
+                        currency: newExpense.currency,
+                        exchangeRate: currentExchangeRate,
+                        amountInTWD: amountInTWD,
                         payerName: newExpense.payerName,
                         shares: Object.entries(newExpense.shares).reduce((acc, [name, share]) => {
                             if (share > 0) acc[name] = share;
                             return acc;
                         }, {}),
-                        ...(isEditing ? {} : { timestamp: serverTimestamp() }),
+                        ...(isEditing ? {} : { timestamp: serverTimestamp(), creatorId: currentUserId }),
                         appId: appId,
                     };
 
-                    const collectionPath = `artifacts/${appId}/public/data/expenses`;
-
+                    const collectionPath = `artifacts/${appId}/users/${collectionId}/expenses`;
+                    
                     if (isEditing) {
                         const docPath = `${collectionPath}/${expenseToEdit.id}`;
-                        // V8/Compat 模式：使用 db.doc().update()
                         await db.doc(docPath).update(expenseToSave);
                     } else {
-                        // V8/Compat 模式：使用 db.collection().add()
                         await db.collection(collectionPath).add(expenseToSave);
                     }
 
@@ -236,21 +637,22 @@
             
             if (!state.isOpen) return null;
 
-
             return (
               <div 
-                key={isEditing ? expenseToEdit.id : 'add-new'} 
-                className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50 transition-opacity"
+                key={isEditing && expenseToEdit ? expenseToEdit.id : 'add-new'} 
+                className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-start sm:items-center justify-center p-4 pt-8 z-50 transition-opacity"
               >
-                <div className="bg-white rounded-xl w-full max-w-lg shadow-2xl transform transition-transform duration-300 scale-100">
+                <div className="bg-white rounded-xl w-full max-w-lg shadow-2xl transform transition-transform duration-300 scale-100 max-h-[90vh] flex flex-col">
                   <div className="p-6 border-b flex justify-between items-center">
-                    <h3 className="text-xl font-bold text-gray-800">{modalTitle}</h3>
+                    <h3 className="text-xl font-bold text-gray-800">
+                        {modalTitle} {isReadOnly && <span className="text-red-500 ml-2">(唯讀)</span>}
+                    </h3>
                     <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-100 text-gray-600 transition hover:scale-110 transform">
                       <X className="w-6 h-6" />
                     </button>
                   </div>
 
-                  <div className="p-6 space-y-5">
+                  <div className="p-6 space-y-5 overflow-y-auto flex-1 pb-20 sm:pb-6">
                     {modalError && <p className="text-red-600 bg-red-100 p-3 rounded-lg text-sm">{modalError}</p>}
                     
                     {/* 1. 品項與金額 */}
@@ -266,20 +668,52 @@
                           onChange={handleInputChange}
                           placeholder="例如: 晚餐，電影票"
                           className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500"
+                          disabled={isReadOnly}
                         />
                       </div>
+                      
+                      {/* 幣別選擇與金額輸入 */}
                       <div>
-                        <label htmlFor="amount" className="block text-sm font-medium text-gray-700">金額 (NT$)</label>
-                        <input
-                          key="expense-amount" 
-                          type="number"
-                          id="amount"
-                          name="amount"
-                          value={newExpense.amount}
-                          onChange={handleInputChange}
-                          placeholder="100.00"
-                          className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500"
-                        />
+                        <label htmlFor="originalAmount" className="block text-sm font-medium text-gray-700">原始金額</label>
+                        <div className="flex space-x-2 mt-1">
+                          <select
+                              id="currency"
+                              name="currency"
+                              value={newExpense.currency}
+                              onChange={handleCurrencyChange}
+                              className="block flex-shrink-0 w-auto border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500 bg-white disabled:bg-gray-100"
+                              disabled={isReadOnly}
+                          >
+                            {CURRENCIES.map(code => (
+                                <option key={code} value={code}>{code}</option>
+                            ))}
+                          </select>
+                          <input
+                            key="expense-amount" 
+                            type="number"
+                            id="originalAmount"
+                            name="originalAmount"
+                            value={newExpense.originalAmount}
+                            onChange={handleInputChange}
+                            placeholder="100.00"
+                            className="block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500"
+                            disabled={isReadOnly}
+                          />
+                        </div>
+                        
+                        {/* 顯示換算後的台幣金額 */}
+                        {newExpense.originalAmount > 0 && newExpense.currency !== DEFAULT_CURRENCY && (
+                           <p className="mt-1 text-xs text-gray-500 italic">
+                               換算台幣 (TWD) 約: 
+                               <span className="font-semibold text-primaryColor-600 ml-1">TWD {amountInTWD.toFixed(0)}</span>
+                               (匯率: {currentExchangeRate})
+                           </p>
+                        )}
+                        {newExpense.originalAmount > 0 && newExpense.currency === DEFAULT_CURRENCY && (
+                           <p className="mt-1 text-xs text-gray-500 italic">
+                               分帳計算使用此金額 (TWD)
+                           </p>
+                        )}
                       </div>
                     </div>
 
@@ -292,6 +726,7 @@
                         value={newExpense.payerName}
                         onChange={handleInputChange}
                         className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500 bg-white"
+                        disabled={isReadOnly}
                       >
                         {members.map(member => (
                           <option key={member} value={member}>
@@ -304,11 +739,12 @@
                     {/* 3. 分帳份數設定 */}
                     <div className="pt-4 border-t border-gray-100">
                       <div className="flex justify-between items-center mb-3">
-                        <label className="text-lg font-bold text-gray-700">分帳份數 (Shares)</label>
+                        <label className="text-lg font-bold text-gray-700">分帳份數</label>
                         <button
                           onClick={setToAverageSplit}
                           type="button"
-                          className="text-sm text-primaryColor-600 hover:text-primaryColor-800 font-medium"
+                          className="text-sm text-primaryColor-600 hover:text-primaryColor-800 font-medium disabled:opacity-50"
+                          disabled={isReadOnly}
                         >
                           [設為平均分配]
                         </button>
@@ -324,14 +760,13 @@
                               <span className={`font-medium ${isPayer ? 'text-primaryColor-700' : 'text-gray-700'}`}>
                                 {displayMember} {isPayer && '(付款人)'}
                               </span>
-                              {/* 修正：增加 flex-shrink-0 確保按鈕不會在 Safari 上被擠壓或隱藏 */}
                               <div className="flex items-center space-x-2 flex-shrink-0">
                                 <button
                                   onClick={() => handleShareChange(member, -1)}
                                   type="button"
-                                  // 優化: 獨立按鈕樣式
-                                  className="p-1.5 bg-red-50 text-red-600 rounded-lg transition hover:scale-105 transform hover:bg-red-100 shadow-sm border border-red-200"
+                                  className="p-1.5 bg-red-50 text-red-600 rounded-lg transition hover:scale-105 transform hover:bg-red-100 shadow-sm border border-red-200 disabled:opacity-50 disabled:hover:scale-100"
                                   aria-label="減少份數"
+                                  disabled={isReadOnly}
                                 >
                                   <Minus className="w-5 h-5" />
                                 </button>
@@ -339,9 +774,9 @@
                                 <button
                                   onClick={() => handleShareChange(member, 1)}
                                   type="button"
-                                  // 優化: 獨立按鈕樣式
-                                  className="p-1.5 bg-green-50 text-green-600 rounded-lg transition hover:scale-105 transform hover:bg-green-100 shadow-sm border border-green-200"
+                                  className="p-1.5 bg-green-50 text-green-600 rounded-lg transition hover:scale-105 transform hover:bg-green-100 shadow-sm border border-green-200 disabled:opacity-50 disabled:hover:scale-100"
                                   aria-label="增加份數"
+                                  disabled={isReadOnly}
                                 >
                                   <Plus className="w-5 h-5" />
                                 </button>
@@ -352,67 +787,105 @@
                         })}
                       </div>
                     </div>
-                  </div>
-
-                  <div className="p-6 border-t flex justify-end">
-                    <button
-                      onClick={saveExpense}
-                      disabled={isLoadingModal || !newExpense.description.trim() || newExpense.amount <= 0 || !newExpense.payerName}
-                      className={`flex items-center px-6 py-3 rounded-full text-white font-semibold transition duration-150 shadow-md ${
-                        isLoadingModal || !newExpense.description.trim() || newExpense.amount <= 0 || !newExpense.payerName
-                          ? 'bg-gray-400 cursor-not-allowed'
-                          : `bg-${primaryColor}-600 hover:bg-${primaryColor}-700 hover:shadow-lg`
-                      }`}
-                    >
-                      {isLoadingModal ? '儲存中...' : (
-                        <>
-                          <Check className="w-5 h-5 mr-2" />
-                          {submitText}
-                        </>
-                      )}
-                    </button>
-                  </div>
+					<div className="pt-6 border-t flex justify-end mt-6">
+					  <button
+					    onClick={saveExpense}
+					    disabled={isReadOnly || isLoadingModal || !newExpense.description.trim() || newExpense.originalAmount <= 0 || !newExpense.payerName}
+					    className={
+						  "flex items-center px-6 py-3 rounded-full text-white font-semibold transition duration-150 shadow-md " +
+						  ((isReadOnly || isLoadingModal || !newExpense.description.trim() || newExpense.originalAmount <= 0 || !newExpense.payerName)
+						    ? "bg-gray-400 cursor-not-allowed"
+						    : "bg-primaryColor-600 hover:bg-primaryColor-700 hover:shadow-lg")
+					    }
+					  >
+					    {isLoadingModal ? '儲存中...' : (
+						  <>
+						    <CircleCheck className="w-5 h-5 mr-2" />
+						    {submitText}
+						  </>
+					    )}
+					  </button>
+				    </div>
+				  </div>
                 </div>
               </div>
             );
-          });
+        });
           
-          /**
-           * 成員管理 Modal (核心邏輯獨立 - 定義在 App 外部以提高穩定性)
-           */
-          const MemberManagementModal = React.memo(({ db, userId, members, customMembers, defaultSharesConfig, isMemberModalOpen, setIsMemberModalOpen, saveMembers, handleSaveDefaultShares, handleDeleteMember, setIsLoading, isLoading, setError, getDisplayName }) => {
-            // 臨時狀態：該輸入框的狀態現在是該 Modal 內部的，不會觸發 App 重新渲染
+        /**
+         * 成員管理 Modal (核心邏輯獨立)
+         * 已移除未使用的 collectionId 參數
+         */
+        const MemberManagementModal = React.memo(({ db, currentUserId, members, customMembers, defaultSharesConfig, isMemberModalOpen, setIsMemberModalOpen, saveMembers, handleSaveDefaultShares, handleDeleteMember, setIsLoading, isLoading, setError, getDisplayName, isReadOnly }) => {
             const [newMemberName, setNewMemberName] = useState(''); 
-            
-            // 臨時狀態，用於在 Modal 內編輯預設份數
             const [tempDefaultShares, setTempDefaultShares] = useState({});
 
             useEffect(() => {
                 if (isMemberModalOpen) {
-                    // 初始化 temp 狀態：包含所有成員 (包括 userId) 的當前預設份數
                     const initialShares = members.reduce((acc, name) => {
                         const shareValue = defaultSharesConfig[name] !== undefined ? defaultSharesConfig[name] : 1;
                         acc[name] = shareValue;
                         return acc;
                     }, {});
                     setTempDefaultShares(initialShares);
-                    setNewMemberName(''); // 確保每次打開時清空輸入
+                    setNewMemberName('');
                 }
             }, [isMemberModalOpen, members, defaultSharesConfig]);
             
-            // 修正: 將新增成員邏輯移入該 Modal 內部
+			// --- 使用 GPS 偵測所在地，推測預設幣別 ---
+			useEffect(() => {
+				if (!navigator.geolocation) {
+					console.log("此瀏覽器不支援地理定位，使用預設幣別 TWD");
+					return;
+				}
+
+				navigator.geolocation.getCurrentPosition(
+					async (pos) => {
+						const { latitude, longitude } = pos.coords;
+						try {
+							// 使用免費的 reverse geocode API 把經緯度換成國家代碼
+							const url = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`;
+							const res = await fetch(url);
+							if (!res.ok) throw new Error("reverse geocode API error");
+							const data = await res.json();
+
+							const countryCode = (data.countryCode || "").toUpperCase();
+							setDetectedCountry(countryCode || null);
+
+							const currencyFromCountry = COUNTRY_CURRENCY_MAP[countryCode];
+							if (currencyFromCountry && CURRENCIES.includes(currencyFromCountry)) {
+								console.log("偵測到國家與貨幣：", countryCode, currencyFromCountry);
+								setDefaultCurrency(currencyFromCountry);
+							} else {
+								console.log("未對應到貨幣，維持預設 TWD");
+							}
+						} catch (err) {
+							console.warn("以 GPS 推測幣別失敗：", err);
+						}
+					},
+					(err) => {
+						console.warn("取得 GPS 位置失敗：", err);
+					},
+					{
+						enableHighAccuracy: false,
+						timeout: 10000,
+					}
+				);
+			}, []);
+			
             const handleAddMemberInternal = async () => {
+                if (isReadOnly) return setError('唯讀模式下無法新增成員。');
+                
                 const trimmedName = newMemberName.trim();
-                if (trimmedName && trimmedName !== userId && !customMembers.includes(trimmedName)) {
+                if (trimmedName && trimmedName !== currentUserId && !customMembers.includes(trimmedName)) {
                     const newMemberList = [...customMembers, trimmedName];
                     await saveMembers(newMemberList); 
                     setNewMemberName('');
-                } else if (trimmedName === userId) {
+                } else if (trimmedName === currentUserId) {
                     setError("不能將自己的用戶 ID 新增為成員。");
                 }
             };
             
-            // 修正: 處理臨時份數的增減
             const handleTempShareChange = (name, delta) => {
                 setTempDefaultShares(prev => {
                     const currentShares = prev[name] || 0;
@@ -424,7 +897,6 @@
                 });
             };
             
-            // 處理直接輸入 (仍保留以防萬一，但主要使用按鈕)
             const handleTempInputChange = (name, value) => {
                 const shareCount = parseInt(value, 10);
                 if (shareCount >= 0 || value === '') {
@@ -434,16 +906,21 @@
                     }));
                 }
             };
-
             
+            const handleMemberDeleteWrapper = async (member) => {
+                if (isReadOnly) return setError('唯讀模式下無法刪除成員。');
+                await handleDeleteMember(member);
+            };
+
             if (!isMemberModalOpen) return null;
 
-
             return (
-              <div className={`fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50 transition-opacity`}>
+              <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-50 transition-opacity">
                   <div className="bg-white rounded-xl w-full max-w-2xl shadow-2xl transform transition-transform duration-300 scale-100">
                       <div className="p-6 border-b flex justify-between items-center">
-                          <h3 className="text-xl font-bold text-gray-800">管理分帳成員與預設份數</h3>
+                          <h3 className="text-xl font-bold text-gray-800">
+                            管理分帳成員與預設份數 {isReadOnly && <span className="text-red-500 ml-2">(唯讀)</span>}
+                          </h3>
                           <button onClick={() => setIsMemberModalOpen(false)} className="p-1 rounded-full hover:bg-gray-100 text-gray-600 transition hover:scale-110 transform">
                               <X className="w-6 h-6" />
                           </button>
@@ -455,25 +932,26 @@
                               <h4 className="font-semibold text-lg mb-3 flex items-center text-primaryColor-700">
                                   <UserPlus className="w-5 h-5 mr-2" /> 新增成員
                               </h4>
-                              <div className="flex space-x-2">
+                              <div className="flex gap-2 items-center"> 
                                   <input
                                       key="new-member-name" 
                                       type="text"
-                                      value={newMemberName} // 使用 Modal 內部狀態
+                                      value={newMemberName} 
                                       onChange={(e) => setNewMemberName(e.target.value)}
                                       onKeyDown={(e) => e.key === 'Enter' && handleAddMemberInternal()}
                                       placeholder="輸入新成員名稱 (例如: 小明)"
-                                      className="flex-grow border border-gray-300 rounded-lg p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500"
-                                      disabled={isLoading}
+                                      className="flex-grow border border-gray-300 rounded-lg p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500 disabled:bg-gray-100"
+                                      disabled={isLoading || isReadOnly}
                                   />
                                   <button
-                                      onClick={handleAddMemberInternal} // 使用 Modal 內部函式
-                                      className={`px-4 py-2 rounded-lg text-white font-semibold transition hover:scale-105 transform ${
-                                          newMemberName.trim() === '' || isLoading
-                                          ? 'bg-gray-400 cursor-not-allowed'
-                                          : `bg-${primaryColor}-600 hover:bg-${primaryColor}-700`
-                                      }`}
-                                      disabled={newMemberName.trim() === '' || isLoading}
+                                      onClick={handleAddMemberInternal} 
+                                      className={
+                                        "flex-shrink-0 px-4 py-3 rounded-lg text-white font-semibold transition hover:scale-105 transform " +
+                                        (newMemberName.trim() === '' || isLoading || isReadOnly
+                                          ? "bg-gray-400 cursor-not-allowed"
+                                          : "bg-primaryColor-600 hover:bg-primaryColor-700")
+                                      }
+                                      disabled={newMemberName.trim() === '' || isLoading || isReadOnly}
                                   >
                                       新增
                                   </button>
@@ -489,51 +967,49 @@
                               </div>
                               <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
                                   {members.map(member => (
-                                      <div key={member} className="grid grid-cols-2 gap-4 items-center p-3 rounded-lg border border-gray-200 bg-white shadow-sm">
-                                          <span className={`font-medium ${member === userId ? 'text-primaryColor-700' : 'text-gray-800'} truncate`}>
+                                      <div key={member} className="grid grid-cols-[1fr_auto] gap-4 items-center p-3 rounded-lg border border-gray-200 bg-white shadow-sm">
+                                          <span className={`font-medium ${member === currentUserId ? 'text-primaryColor-700' : 'text-gray-800'} truncate`} title={member}>
                                               {getDisplayName(member)}
                                           </span>
-                                          <div className="flex items-center space-x-3">
+                                          <div className="flex items-center space-x-2 flex-shrink">
                                             
-                                            {/* 新增 Minus 按鈕 */}
                                             <button
                                                 onClick={() => handleTempShareChange(member, -1)}
                                                 type="button"
-                                                className="p-1.5 bg-red-50 text-red-600 rounded-lg transition hover:scale-105 transform hover:bg-red-100 shadow-sm border border-red-200"
+                                                className="p-1.5 bg-red-50 text-red-600 rounded-lg transition hover:scale-105 transform hover:bg-red-100 shadow-sm border border-red-200 disabled:opacity-50"
                                                 aria-label="減少份數"
+                                                disabled={isReadOnly}
                                             >
                                                 <Minus className="w-5 h-5" />
                                             </button>
                                             
-                                            {/* 修正：將 input 放在按鈕之間 */}
                                             <input
                                                 key={`shares-input-${member}`} 
                                                 type="number"
                                                 min="0"
-                                                // 使用內部狀態
                                                 value={tempDefaultShares[member] === 0 ? 0 : tempDefaultShares[member] || 1}
                                                 onChange={(e) => handleTempInputChange(member, e.target.value)}
                                                 placeholder="1"
-                                                className="w-16 border border-gray-300 rounded-lg p-2 text-center focus:ring-primaryColor-500 focus:border-primaryColor-500"
-                                                disabled={isLoading}
+                                                className="w-16 border border-gray-300 rounded-lg p-2 text-center focus:ring-primaryColor-500 focus:border-primaryColor-500 disabled:bg-gray-100"
+                                                disabled={isLoading || isReadOnly}
                                             />
                                             
-                                            {/* 新增 Plus 按鈕 */}
                                             <button
                                                 onClick={() => handleTempShareChange(member, 1)}
                                                 type="button"
-                                                className="p-1.5 bg-green-50 text-green-600 rounded-lg transition hover:scale-105 transform hover:bg-green-100 shadow-sm border border-green-200"
+                                                className="p-1.5 bg-green-50 text-green-600 rounded-lg transition hover:scale-105 transform hover:bg-green-100 shadow-sm border border-green-200 disabled:opacity-50"
                                                 aria-label="增加份數"
+                                                disabled={isReadOnly}
                                             >
                                                 <Plus className="w-5 h-5" />
                                             </button>
                                             
                                             <span className="text-gray-500">份</span>
-                                            {member !== userId && (
+                                            {member !== currentUserId && (
                                                 <button
-                                                    onClick={() => handleDeleteMember(member)}
-                                                    className="p-1 text-red-500 hover:bg-red-100 rounded-full transition hover:scale-110 transform ml-auto"
-                                                    disabled={isLoading}
+                                                    onClick={() => handleMemberDeleteWrapper(member)}
+                                                    className="p-1 text-red-500 hover:bg-red-100 rounded-full transition hover:scale-110 transform ml-auto disabled:opacity-50"
+                                                    disabled={isLoading || isReadOnly}
                                                     aria-label="刪除成員"
                                                 >
                                                     <UserMinus className="w-5 h-5" />
@@ -548,30 +1024,25 @@
                       <div className="p-6 border-t flex justify-end">
                           <button
                               onClick={() => handleSaveDefaultShares(tempDefaultShares)}
-                              disabled={isLoading}
-                              className={`flex items-center px-6 py-3 rounded-full text-white font-semibold transition hover:scale-105 transform duration-150 shadow-md ${
-                                  isLoading
-                                  ? 'bg-gray-400 cursor-not-allowed'
-                                  : `bg-${primaryColor}-600 hover:bg-${primaryColor}-700 hover:shadow-lg`
-                              }`}
+                              disabled={isLoading || isReadOnly}
+                              className={
+                                "flex items-center px-6 py-3 rounded-full text-white font-semibold transition hover:scale-105 transform duration-150 shadow-md " +
+                                ((isLoading || isReadOnly)
+                                  ? "bg-gray-400 cursor-not-allowed"
+                                  : "bg-primaryColor-600 hover:bg-primaryColor-700 hover:shadow-lg")
+                              }
                           >
-                              {isLoading ? '儲存中...' : (
-                                  <>
-                                      <Check className="w-5 h-5 mr-2" />
-                                      儲存預設份數
-                                  </>
-                              )}
+                              <CircleCheck className="w-5 h-5 mr-2" />
+                              儲存預設份數
                           </button>
                       </div>
                   </div>
               </div>
             );
-          });
-
+        });
 
         /**
          * 主要的 App 元件
-         * @returns {JSX.Element}
          */
         const App = () => {
           // --- 應用程式狀態 ---
@@ -579,23 +1050,36 @@
           const [auth, setAuth] = useState(null);
           const [userId, setUserId] = useState(null);
           const [authReady, setAuthReady] = useState(false);
+          const [userProfiles, setUserProfiles] = useState({});
+		  const [lastExchangeUpdate, setLastExchangeUpdate] = useState(null);
+          const [liveExchangeRates, setLiveExchangeRates] = useState(DEFAULT_EXCHANGE_RATES);
+		  const [defaultCurrency, setDefaultCurrency] = useState(DEFAULT_CURRENCY);
+		  const [detectedCountry, setDetectedCountry] = useState(null);
+          
+          const [currentCollectionId, setCurrentCollectionId] = useState(null); // 當前正在檢視的紀錄簿 ID (預設為 userId)
+          const isReadOnly = userId !== currentCollectionId;
+
           const [expenses, setExpenses] = useState([]);
+          const [customMembers, setCustomMembers] = useState([]); 
+          const [defaultSharesConfig, setDefaultSharesConfig] = useState({}); 
+          const [members, setMembers] = useState([]); 
           
-          // 成員管理狀態
-          const [customMembers, setCustomMembers] = useState([]); // 儲存使用者手動新增的成員名稱 (不包含 userId)
-          const [defaultSharesConfig, setDefaultSharesConfig] = useState({}); // 儲存每個成員的預設份數 { name: shareCount } (非預設值 1)
-          const [members, setMembers] = useState([]); // 儲存所有參與分帳的成員名稱 (包含 userId)
-          
-          // Modal 狀態 (獨立控制 Modal 的開啟和要編輯的支出)
           const [expenseModalState, setExpenseModalState] = useState({
               isOpen: false,
-              editingExpense: null, // 儲存正在編輯的支出物件
+              editingExpense: null,
               isEditing: false,
           });
-
-          // Modal 狀態
-          const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
           
+          const [confirmModalState, setConfirmModalState] = useState({
+              isOpen: false,
+              title: '',
+              message: '',
+              confirmText: '確認',
+              confirmColor: 'red',
+              onConfirm: () => {},
+          });
+
+          const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
           const [isLoading, setIsLoading] = useState(false);
           const [error, setError] = useState(null);
           
@@ -608,93 +1092,130 @@
             }
 
             try {
-              // V8/Compat 模式：使用 app.auth() 和 app.firestore() 取得服務實例
-              const app = initializeApp(firebaseConfig);
+              const app = firebase.initializeApp(firebaseConfig);
               const _auth = app.auth();
-              if (!app.firestore) {
-                  throw new Error("Firestore service not available. Check your Firebase CDN links.");
-              }
               const _db = app.firestore();
 
               setDb(_db);
               setAuth(_auth);
 
-              // 確保 onAuthStateChanged 立即啟動並在用戶狀態確定後設置 userId
-              // V8/Compat 模式：使用 _auth.onAuthStateChanged
-              const unsubscribe = _auth.onAuthStateChanged(async (user) => {
+              const unsubscribe = _auth.onAuthStateChanged((user) => {
                 if (user) {
-                  setUserId(user.uid);
+                    setUserId(user.uid);
+                    
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const shareId = urlParams.get('shareId');
+
+                    if (shareId) {
+                        setCurrentCollectionId(shareId);
+                        history.replaceState(null, null, window.location.pathname);
+                    } else {
+                        setCurrentCollectionId(prev => prev || user.uid); 
+                    }
+                    
                 } else {
-                  // V8/Compat 模式：使用 _auth.signInAnonymously
-                  await _auth.signInAnonymously().catch(e => setError(`Auth error: ${e.message}`));
+                    setUserId(null);
+                    setCurrentCollectionId(null);
                 }
-                // 在 onAuthStateChanged 監聽器第一次運行後，設置為 ready
                 setAuthReady(true);
               });
               
-              if (initialAuthToken) {
-                // V8/Compat 模式：使用 _auth.signInWithCustomToken
-                _auth.signInWithCustomToken(initialAuthToken)
-                  .catch(err => {
-                    console.error('Custom token sign-in failed, falling back to anonymous:', err);
-                  });
-              } else {
-                // 立即嘗試匿名登入，讓 onAuthStateChanged 處理結果
-                _auth.signInAnonymously()
-                  .catch(e => console.error(`Initial anonymous sign-in failed (handled by onAuthStateChanged): ${e.message}`));
-              }
-
               return () => unsubscribe();
             } catch (e) {
-              // 如果在這裡發生錯誤 (例如 initializeApp 失敗)，可能是因為 CDN 載入問題
-              setError(`Firebase initialization failed: ${e.message}. 請確認您的 Firebase 服務啟用。`);
-              setAuthReady(true); // 如果初始化同步失敗，也解鎖 UI
+              setError(`Firebase initialization failed: ${e.message}`);
+              setAuthReady(true);
             }
           }, []);
 
-
-          // --- 2. 數據獲取 (Firestore 監聽) ---
+          // --- 2. 獲取所有公共暱稱 ---
           useEffect(() => {
-            if (!authReady || !db || !userId) return; 
+            if (!authReady || !db) return;
+            
+            const profilesCollectionPath = `artifacts/${appId}/public_profiles`;
+            const profilesRef = db.collection(profilesCollectionPath);
 
-            // --- A. 監聽支出記錄 ---
-            const expensesCollectionPath = `artifacts/${appId}/public/data/expenses`;
-            // V8/Compat 模式：使用 db.collection()
+            const unsubscribeProfiles = profilesRef.onSnapshot((snapshot) => {
+                const profiles = {};
+                snapshot.forEach(docSnap => {
+                    const data = docSnap.data();
+                    if (data.uid && data.displayName) {
+                        profiles[data.uid] = data.displayName;
+                    }
+                });
+                setUserProfiles(profiles);
+            }, (err) => {
+                console.error("Error listening to user profiles:", err);
+            });
+
+            return () => unsubscribeProfiles();
+          }, [authReady, db]);
+
+          // --- 3. 獲取實時匯率 ---
+          useEffect(() => {
+			fetchExchangeRates().then(result => {
+				setLiveExchangeRates(result.rates);
+				setLastExchangeUpdate(result.lastUpdate);
+			});
+		  }, []);
+
+          // 登出
+          const logout = useCallback(async () => {
+            if (auth) {
+                try {
+                    await auth.signOut();
+                    setExpenses([]);
+                    setCustomMembers([]);
+                    setDefaultSharesConfig({});
+                } catch (e) {
+                    setError(`登出失敗: ${e.message}`);
+                }
+            }
+          }, [auth]);
+
+          // --- 4. 數據獲取 (Firestore 監聽) ---
+          useEffect(() => {
+            if (!authReady || !db || !currentCollectionId) return; 
+
+            const expensesCollectionPath = `artifacts/${appId}/users/${currentCollectionId}/expenses`;
             const expensesRef = db.collection(expensesCollectionPath);
 
-            // V8/Compat 模式：使用 collectionRef.onSnapshot()
             const unsubscribeExpenses = expensesRef.onSnapshot((snapshot) => {
               const fetchedExpenses = snapshot.docs.map(docSnap => {
                 const data = docSnap.data();
                 const timestamp = data.timestamp ? data.timestamp.toDate() : null; 
                 
+                const originalAmount = data.originalAmount !== undefined ? data.originalAmount : data.amount;
+                const currency = data.currency || DEFAULT_CURRENCY;
+                const exchangeRate = data.exchangeRate || (DEFAULT_EXCHANGE_RATES[currency] || 1.0);
+                const amountInTWD = data.amountInTWD !== undefined ? data.amountInTWD : originalAmount * exchangeRate;
+
                 return {
                   id: docSnap.id, 
                   ...data,
-                  amount: typeof data.amount === 'number' ? data.amount : parseFloat(data.amount || 0),
+                  originalAmount: typeof originalAmount === 'number' ? originalAmount : parseFloat(originalAmount || 0),
+                  currency: currency,
+                  exchangeRate: exchangeRate,
+                  amountInTWD: typeof amountInTWD === 'number' ? amountInTWD : parseFloat(amountInTWD || 0),
                   shares: data.shares || {},
                   timestamp: timestamp,
                 };
               });
               setExpenses(fetchedExpenses);
             }, (err) => {
-              console.error("Error listening to expenses:", err);
+              console.error(`Error listening to expenses in collection ${currentCollectionId}:`, err);
               if (err.code === 'permission-denied') {
-                  setError(`資料同步失敗：權限不足。請檢查 Firestore 安全規則是否允許匿名/登入使用者讀取。`);
+                  setError(`權限不足：無法讀取此分享連結對應的紀錄簿（ID: ${currentCollectionId}）。請洽擁有者確認權限。`);
               } else {
                   setError(`資料同步失敗: ${err.message}`);
               }
+              setExpenses([]);
             });
 
-            // --- B. 監聽成員設定 ---
-            const membersDocPath = `artifacts/${appId}/public/data/settings/members`;
-            // V8/Compat 模式：使用 db.doc()
+            const membersDocPath = `artifacts/${appId}/users/${currentCollectionId}/settings/members`;
             const membersDocRef = db.doc(membersDocPath);
 
-            // V8/Compat 模式：使用 docRef.onSnapshot()
             const unsubscribeMembers = membersDocRef.onSnapshot((docSnap) => {
-                // 修正: 在 V8/Compat 模式下，exists 是一個屬性，而不是函式
-                if (docSnap.exists) { 
+                if (docSnap.exists) {
                     const data = docSnap.data();
                     const list = Array.isArray(data.list) ? data.list : [];
                     const shares = data.defaultShares || {};
@@ -713,25 +1234,21 @@
               unsubscribeExpenses();
               unsubscribeMembers();
             };
-          }, [authReady, db, userId]);
+          }, [authReady, db, currentCollectionId]);
 
-          // --- 3. 衍生狀態：計算最終成員清單 ---
+          // --- 5. 衍生成員清單 ---
           useEffect(() => {
-            let currentMembers = [userId].filter(Boolean); 
+            let currentMembers = [currentCollectionId].filter(Boolean); 
             
             customMembers.forEach(name => {
-                if (name !== userId && !currentMembers.includes(name)) {
+                if (name !== currentCollectionId && !currentMembers.includes(name)) {
                     currentMembers.push(name);
                 }
             });
 
             setMembers(currentMembers.sort());
+          }, [currentCollectionId, customMembers]);
 
-          }, [userId, customMembers]);
-
-          /**
-           * 根據當前的成員清單和預設份數配置，產生初始的分帳份數物件
-           */
           const getInitialShares = useCallback(() => {
             return members.reduce((acc, name) => {
                 const shareValue = defaultSharesConfig[name] !== undefined ? defaultSharesConfig[name] : 1;
@@ -740,24 +1257,45 @@
             }, {});
           }, [members, defaultSharesConfig]);
 
+          // --- Modal 開關 ---
+          const openConfirmModal = useCallback((title, message, onConfirm, confirmText = '確認', confirmColor = 'red') => {
+              setConfirmModalState({
+                  isOpen: true,
+                  title,
+                  message,
+                  confirmText,
+                  confirmColor,
+                  onConfirm,
+              });
+          }, []);
 
-          // --- Modal 開啟/關閉和模式控制 ---
+          const closeConfirmModal = useCallback(() => {
+              setConfirmModalState(prev => ({ ...prev, isOpen: false }));
+          }, []);
 
           const startAdd = useCallback(() => {
+            if (isReadOnly) {
+                setError('您正在瀏覽共享紀錄簿，無法進行修改。請切換回您的私有紀錄簿。');
+                return;
+            }
             setExpenseModalState({
                 isOpen: true,
                 editingExpense: null,
                 isEditing: false,
             });
-          }, []);
+          }, [isReadOnly]);
           
           const startEdit = useCallback((expense) => {
-            setExpenseModalState({
+             if (isReadOnly) {
+                setError('您正在瀏覽共享紀錄簿，無法進行修改。請切換回您的私有紀錄簿。');
+                return;
+             }
+             setExpenseModalState({
                 isOpen: true,
                 editingExpense: expense,
                 isEditing: true,
-            });
-          }, []);
+             });
+          }, [isReadOnly]);
 
           const closeExpenseModal = useCallback(() => {
             setExpenseModalState({
@@ -765,49 +1303,84 @@
                 editingExpense: null,
                 isEditing: false,
             });
+            setError(null);
           }, []);
 
+          // --- 6. 支出 CRUD ---
 
-          // --- 4. 支出 CRUD 操作 (已簡化到 Modal 內部) ---
-
-          /**
-           * 刪除支出記錄
-           */
           const deleteExpense = useCallback(async (id) => {
-            if (!db) return;
-            console.warn('⚠️ 刪除操作被執行。在實際應用中應使用自定義確認視窗。');
-
-            setIsLoading(true);
-            setError(null);
-            try {
-              const docPath = `artifacts/${appId}/public/data/expenses/${id}`;
-              // V8/Compat 模式：使用 db.doc().delete()
-              await db.doc(docPath).delete();
-            } catch (e) {
-              console.error("Error deleting document: ", e);
-              setError(`刪除支出失敗: ${e.message}`);
-            } finally {
-              setIsLoading(false);
+            if (isReadOnly) {
+                setError('唯讀模式下無法刪除。');
+                return;
             }
-          }, [db, appId]);
+            if (!db) return;
 
-          // --- 5. 成員管理邏輯 ---
-          
-          /**
-           * 儲存成員清單和當前的預設份數設定
-           */
+            const onConfirm = async () => {
+                closeConfirmModal();
+                setIsLoading(true);
+                setError(null);
+                try {
+                    const docPath = `artifacts/${appId}/users/${currentCollectionId}/expenses/${id}`;
+                    await db.doc(docPath).delete();
+                } catch (e) {
+                    console.error("Error deleting document: ", e);
+                    setError(`刪除支出失敗: ${e.message}`);
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+            
+            openConfirmModal('確認刪除支出', '您確定要刪除這筆支出記錄嗎？此操作無法撤銷。', onConfirm);
+          }, [db, currentCollectionId, isReadOnly, openConfirmModal, closeConfirmModal]);
+
+          const clearAllExpenses = useCallback(async () => {
+              if (isReadOnly) {
+                  setError('唯讀模式下無法清除資料。');
+                  return;
+              }
+              if (!db) return;
+
+              const onConfirm = async () => {
+                  closeConfirmModal();
+                  setIsLoading(true);
+                  setError(null);
+                  try {
+                      const expensesCollectionPath = `artifacts/${appId}/users/${currentCollectionId}/expenses`;
+                      const snapshot = await db.collection(expensesCollectionPath).get();
+
+                      const batch = db.batch();
+                      snapshot.docs.forEach(doc => {
+                          batch.delete(doc.ref);
+                      });
+                      await batch.commit();
+                  } catch (e) {
+                      console.error("Error clearing all documents: ", e);
+                      setError(`清除所有資料失敗: ${e.message}`);
+                  } finally {
+                      setIsLoading(false);
+                  }
+              };
+
+              openConfirmModal(
+                  '確認清除所有支出', 
+                  '您確定要刪除此記帳簿中的所有支出記錄嗎？（成員清單和預設份數將被保留）', 
+                  onConfirm
+              );
+          }, [db, currentCollectionId, isReadOnly, openConfirmModal, closeConfirmModal]);
+
+          // --- 7. 成員管理 ---
           const saveMembers = useCallback(async (newMemberList) => {
+            if (isReadOnly) return;
             if (!db) return;
 
             setIsLoading(true);
             setError(null);
             try {
-                const docPath = `artifacts/${appId}/public/data/settings/members`;
-                // V8/Compat 模式：使用 db.doc()
+                const docPath = `artifacts/${appId}/users/${currentCollectionId}/settings/members`;
                 const membersDocRef = db.doc(docPath);
 
                 const sanitizedList = Array.from(new Set(
-                    newMemberList.filter(name => name.trim() !== '' && name !== userId)
+                    newMemberList.filter(name => name.trim() !== '' && name !== currentCollectionId)
                 ));
 
                 const currentShares = {};
@@ -818,7 +1391,6 @@
                     }
                 });
 
-                // V8/Compat 模式：使用 docRef.set()
                 await membersDocRef.set({ list: sanitizedList, defaultShares: currentShares }, { merge: false });
             } catch (e) {
                 console.error("Error saving members:", e);
@@ -826,26 +1398,33 @@
             } finally {
                 setIsLoading(false);
             }
-          }, [db, appId, userId, members, defaultSharesConfig]); // 依賴項更新
-          
+          }, [db, currentCollectionId, isReadOnly, members, defaultSharesConfig]);
+
           const handleDeleteMember = useCallback(async (nameToDelete) => {
-            const newMemberList = customMembers.filter(name => name !== nameToDelete);
-            await saveMembers(newMemberList);
+            if (isReadOnly) return;
             
-            // 由於 saveMembers 會在 Firestore 監聽器中觸發 setCustomMembers 和 setDefaultSharesConfig，這裡不需要手動更新狀態
-          }, [customMembers, saveMembers]);
-          
-          /**
-           * 儲存預設份數設定
-           */
+            const onConfirm = async () => {
+                closeConfirmModal();
+                const newMemberList = customMembers.filter(name => name !== nameToDelete);
+                await saveMembers(newMemberList);
+            };
+
+            openConfirmModal(
+                '確認刪除成員', 
+                `您確定要從成員清單中移除 ${getDisplayName(nameToDelete)} 嗎？`, 
+                onConfirm
+            );
+
+          }, [customMembers, saveMembers, isReadOnly, openConfirmModal, closeConfirmModal, getDisplayName]);
+
           const handleSaveDefaultShares = useCallback(async (tempShares) => {
+            if (isReadOnly) return;
             if (!db) return;
 
             setIsLoading(true);
             setError(null);
             try {
-                const docPath = `artifacts/${appId}/public/data/settings/members`;
-                // V8/Compat 模式：使用 db.doc()
+                const docPath = `artifacts/${appId}/users/${currentCollectionId}/settings/members`;
                 const membersDocRef = db.doc(docPath);
 
                 const sharesToSave = {};
@@ -858,9 +1437,7 @@
                     }
                 });
                 
-                // V8/Compat 模式：使用 docRef.set()
                 await membersDocRef.set({ list: customMembers, defaultShares: sharesToSave }, { merge: false });
-                
                 setIsMemberModalOpen(false);
             } catch (e) {
                 console.error("Error saving default shares:", e);
@@ -868,19 +1445,65 @@
             } finally {
                 setIsLoading(false);
             }
-          }, [db, appId, customMembers]);
+          }, [db, currentCollectionId, customMembers, members, isReadOnly]);
 
+          // --- 8. 清算結餘功能 ---
+          const settleMemberDebt = useCallback(async (debtorId, amount, creditorId) => {
+              if (isReadOnly) {
+                  setError('唯讀模式下無法進行結算操作。');
+                  return;
+              }
+              if (!db || !userId) return;
 
-          // --- 6. 分帳計算邏輯 ---
+              const roundedAmount = Math.round(amount);
+              if (roundedAmount <= 0) return;
 
-          /**
-           * 計算每個成員的最終餘額（應付/應收）
-           */
+              const onConfirm = async () => {
+                  closeConfirmModal();
+                  setIsLoading(true);
+                  setError(null);
+                  try {
+                      const collectionPath = `artifacts/${appId}/users/${currentCollectionId}/expenses`;
+                      
+                      // 使用新欄位格式：originalAmount / currency / amountInTWD
+                      await db.collection(collectionPath).add({
+                          description: `[結清] ${getDisplayName(debtorId)} 歸還給 ${getDisplayName(creditorId)} 欠款`,
+                          originalAmount: roundedAmount,
+                          currency: DEFAULT_CURRENCY,
+                          exchangeRate: 1,
+                          amountInTWD: roundedAmount,
+                          payerName: debtorId,
+                          shares: { [creditorId]: roundedAmount },
+                          timestamp: serverTimestamp(),
+                          creatorId: userId,
+                          appId: appId,
+                      });
+                      
+                  } catch (e) {
+                      console.error("Error settling debt: ", e);
+                      setError(`結算失敗: ${e.message}`);
+                  } finally {
+                      setIsLoading(false);
+                  }
+              };
+              
+              openConfirmModal(
+                  '確認轉帳結清', 
+                  `您確定 ${getDisplayName(debtorId)} 已向 ${getDisplayName(creditorId)} 支付 TWD ${roundedAmount.toFixed(0)} 並結清欠款嗎？`, 
+                  onConfirm, 
+                  '確認結清', 
+                  'green'
+              );
+
+          }, [db, userId, currentCollectionId, isReadOnly, getDisplayName, openConfirmModal, closeConfirmModal]);
+
+          // --- 9. 分帳計算 ---
           const calculateBalances = useMemo(() => {
             const balances = members.reduce((acc, name) => ({ ...acc, [name]: 0 }), {});
 
             expenses.forEach(expense => {
-              const { amount, payerName, shares } = expense;
+              const amount = expense.amountInTWD; 
+              const { payerName, shares } = expense;
               const totalShares = Object.values(shares).reduce((sum, s) => sum + s, 0);
 
               if (totalShares === 0) return;
@@ -902,9 +1525,6 @@
             return balances;
           }, [expenses, members]);
 
-          /**
-           * 計算清算方案：最少次數的轉帳來結清所有債務
-           */
           const calculateSettlements = useMemo(() => {
             const balances = calculateBalances;
             const settlements = [];
@@ -914,15 +1534,11 @@
 
             const mutableBalances = { ...balances };
 
-            // 1. 分離債權人 (Creditors) 和債務人 (Debtors)
             for (const member in mutableBalances) {
                 const balance = mutableBalances[member];
-                // 容忍小數點誤差 (e.g., $0.01)
-                if (balance >= 1) { // 至少有 1 元以上的結餘
-                    // 對於債權人，我們只關心他們應收的金額
+                if (balance >= 1) { 
                     creditors.push({ name: member, amount: balance });
-                } else if (balance <= -1) { // 至少欠 1 元以上的債務
-                    // 對於債務人，我們儲存他們應付的正數金額
+                } else if (balance <= -1) { 
                     debtors.push({ name: member, amount: -balance }); 
                 }
             }
@@ -934,11 +1550,9 @@
                 const debtor = debtors[i];
                 const creditor = creditors[j];
 
-                // 轉帳金額是兩者之間較小者，並且 **四捨五入小數點**
-                // 確保轉帳金額是整數
                 const transferAmount = Math.round(Math.min(debtor.amount, creditor.amount));
 
-                if (transferAmount > 0) { // 確保有至少 1 元的轉帳
+                if (transferAmount > 0) {
                     settlements.push({
                         from: debtor.name,
                         to: creditor.name,
@@ -946,12 +1560,9 @@
                     });
                 }
 
-                // 3. 更新餘額 (使用實際的浮點數進行扣除，以保持清算邏輯準確性)
                 debtor.amount -= transferAmount;
                 creditor.amount -= transferAmount;
 
-                // 4. 移動指針
-                // 只有當剩餘餘額小於 1 時，我們才認為該帳戶「基本上」結清了（因為我們只處理整數轉帳）
                 if (debtor.amount < 1) { 
                     i++;
                 }
@@ -961,17 +1572,29 @@
             }
             
             return settlements;
-          }, [calculateBalances]); // 依賴於 calculateBalances 的輸出
+          }, [calculateBalances]); 
 
-          // --- 7. UI 輔助元件 ---
-
-          // 轉換 userId 到顯示名稱
-          const getDisplayName = useCallback((member) => member === userId ? '我 (You)' : member, [userId]);
+          // --- 10. UI 輔助 ---
+          const getDisplayName = useCallback((memberId) => {
+            if (userProfiles[memberId]) {
+                return userProfiles[memberId];
+            }
+            
+            if (memberId === userId) {
+                const currentUser = auth?.currentUser;
+                return currentUser?.displayName || currentUser?.email || '我 (You)';
+            }
+            
+            if (memberId === currentCollectionId && memberId) {
+                const shortId = memberId.substring(0, 5) + '...' + memberId.substring(memberId.length - 5);
+                return shortId;
+            }
+            
+            return memberId;
+          }, [userId, auth, currentCollectionId, userProfiles]);
           
-          // 格式化時間戳
           const formatTimestamp = (timestamp) => {
             if (!timestamp) return '無日期';
-            // 檢查 timestamp 是否為 Firestore Timestamp 物件或 Date 物件
             const date = timestamp instanceof Date ? timestamp : (timestamp.toDate ? timestamp.toDate() : null);
             if (!date) return '無日期';
 
@@ -984,188 +1607,77 @@
             });
           };
 
-
-          // --- 移除了 CurrentUserDisplay 元件 ---
-
-
-          /**
-           * 支出列表元件
-           */
-          const ExpenseList = () => {
-            // 根據 timestamp 進行排序 (新到舊)
-            const sortedExpenses = useMemo(() => {
-                return [...expenses].sort((a, b) => {
-                    const timeA = a.timestamp ? a.timestamp.getTime() : 0;
-                    const timeB = b.timestamp ? b.timestamp.getTime() : 0;
-                    return timeB - timeA; // 降序 (B - A = 新到舊)
-                });
-            }, [expenses]);
-              
+          // --- 渲染 ---
+          if (!authReady) {
             return (
-              <div className="mt-8">
-                <h2 className="text-2xl font-bold mb-4 text-gray-800 flex items-center">
-                  {/* 優化: 增加尺寸並明確顏色 */}
-                  <CircleDollarSign className="w-7 h-7 mr-3 text-primaryColor-500" /> 
-                  所有支出 ({sortedExpenses.length})
-                </h2>
-                {sortedExpenses.length === 0 ? (
-                  <p className="text-gray-500 italic p-4 bg-white rounded-xl shadow-inner">目前沒有任何支出記錄。</p>
-                ) : (
-                  <div className="space-y-4">
-                    {sortedExpenses.map((exp) => {
-                      const totalShares = Object.values(exp.shares).reduce((sum, s) => sum + s, 0);
-                      const sharesDetail = Object.entries(exp.shares)
-                        .filter(([, share]) => share > 0)
-                        .map(([name, share]) => `${getDisplayName(name)} (${share}份)`)
-                        .join(', ');
-
-                      return (
-                        <div key={exp.id} className="bg-white p-4 rounded-xl shadow-lg border-l-4 border-primaryColor-400 flex justify-between items-center transition duration-150 hover:shadow-xl">
-                          <div className="flex-grow">
-                            <p className="font-semibold text-lg text-gray-800">{exp.description}</p>
-                            {/* 顯示金額四捨五入 */}
-                            <p className="text-3xl font-extrabold text-primaryColor-600 my-1">NT$ {Math.round(exp.amount).toFixed(0)}</p> 
-                            <p className="text-sm text-gray-600">
-                              <span className="font-medium text-primaryColor-700">付款人:</span> {getDisplayName(exp.payerName)}
-                            </p>
-                            <p className="text-xs text-gray-500 mt-1">
-                              <span className="font-medium">分帳:</span> {sharesDetail || '無人分帳'} (總份數: {totalShares})
-                            </p>
-                            {/* 顯示日期時間 */}
-                            <p className="text-xs text-gray-400 mt-1">
-                              <span className="font-medium">時間:</span> {formatTimestamp(exp.timestamp)}
-                            </p>
-                          </div>
-                          <div className="flex space-x-2">
-                            <button
-                              onClick={() => startEdit(exp)}
-                              // 優化: 獨立按鈕樣式
-                              className="p-2 text-blue-500 bg-white hover:bg-blue-50 rounded-full transition duration-150 hover:scale-110 transform border border-transparent hover:border-blue-300 shadow-md"
-                              aria-label="編輯支出"
-                            >
-                              <Pencil className="w-5 h-5" />
-                            </button>
-                            <button
-                              onClick={() => deleteExpense(exp.id)}
-                              disabled={isLoading}
-                              // 優化: 獨立按鈕樣式
-                              className="p-2 text-red-500 bg-white hover:bg-red-50 rounded-full transition duration-150 hover:scale-110 transform border border-transparent hover:border-red-300 shadow-md"
-                              aria-label="刪除支出"
-                            >
-                              <Trash2 className="w-5 h-5" />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          };
-
-          /**
-           * 餘額總結元件 (顯示轉帳清單)
-           */
-          const BalanceSummary = () => {
-            const settlements = calculateSettlements;
-            const balances = calculateBalances;
-
-            return (
-              <div className="mt-8 p-6 bg-white rounded-xl shadow-2xl">
-                <h2 className="text-2xl font-bold mb-4 text-gray-800 flex items-center">
-                  {/* 優化: 增加尺寸並明確顏色 */}
-                  <Users className="w-7 h-7 mr-3 text-primaryColor-500" />
-                  結餘總結 (清算方案)
-                </h2>
-
-                {settlements.length === 0 ? (
-                    <p className="text-lg font-medium text-green-600 p-3 bg-green-50 rounded-lg">🎉 所有帳目已結清！</p>
-                ) : (
-                    <div className="space-y-4">
-                        <p className="text-base text-gray-600 mb-4">以下是結清帳目所需的轉帳清單（四捨五入）：</p>
-                        {settlements.map((settlement, index) => (
-                            <div 
-                                key={index} 
-                                className="bg-yellow-50 p-4 rounded-xl shadow-md border-l-4 border-yellow-400 flex items-center"
-                            >
-                                <span className="font-bold text-yellow-800 text-xl mr-3">💸</span>
-                                <div className="flex-grow text-gray-800">
-                                    <p className="text-lg">
-                                        <span className="font-bold text-red-600">{getDisplayName(settlement.from)}</span>
-                                        <span className="mx-2 text-gray-500">應付給</span>
-                                        <span className="font-bold text-green-600">{getDisplayName(settlement.to)}</span>
-                                    </p>
-                                    {/* 顯示轉帳金額四捨五入 */}
-                                    <p className="text-3xl font-extrabold text-yellow-700 mt-1">
-                                        NT$ {settlement.amount.toFixed(0)}
-                                    </p>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-                
-                {/* 原始個人結餘列表 (保留作為參考) */}
-                <div className="mt-6 pt-6 border-t border-gray-100">
-                    <h3 className="text-xl font-semibold mb-3 text-gray-700">個人總結餘 (參考)</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        {members.map(member => {
-                            const balance = balances[member] || 0;
-                            // 對於參考用的個人結餘，我們使用四捨五入來顯示
-                            const roundBalance = Math.round(balance); 
-                            const isOwed = roundBalance > 0;
-                            const isOwes = roundBalance < 0;
-                            const displayMember = getDisplayName(member);
-
-                            return (
-                                <div 
-                                    key={member} 
-                                    className={`p-3 rounded-lg text-center ${isOwed ? 'bg-green-100' : isOwes ? 'bg-red-100' : 'bg-gray-100'}`}
-                                >
-                                    <p className="font-semibold truncate text-sm" title={displayMember}>{displayMember}</p>
-                                    <p className={`text-xl font-bold mt-0.5 ${isOwed ? 'text-green-700' : isOwes ? 'text-red-700' : 'text-gray-500'}`}>
-                                        {roundBalance.toFixed(0)}
-                                    </p>
-                                    <p className="text-xs text-gray-500">{isOwed ? '應收' : isOwes ? '應付' : '結清'}</p>
-                                </div>
-                            );
-                        })}
-                    </div>
-                    <p className="mt-3 text-xs text-gray-500">正數 : 應收；負數 : 應付。(顯示金額已四捨五入)</p>
+                <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+                    <p className="text-lg text-primaryColor-600">載入驗證服務...</p>
                 </div>
-              </div>
             );
-          };
+          }
+          
+          if (!userId || !auth) {
+            return <AuthModal auth={auth} db={db} />;
+          }
 
           return (
             <div className="min-h-screen bg-gray-50 p-4 sm:p-8">
               <div className="max-w-4xl mx-auto">
                 {/* 標題和主要操作按鈕 */}
                 <header className="py-6 border-b border-gray-200">
-                  <h1 className={`text-4xl font-extrabold text-${primaryColor}-700 flex items-center`}>
-                    {/* 修正: 將 Pencil 替換為 Pencil 圖示 */}
+                  <h1 className="text-4xl font-extrabold text-primaryColor-700 flex items-center">
                     <Pencil className="w-10 h-10 mr-3" />
                     分帳記帳簿
                   </h1>
-                  <p className="text-gray-500 mt-1">輕鬆記錄團體支出，公平分配費用。</p>
-                  {/* 移除了 CurrentUserDisplay 的使用 */}
+				  {lastExchangeUpdate && (
+					<p className="text-xs text-gray-500 mt-1">
+					  匯率最後更新：{new Date(lastExchangeUpdate).toLocaleString('zh-TW')}
+					</p>
+				  )}
+				  <p className="text-xs text-gray-500 mt-1">
+				    預設幣別：{defaultCurrency}（依裝置 GPS 推測）
+				  </p>
                 </header>
+                
+                {/* 錯誤訊息提示 */}
+                {error && (
+                    <div className="mt-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg">
+                        <p className="font-semibold">錯誤提示:</p>
+                        <p className="text-sm">{error}</p>
+                    </div>
+                )}
+
+                {/* 紀錄簿切換/共享資訊 */}
+                <CollectionSwitch 
+                    userId={userId} 
+                    currentCollectionId={currentCollectionId} 
+                    getDisplayName={getDisplayName}
+                    logout={logout}
+                    userProfiles={userProfiles}
+                />
 
                 {/* 主要功能區塊 */}
                 <div className="mt-6 flex space-x-4">
                   <button
                     onClick={startAdd}
-                    // 優化: 加入 hover:scale
-                    className={`flex-1 flex items-center justify-center px-4 py-3 border border-transparent text-lg font-bold rounded-xl text-white bg-${primaryColor}-500 hover:bg-${primaryColor}-600 focus:outline-none focus:ring-4 focus:ring-${primaryColor}-300 transition duration-300 shadow-xl hover:scale-[1.03] transform`}
+                    disabled={isReadOnly}
+                    className={
+                      "flex-1 flex items-center justify-center px-4 py-3 rounded-xl text-white transition duration-300 shadow-xl hover:scale-[1.03] transform disabled:bg-gray-400 disabled:cursor-not-allowed " +
+                      (isReadOnly ? "bg-gray-400" : "bg-primaryColor-500 hover:bg-primaryColor-600 focus:ring-4 focus:ring-primaryColor-300")
+                    }
                   >
                     <Plus className="w-6 h-6 mr-2" />
-                    新增支出
+                    新增支出 {isReadOnly && '(唯讀)'}
                   </button>
                   <button
-                    onClick={() => setIsMemberModalOpen(true)}
-                    // 優化: 加入 hover:scale
-                    className={`px-4 py-3 border border-${primaryColor}-500 text-lg font-bold rounded-xl text-${primaryColor}-600 bg-white hover:bg-${primaryColor}-50 focus:outline-none focus:ring-4 focus:ring-${primaryColor}-300 transition duration-300 shadow-xl hover:scale-[1.03] transform`}
+                    onClick={() => { setIsMemberModalOpen(true); setError(null); }}
+                    disabled={isReadOnly}
+                    className={
+                      "px-4 py-3 border text-lg font-bold rounded-xl bg-white focus:outline-none focus:ring-4 transition duration-300 shadow-xl hover:scale-[1.03] transform disabled:border-gray-400 disabled:text-gray-400 disabled:cursor-not-allowed " +
+                      (isReadOnly
+                        ? "border-gray-400 text-gray-400"
+                        : "focus:ring-primaryColor-300 border-primaryColor-500 text-primaryColor-600 hover:bg-primaryColor-50")
+                    }
                     aria-label="管理成員與預設份數"
                   >
                     <Users className="w-6 h-6" />
@@ -1173,23 +1685,43 @@
                 </div>
 
                 {/* 總結與列表 */}
-                <BalanceSummary />
-                <ExpenseList />
+                <BalanceSummary 
+                    settlements={calculateSettlements} 
+                    balances={calculateBalances} 
+                    members={members} 
+                    getDisplayName={getDisplayName} 
+                    isReadOnly={isReadOnly}
+                    settleMemberDebt={settleMemberDebt}
+                />
+                <ExpenseList 
+                    expenses={expenses} 
+                    deleteExpense={deleteExpense} 
+                    startEdit={startEdit} 
+                    isLoading={isLoading} 
+                    getDisplayName={getDisplayName} 
+                    formatTimestamp={formatTimestamp}
+                    isReadOnly={isReadOnly}
+                    clearAllExpenses={clearAllExpenses}
+                />
 
                 {/* Modal 區塊 */}
                 <ExpenseModal 
-                    key={expenseModalState.isEditing ? `edit-${expenseModalState.editingExpense.id}` : 'add-new'}
+                    key={expenseModalState.isEditing && expenseModalState.editingExpense ? `edit-${expenseModalState.editingExpense.id}` : 'add-new'}
                     db={db}
-                    userId={userId}
+                    currentUserId={userId}
                     members={members}
                     getInitialShares={getInitialShares}
                     state={expenseModalState}
                     onClose={closeExpenseModal}
                     getDisplayName={getDisplayName} 
+                    isReadOnly={isReadOnly}
+                    collectionId={currentCollectionId}
+                    liveExchangeRates={liveExchangeRates}
+					defaultCurrency={defaultCurrency}
                 />
                 <MemberManagementModal 
                     db={db}
-                    userId={userId}
+                    currentUserId={userId}
                     members={members}
                     customMembers={customMembers}
                     defaultSharesConfig={defaultSharesConfig}
@@ -1202,15 +1734,179 @@
                     isLoading={isLoading}
                     setError={setError}
                     getDisplayName={getDisplayName}
+                    isReadOnly={isReadOnly}
+                />
+                
+                {/* 統一的確認提示 Modal */}
+                <ConfirmationModal 
+                    isOpen={confirmModalState.isOpen}
+                    onClose={closeConfirmModal}
+                    onConfirm={confirmModalState.onConfirm}
+                    title={confirmModalState.title}
+                    message={confirmModalState.message}
+                    confirmText={confirmModalState.confirmText}
+                    confirmColor={confirmModalState.confirmColor}
                 />
               </div>
 
-              {/* Tailwind color class fix, ensuring primaryColor is rendered */}
-              <div className={`text-${primaryColor}-500 bg-${primaryColor}-500 border-${primaryColor}-500 hidden`}></div>
+              {/* Tailwind color class fix, 讓 primaryColor 類別一定出現在檔案中 */}
+              <div className="text-primaryColor-500 bg-primaryColor-500 border-primaryColor-500 hidden"></div>
             </div>
           );
         };
+        
+        // --- 獨立的列表和總結組件 ---
+        const ExpenseList = React.memo(({ expenses, deleteExpense, startEdit, isLoading, getDisplayName, formatTimestamp, isReadOnly, clearAllExpenses }) => {
+            const sortedExpenses = useMemo(() => {
+                return [...expenses].sort((a, b) => {
+                    const timeA = a.timestamp ? a.timestamp.getTime() : 0;
+                    const timeB = b.timestamp ? b.timestamp.getTime() : 0;
+                    return timeB - timeA;
+                });
+            }, [expenses]);
+              
+            return (
+              <div className="mt-8">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-2xl font-bold text-gray-800 flex items-center">
+                    <CircleDollarSign className="w-7 h-7 mr-3 text-primaryColor-500" /> 
+                    所有支出 ({sortedExpenses.length})
+                  </h2>
+                  <button
+                      onClick={clearAllExpenses}
+                      disabled={isLoading || isReadOnly || sortedExpenses.length === 0}
+                      className="px-3 py-1.5 text-sm rounded-lg text-white bg-red-500 hover:bg-red-600 transition hover:scale-105 transform shadow-md disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center"
+                  >
+                      <Trash2 className="w-4 h-4 mr-1" />
+                      清除所有資料
+                  </button>
+                </div>
+                
+                {sortedExpenses.length === 0 ? (
+                  <p className="text-gray-500 italic p-4 bg-white rounded-xl shadow-inner">目前沒有任何支出記錄。</p>
+                ) : (
+                  <div className="space-y-4">
+                    {sortedExpenses.map((exp) => {
+                      const totalShares = Object.values(exp.shares).reduce((sum, s) => sum + s, 0);
+                      const sharesDetail = Object.entries(exp.shares)
+                        .filter(([, share]) => share > 0)
+                        .map(([name, share]) => `${getDisplayName(name)} (${share}份)`)
+                        .join(', ');
 
+                      const displayAmount = `${exp.currency} ${Math.round(exp.originalAmount).toFixed(0)}`;
+                      const convertedTWD = exp.currency !== DEFAULT_CURRENCY ? ` (TWD ${exp.amountInTWD.toFixed(0)})` : '';
+
+                      return (
+                        <div key={exp.id} className="bg-white p-4 rounded-xl shadow-lg border-l-4 border-primaryColor-400 flex justify-between items-center transition duration-150 hover:shadow-xl">
+                          <div className="flex-grow">
+                            <p className="font-semibold text-lg text-gray-800">{exp.description}</p>
+                            <p className="text-3xl font-extrabold text-primaryColor-600 my-1">
+                                {displayAmount}
+                                <span className="text-xl font-normal text-gray-500">{convertedTWD}</span>
+                            </p> 
+                            <p className="text-sm text-gray-600">
+                              <span className="font-medium text-primaryColor-700">付款人:</span> {getDisplayName(exp.payerName)}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              <span className="font-medium">分帳:</span> {sharesDetail || '無人分帳'} (總份數: {totalShares})
+                            </p>
+                            <p className="text-xs text-gray-400 mt-1">
+                              <span className="font-medium">時間:</span> {formatTimestamp(exp.timestamp)}
+                            </p>
+                          </div>
+                          <div className={`flex space-x-2 ${isReadOnly ? 'opacity-50' : ''}`}>
+                            <button
+                              onClick={() => startEdit(exp)}
+                              className="p-2 text-blue-500 bg-white hover:bg-blue-50 rounded-full transition duration-150 hover:scale-110 transform border border-transparent hover:border-blue-300 shadow-md disabled:cursor-not-allowed"
+                              aria-label="編輯支出"
+                              disabled={isReadOnly}
+                            >
+                              <Pencil className="w-5 h-5" />
+                            </button>
+                            <button
+                              onClick={() => deleteExpense(exp.id)}
+                              disabled={isLoading || isReadOnly}
+                              className="p-2 text-red-500 bg-white hover:bg-blue-50 rounded-full transition duration-150 hover:scale-110 transform border border-transparent hover:border-red-300 shadow-md disabled:cursor-not-allowed"
+                              aria-label="刪除支出"
+                            >
+                              <Trash2 className="w-5 h-5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+        });
+
+        const BalanceSummary = React.memo(({ settlements, balances, members, getDisplayName, isReadOnly, settleMemberDebt }) => {
+            const debtorBalances = useMemo(() => {
+                return members.filter(member => Math.round(balances[member] || 0) < 0)
+                               .map(member => ({
+                                   id: member,
+                                   amount: Math.abs(Math.round(balances[member] || 0)),
+                                   displayName: getDisplayName(member),
+                               }))
+                               .filter(d => d.amount > 0);
+            }, [balances, members, getDisplayName]);
+
+            return (
+              <div className="mt-8 p-6 bg-white rounded-xl shadow-2xl">
+                <h2 className="text-2xl font-bold mb-4 text-gray-800 flex items-center">
+                  <Users className="w-7 h-7 mr-3 text-primaryColor-500" />
+                  結餘總結 
+                </h2>
+
+                {settlements.length === 0 ? (
+                    <p className="text-lg font-medium text-green-600 p-3 bg-green-50 rounded-lg">🎉 所有帳目已結清！</p>
+                ) : (
+                    <div className="space-y-4">
+                        <p className="text-base text-gray-600 mb-4">結清帳目所需的轉帳清單（四捨五入）：</p>
+                        {settlements.map((settlement, index) => {
+                            const canSettle = !isReadOnly; 
+
+                            return (
+                                <div 
+                                    key={index} 
+                                    className="bg-yellow-50 p-4 rounded-xl shadow-md border-l-4 border-yellow-400 flex justify-between items-center transition duration-150" 
+                                >
+                                    <div className="flex items-center">
+                                        <span className="font-bold text-yellow-800 text-xl mr-3">💸</span>
+                                        <div className="text-gray-800">
+                                            <p className="text-lg">
+                                                <span className="font-bold text-red-600">{getDisplayName(settlement.from)}</span>
+                                                <span className="mx-0 text-gray-500">應付給</span>
+                                                <span className="font-bold text-green-600">{getDisplayName(settlement.to)}</span>
+                                            </p>
+                                            <p className="text-3xl font-extrabold text-yellow-700 mt-1">
+                                                TWD {settlement.amount.toFixed(0)}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    
+                                    {canSettle && (
+                                        <button
+                                            onClick={() => settleMemberDebt(settlement.from, settlement.amount, settlement.to)} 
+                                            className="px-3 py-1 text-sm rounded-lg text-white transition hover:scale-105 transform shadow-md flex items-center bg-green-500 hover:bg-green-600"
+                                        >
+                                            <CircleCheck className="w-4 h-4 mr-1" />
+                                            結清
+                                        </button>
+                                    )}
+                                    {isReadOnly && (
+                                         <span className="text-sm text-gray-500 italic">僅擁有者可操作</span>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+              </div>
+            );
+        });
+        
         // Render the app
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
