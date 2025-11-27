@@ -820,11 +820,15 @@
 		/**
          * 成員管理 Modal (核心邏輯獨立)
          */
-        const MemberManagementModal = React.memo(({ db, currentUserId, members, customMembers, defaultSharesConfig, isMemberModalOpen, setIsMemberModalOpen, saveMembers, handleSaveDefaultShares, handleDeleteMember, setIsLoading, isLoading, setError, getDisplayName, isReadOnly, groupMembers, groupOwner, inviteUserByEmail, removeGroupMember, setToastMessage }) => { 
+        const MemberManagementModal = React.memo(({ db, currentUserId, members, customMembers, defaultSharesConfig, isMemberModalOpen, setIsMemberModalOpen, saveMembers, handleSaveDefaultShares, handleDeleteMember, setIsLoading, isLoading, setError, getDisplayName, isReadOnly, groupMembers, groupOwner, inviteUserByEmail, removeGroupMember, setToastMessage, migrateMemberID }) => { // <-- MODIFIED: Add migrateMemberID
             const [memberInput, setMemberInput] = useState('');
             const [tempDefaultShares, setTempDefaultShares] = useState({});
             // NEW: 內部訊息狀態
             const [modalMessage, setModalMessage] = useState(null); 
+            
+            // NEW: 選擇要替換目標的狀態
+            const [nameToReplace, setNameToReplace] = useState(null); // <-- NEW
+            const [availableUidsForReplace, setAvailableUidsForReplace] = useState([]); // <-- NEW
 
             useEffect(() => {
                 if (isMemberModalOpen) {
@@ -836,8 +840,17 @@
                     setTempDefaultShares(initialShares);
                     setMemberInput('');
                     setModalMessage(null); // NEW: 開啟時清除訊息
+                    
+                    // NEW: 計算可替換的目標 UID
+					const allUIDs = groupMembers.filter(uid => 
+						// 這裡只需要判斷是否為「可替換的目標帳號」，不需要再檢查 customMembers
+						uid.length > 20 && uid !== currentUserId
+					);
+					setAvailableUidsForReplace(allUIDs);
+                    setAvailableUidsForReplace(allUIDs);
+                    setNameToReplace(null);
                 }
-            }, [isMemberModalOpen, members, defaultSharesConfig]);
+            }, [isMemberModalOpen, members, defaultSharesConfig, groupMembers, customMembers, currentUserId]); // <-- MODIFIED: 增加依賴
             
             // NEW: 內部訊息清除 (防止無限迴圈)
             const resetMessage = useCallback(() => {
@@ -925,6 +938,14 @@
             const handleSaveDefaultSharesWrapper = async (tempShares) => {
                 await handleSaveDefaultShares(tempShares, setModalMessage); // 傳遞 setModalMessage
             };
+            
+            // NEW: 處理替換/轉移按鈕
+            const handleReplaceMember = (oldName, newId) => {
+                // 呼叫 App 層級的遷移函式
+                migrateMemberID(oldName, newId, setModalMessage); 
+                setNameToReplace(null); // 關閉選擇 UI
+                setIsMemberModalOpen(false); // 遷移成功後關閉整個 Modal
+            };
 
             if (!isMemberModalOpen) return null;
 
@@ -949,6 +970,40 @@
                             {modalMessage && (
                                 <div className={`p-3 rounded-lg text-sm font-semibold ${modalMessage.startsWith('❌') ? 'bg-red-100 text-red-700' : (modalMessage.startsWith('⚠️') ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700')}`}>
                                     {modalMessage}
+                                </div>
+                            )}
+                            
+                            {/* NEW: 替換選擇 UI */}
+                            {nameToReplace && (
+                                <div className="border border-red-300 p-4 rounded-lg bg-red-50">
+                                    <h4 className="font-semibold text-lg mb-2 text-red-700">
+                                        將「{getDisplayName(nameToReplace)}」替換為哪個帳號？
+                                    </h4>
+                                    
+                                    <div className="flex gap-2 flex-wrap">
+                                        {availableUidsForReplace.length === 0 ? (
+                                            <p className="text-sm text-red-500">
+                                                目前沒有可供替換的用戶 ID（請先透過 Email 邀請新的共享成員）。
+                                            </p>
+                                        ) : (
+                                            availableUidsForReplace.map(uid => (
+                                                <button
+                                                    key={`replace-target-${uid}`}
+                                                    onClick={() => handleReplaceMember(nameToReplace, uid)}
+                                                    disabled={isLoading || isReadOnly}
+                                                    className="px-3 py-1 text-sm rounded-lg text-white bg-red-500 hover:bg-red-600 transition disabled:bg-gray-400"
+                                                >
+                                                    替換為 {getDisplayName(uid)}
+                                                </button>
+                                            ))
+                                        )}
+                                        <button
+                                            onClick={() => setNameToReplace(null)}
+                                            className="px-3 py-1 text-sm rounded-lg text-gray-700 bg-gray-200 hover:bg-gray-300 transition"
+                                        >
+                                            取消替換
+                                        </button>
+                                    </div>
                                 </div>
                             )}
 
@@ -1039,58 +1094,75 @@
                                 <span className="flex items-center justify-between">預設份數</span>
                               </div>
                               <div className="space-y-2 max-h-64 pr-2">
-                                  {members.map(member => (
-                                      <div key={member} className="grid grid-cols-[1fr_auto] gap-4 items-center p-3 rounded-lg border border-gray-200 bg-white shadow-sm">
-                                          <span className={`font-medium ${member === currentUserId ? 'text-primaryColor-700' : 'text-gray-800'} truncate`} title={member}>
-                                              {getDisplayName(member)}
-                                          </span>
-                                          <div className="flex items-center space-x-2 flex-shrink">
-                                            
-                                            <button
-                                                onClick={() => handleTempShareChange(member, -1)}
-                                                type="button"
-                                                className="p-1.5 bg-red-50 text-red-600 rounded-lg transition hover:scale-105 transform hover:bg-red-100 shadow-sm border border-red-200 disabled:opacity-50"
-                                                aria-label="減少份數"
-                                                disabled={isReadOnly}
-                                            >
-                                                <Minus className="w-5 h-5" />
-                                            </button>
-                                            
-                                            <input
-                                                key={`shares-input-${member}`} 
-                                                type="number"
-                                                min="0"
-                                                value={tempDefaultShares[member] === 0 ? 0 : tempDefaultShares[member] || 1}
-                                                onChange={(e) => handleTempInputChange(member, e.target.value)}
-                                                placeholder="1"
-                                                className="w-16 border border-gray-300 rounded-lg p-2 text-center focus:ring-primaryColor-500 focus:border-primaryColor-500 disabled:bg-gray-100"
-                                                disabled={isLoading || isReadOnly}
-                                            />
-                                            
-                                            <button
-                                                onClick={() => handleTempShareChange(member, 1)}
-                                                type="button"
-                                                className="p-1.5 bg-green-50 text-green-600 rounded-lg transition hover:scale-105 transform hover:bg-green-100 shadow-sm border border-green-200 disabled:opacity-50"
-                                                aria-label="增加份數"
-                                                disabled={isReadOnly}
-                                            >
-                                                <Plus className="w-5 h-5" />
-                                            </button>
-                                            
-                                            <span className="text-gray-500">份</span>
-                                            {member !== currentUserId && (
+                                  {members.map(member => {
+                                      // NEW: 判斷是否為自訂名稱 (非 UID)
+                                      const isCustomName = member !== currentUserId && !groupMembers.includes(member) && member.length < 20;
+                                      
+										return (
+                                          <div key={member} className="grid grid-cols-[1fr_auto] gap-4 items-center p-3 rounded-lg border border-gray-200 bg-white shadow-sm">
+                                              <span 
+                                                  className={`font-medium truncate ${member === currentUserId ? 'text-primaryColor-700' : 'text-gray-800'} 
+                                                    ${isCustomName && !isReadOnly ? 'cursor-pointer hover:text-red-600 hover:underline' : ''}` // ✨ NEW: 增加樣式指示可點擊
+                                                  }
+                                                  title={member}
+                                                  onClick={() => { // ✨ NEW: 增加 onClick 處理器
+                                                      if (isCustomName && !isReadOnly) {
+                                                          setNameToReplace(member);
+                                                      }
+                                                  }}
+                                              >
+                                                  {getDisplayName(member)}
+                                                  {isCustomName && <span className="ml-2 text-red-500 text-xs font-normal"></span>}
+                                              </span>
+                                              <div className="flex items-center space-x-2 flex-shrink">
+                                                
                                                 <button
-                                                    onClick={() => handleMemberDeleteWrapper(member)}
-                                                    className="p-1 text-red-500 hover:bg-red-100 rounded-full transition hover:scale-110 transform ml-auto disabled:opacity-50"
-                                                    disabled={isLoading || isReadOnly}
-                                                    aria-label="刪除成員"
+                                                    onClick={() => handleTempShareChange(member, -1)}
+                                                    type="button"
+                                                    className="p-1.5 bg-red-50 text-red-600 rounded-lg transition hover:scale-105 transform hover:bg-red-100 shadow-sm border border-red-200 disabled:opacity-50"
+                                                    aria-label="減少份數"
+                                                    disabled={isReadOnly}
                                                 >
-                                                    <UserMinus className="w-5 h-5" />
+                                                    <Minus className="w-5 h-5" />
                                                 </button>
-                                            )}
+                                                
+                                                <input
+                                                    key={`shares-input-${member}`} 
+                                                    type="number"
+                                                    min="0"
+                                                    value={tempDefaultShares[member] === 0 ? 0 : tempDefaultShares[member] || 1}
+                                                    onChange={(e) => handleTempInputChange(member, e.target.value)}
+                                                    placeholder="1"
+                                                    className="w-16 border border-gray-300 rounded-lg p-2 text-center focus:ring-primaryColor-500 focus:border-primaryColor-500 disabled:bg-gray-100"
+                                                    disabled={isLoading || isReadOnly}
+                                                />
+                                                
+                                                <button
+                                                    onClick={() => handleTempShareChange(member, 1)}
+                                                    type="button"
+                                                    className="p-1.5 bg-green-50 text-green-600 rounded-lg transition hover:scale-105 transform hover:bg-green-100 shadow-sm border border-green-200 disabled:opacity-50"
+                                                    aria-label="增加份數"
+                                                    disabled={isReadOnly}
+                                                >
+                                                    <Plus className="w-5 h-5" />
+                                                </button>
+                                                
+                                                <span className="text-gray-500">份</span>
+                                               
+                                                {member !== currentUserId && (
+                                                    <button
+                                                        onClick={() => handleMemberDeleteWrapper(member)}
+                                                        className="p-1 text-red-500 hover:bg-red-100 rounded-full transition hover:scale-110 transform ml-auto disabled:opacity-50"
+                                                        disabled={isLoading || isReadOnly}
+                                                        aria-label="刪除成員"
+                                                    >
+                                                        <UserMinus className="w-5 h-5" />
+                                                    </button>
+                                                )}
+                                              </div>
                                           </div>
-                                      </div>
-                                  ))}
+                                      );
+                                  })}
                               </div>
                           </div>
                       </div>
@@ -1714,7 +1786,7 @@
 				try {
 				  // 1) 用 email 找 public_profiles
 				  const profilesRef = db.collection(`artifacts/${appId}/public_profiles`);
-				  const snap = await profilesRef.where('email', '==', emailToInvite).get();
+				  const snap = await profilesRef.where('email', '==', emailToInvite).limit(1).get();
 
 				  if (snap.empty) {
 					setModalMessage('❌ 找不到使用這個 Email 註冊的帳號，請對方先在這個系統登入一次。'); // 使用 Modal Message
@@ -1724,7 +1796,7 @@
 				  const profileData = snap.docs[0].data();
 				  const invitedUid = profileData.uid;
 				  const invitedDisplayName =
-					profileData.displayName || profileData.nickname || emailToInvite;
+					profileData.displayName || profileData.email || emailToInvite;
 
 				  if (!invitedUid) {
 					setError('這個 Email 的使用者資料異常，請稍後再試。'); 
@@ -1733,7 +1805,7 @@
 
 				  // 2) 檢查是否已經是成員：如果是，提示就好，不要重複加入
 				  if (groupMembers.includes(invitedUid)) {
-					setModalMessage(`❌ 「${invitedDisplayName}」已經是這本記帳簿的成員了。`); // 使用 Modal Message
+					setModalMessage(`❌ 「${getDisplayName(invitedUid)}」已經是這本記帳簿的成員了。`); // <-- MODIFIED
 					return;
 				  }
 
@@ -1745,14 +1817,37 @@
 
 				  // 4) 把他也加入「分帳成員名單」（settings/members.list）
 				  let newMemberList = customMembers;
+				  let removedOldName = null; // ✨ NEW: 追蹤是否移除了舊名稱
+
 				  if (!customMembers.includes(invitedUid)) {
-					newMemberList = [...customMembers, invitedUid];
-					await saveMembers(newMemberList);
+					  // 4-a) 移除任何與新用戶暱稱相同的**非 UID**的自訂名稱
+					  const filteredMembers = newMemberList.filter(name => {
+						  // 判斷是否為「自訂名稱」：不是 owner's UID 且在 userProfiles 中查不到 (即不是已知的 UID)
+						  // 這裡假設所有 UID 都在 userProfiles 中有記錄，而自訂名稱是純字串且不在 userProfiles 中
+						  const isCustomString = name !== currentCollectionId && !userProfiles[name];
+
+						  // 檢查是否與新加入的用戶名稱（暱稱或 Email 前綴）相同
+						  if (isCustomString && name === invitedDisplayName) {
+							  removedOldName = name; // 記錄被移除的舊名稱
+							  return false; // 移除
+						  }
+						  return true; // 保留
+					  });
+					  
+					  // 4-b) 加入新的 UID
+					  newMemberList = [...filteredMembers, invitedUid];
+					  
+					  // 儲存新的成員列表
+					  await saveMembers(newMemberList);
 				  }
 
 				  // 5) 清空輸入框 and Success Message
 				  setInviteEmail('');
-				  setModalMessage(`✅ 已成功邀請成員: ${invitedDisplayName}`); // 成功 Modal Message
+				  let successMessage = `✅ 已成功邀請成員: ${invitedDisplayName}`;
+				  if (removedOldName) { // <-- NEW: 根據是否移除舊名稱顯示不同訊息
+					  successMessage += `，並已自動移除您之前建立的重複名稱「${removedOldName}」。`;
+				  }
+				  setModalMessage(successMessage); // 成功 Modal Message
 				  console.log(
 					`已邀請成員 ${invitedDisplayName} (${invitedUid}) 並加入分帳成員名單`
 				  );
@@ -1763,7 +1858,7 @@
 				  setIsLoading(false);
 				}
 			  },
-			  [db, currentCollectionId, customMembers, saveMembers, groupMembers]
+			  [db, currentCollectionId, customMembers, saveMembers, groupMembers, userProfiles, getDisplayName]
 			);
 
 			// 從群組中移除成員（同時從分帳成員名單中移除）
@@ -1874,6 +1969,129 @@
                 setIsLoading(false);
             }
           }, [db, currentCollectionId, customMembers, members, isReadOnly]);
+          
+          
+        // --- 11. 成員 ID 遷移/替換功能 ---
+		const migrateMemberID = React.useCallback(async (oldName, newId, setModalMessage) => {
+		    if (isReadOnly) {
+		        setModalMessage('❌ 唯讀模式下無法進行成員合併/替換操作。');
+		        return;
+		    }
+		    if (!db || !currentCollectionId || oldName === newId) return;
+
+		    // 確保新 ID 是群組成員 (有編輯權限的 UID)
+		    if (!groupMembers.includes(newId)) {
+		        setModalMessage('❌ 目標帳號（新 ID）必須是已加入本紀錄簿的用戶 ID。');
+		        return;
+		    }
+
+		    const onConfirm = async () => {
+		        closeConfirmModal();
+		        setIsLoading(true);
+		        setError(null);
+
+		        try {
+		            // --- 1. 更新 members/defaultShares 設定文檔 (使用 Transaction 確保原子性) ---
+		            const membersDocPath = getGroupMembersDocPath(currentCollectionId);
+		            const membersDocRef = db.doc(membersDocPath);
+		            
+		            await db.runTransaction(async (transaction) => {
+		                const docSnap = await transaction.get(membersDocRef);
+		                const data = docSnap.data() || {};
+		                let list = Array.isArray(data.list) ? data.list : [];
+		                let shares = data.defaultShares || {};
+		                
+		                // a. 替換 list 中的舊名稱為新 ID
+		                const oldIndex = list.findIndex(name => name === oldName);
+		                if (oldIndex !== -1) {
+		                    // 移除舊名稱
+		                    list.splice(oldIndex, 1);
+		                    // 加入新 ID (如果還不在清單中)
+		                    if (!list.includes(newId)) {
+		                        list.push(newId);
+		                    }
+		                }
+
+		                // b. 遷移 defaultShares: 新 ID 繼承舊名稱的份數
+		                if (shares[oldName] !== undefined) {
+		                    shares[newId] = (shares[newId] || 0) + shares[oldName]; // 合併舊的份數設定
+		                    delete shares[oldName];
+		                }
+		                
+		                // 過濾並儲存新的 list (確保唯一且不含 owner UID)
+		                const sanitizedList = Array.from(new Set(
+		                    list.filter(name => name.trim() !== '' && name !== currentCollectionId)
+		                ));
+
+		                transaction.set(membersDocRef, { list: sanitizedList, defaultShares: shares }, { merge: false });
+		            });
+
+		            // --- 2. 批量更新支出記錄 (使用 Batch) ---
+		            const expensesCollectionPath = getGroupExpensesPath(currentCollectionId);
+		            const expensesSnapshot = await db.collection(expensesCollectionPath).get();
+		            
+		            // 批量操作限制為 500，使用 400 作為安全閾值
+		            let batch = db.batch();
+		            let updateCount = 0;
+		            let batchOpCount = 0;
+
+		            for (const docSnap of expensesSnapshot.docs) {
+		                const data = docSnap.data();
+		                let needsUpdate = false;
+		                const updateData = {};
+		                
+		                // 檢查 payerName
+		                if (data.payerName === oldName) {
+		                    updateData.payerName = newId;
+		                    needsUpdate = true;
+		                }
+
+		                // 檢查 shares
+		                const shares = data.shares || {};
+		                if (shares[oldName] !== undefined) {
+		                    const newShares = { ...shares };
+		                    const shareValue = newShares[oldName];
+		                    
+		                    // 將份數移到新 ID (如果新 ID 已經有份數，則合併)
+		                    newShares[newId] = (newShares[newId] || 0) + shareValue;
+		                    delete newShares[oldName];
+		                    
+		                    updateData.shares = newShares;
+		                    needsUpdate = true;
+		                }
+
+		                if (needsUpdate) {
+		                    batch.update(docSnap.ref, updateData);
+		                    updateCount++;
+		                    batchOpCount++;
+
+		                    if (batchOpCount >= 400) { 
+		                        await batch.commit();
+		                        batch = db.batch(); // 重設新的 batch
+		                        batchOpCount = 0;
+		                    }
+		                }
+		            }
+		            
+		            // 提交剩餘的 batch
+		            if (batchOpCount > 0) {
+		                await batch.commit();
+		            }
+
+		            setModalMessage(`✅ 成員「${oldName}」已成功替換為「${getDisplayName(newId)}」並同步了 ${updateCount} 筆支出記錄！`);
+		        } catch (e) {
+		            console.error("Error migrating member ID:", e);
+		            setError(`成員替換失敗: ${e.message}`);
+		        } finally {
+		            setIsLoading(false);
+		        }
+		    };
+		    
+		    const message = `確認後會將所有與「${oldName}」相關的支出記錄和設定轉移到新成員「${getDisplayName(newId)}」上。`;
+		    
+		    openConfirmModal('轉移資料', message, onConfirm, '確認', 'red');
+
+		}, [db, currentCollectionId, isReadOnly, groupMembers, members, openConfirmModal, closeConfirmModal, setIsLoading, setError, getDisplayName]); // <-- FIXED: Removed top-level const functions from dependencies
 
           // --- 8. 清算結餘功能 ---
           const settleMemberDebt = useCallback(async (debtorId, amount, creditorId) => {
@@ -1923,7 +2141,7 @@
                   'green'
               );
 
-          }, [db, userId, currentCollectionId, isReadOnly, getDisplayName, openConfirmModal, closeConfirmModal]);
+          }, [db, userId, currentCollectionId, isReadOnly, getDisplayName, openConfirmModal, closeConfirmModal, setToastMessage]);
 
           // --- 9. 分帳計算 ---
           const calculateBalances = useMemo(() => {
@@ -2471,6 +2689,7 @@
 					inviteUserByEmail={inviteUserByEmail}
 					removeGroupMember={removeGroupMember}
                     setToastMessage={setToastMessage}
+                    migrateMemberID={migrateMemberID} // <-- NEW: 傳入新的遷移函式
                 />
                 
                 {/* 統一的確認提示 Modal */}
