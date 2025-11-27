@@ -2044,17 +2044,22 @@
             });
           };
 
-          // --- 計算換算結果 ---
+		  // --- 計算換算結果 ---
           const convertedAmount = useMemo(() => {
               const amount = parseFloat(converterAmount) || 0;
               if (amount <= 0) return 0;
-
-              // Step 1: Convert source amount to TWD
-              const rateToTWD = liveExchangeRates[converterSourceCurrency] || 1.0;
+              
+              // ✨ FIXED: Step 1: Convert source amount to TWD
+              // 使用 liveExchangeRates，如果沒有，則使用 DEFAULT_EXCHANGE_RATES (包含硬編碼 4.5)，再沒有才用 1.0
+              const rateToTWD = liveExchangeRates[converterSourceCurrency] 
+                                || DEFAULT_EXCHANGE_RATES[converterSourceCurrency] // 新增備用
+                                || 1.0; 
               const amountInTWD = amount * rateToTWD;
 
-              // Step 2: Convert TWD to target currency
-              const rateToTarget = liveExchangeRates[converterTargetCurrency] || 1.0;
+              // ✨ FIXED: Step 2: Convert TWD to target currency
+              const rateToTarget = liveExchangeRates[converterTargetCurrency] 
+                                   || DEFAULT_EXCHANGE_RATES[converterTargetCurrency] // 新增備用
+                                   || 1.0; 
               
               if (rateToTarget === 0) return 0; // Avoid division by zero
               
