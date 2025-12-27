@@ -1302,125 +1302,118 @@
 		
           // --- 1. Firebase 初始化與驗證（支援 /g/短代碼） ---
           useEffect(() => {
-			  if (!firebaseConfig) {
-			    setError('Firebase configuration is missing.');
-			    setAuthReady(true);
-			    return;
-			  }
-			
-			  try {
-			    // 防止重複初始化
-			    const app = firebase.apps.length ? firebase.app() : firebase.initializeApp(firebaseConfig);
-			    const _auth = app.auth();
-			    const _db = app.firestore();
-			
-			    setDb(_db);
-			    setAuth(_auth);
-			
-			    const unsubscribe = _auth.onAuthStateChanged(async (user) => {
-			      try {
-			        if (user) {
-			          // --- 1. 基本狀態設定 ---
-			          const isAnon = user.isAnonymous;
-			          setUserId(user.uid);
-			          setIsGuest(isAnon);
-			          
-			          console.log("當前使用者 UID:", user.uid, "是否為匿名:", isAnon);
-			
-			          // 定義路徑，確保 appId 是存在的
-			          const usersCollectionPath = `artifacts/${appId}/users`;
-			          const usersRef = _db.collection(usersCollectionPath);
-			
-			          // --- 2. 嘗試獲取/生成短代碼 (放在獨立的 try-catch 避免崩潰) ---
-			          let myShortCode = null;
-			          try {
-			            const myDocRef = usersRef.doc(user.uid);
-			            const mySnap = await myDocRef.get();
-			            if (mySnap.exists) {
-			              myShortCode = mySnap.data()?.shortCode || null;
-			            }
-			
-			            if (!myShortCode && !isAnon) {
-			              myShortCode = generateShortCode();
-			              await myDocRef.set({
-			                shortCode: myShortCode,
-			                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-			              }, { merge: true });
-			            }
-			          } catch (err) {
-			            console.warn('處理使用者短代碼時發生非致命錯誤：', err);
-			            // 即使短代碼處理失敗，也不要讓整個 Auth 崩潰
-			          }
-			
-			          // --- 3. 解析網址邏輯 ---
-			          const url = new URL(window.location.href);
-			          const urlParams = url.searchParams;
-			          const shareId = urlParams.get('shareId');
-			          let shortCodeFromPath = null;
-			          const path = url.pathname || '';
-			          const marker = '/g/';
-			          const idx = path.indexOf(marker);
-			          if (idx !== -1) {
-			            const after = path.slice(idx + marker.length);
-			            shortCodeFromPath = after.split('/')[0] || null;
-			          }
-			
-			          let targetCollectionId = user.uid;
-			          let targetShortCode = myShortCode || null;
-			
-			          // --- 4. 處理分享連結 (關鍵區塊) ---
-			          if (shortCodeFromPath) {
-			            try {
-			              const snap = await usersRef.where('shortCode', '==', shortCodeFromPath).limit(1).get();
-			              if (!snap.empty) {
-			                const foundDoc = snap.docs[0];
-			                targetCollectionId = foundDoc.id;
-			                targetShortCode = foundDoc.data()?.shortCode || shortCodeFromPath;
-			              }
-			            } catch (err) {
-			              console.error('查詢分享連結失敗：', err);
-			              // 如果查詢失敗，至少讓使用者留在自己的 UID 下
-			            }
-			          } else if (shareId) {
-			            targetCollectionId = shareId;
-			            window.history.replaceState(null, '', url.pathname);
-			          }
-			
-			          // --- 5. 確保群組存在 ---
-			          if (!isAnon && targetCollectionId === user.uid) {
-			            try {
-			              await ensureDefaultGroup(_db, user.uid);
-			            } catch (err) {
-			              console.error('建立預設群組失敗：', err);
-			            }
-			          }
-			
-			          // 最後設定狀態
-			          setCurrentCollectionId(targetCollectionId);
-			          setCurrentCollectionShortCode(targetShortCode);
-			
-			        } else {
-			          // 沒登入時，嘗試匿名登入
-			          console.log("偵測到未登入狀態，啟動匿名登入...");
-			          await _auth.signInAnonymously();
-			        }
-			      } catch (e) {
-			        console.error('Auth 內部處理崩潰:', e);
-			        setError(`認證初始化失敗: ${e.message}`);
-			        // ❌ 這裡移除 setUserId(null)，避免進入死迴圈
-			      } finally {
-			        setAuthReady(true);
-			      }
-			    });
-			
-			    return () => unsubscribe();
-			  } catch (e) {
-			    console.error('Firebase 頂層初始化失敗:', e);
-			    setError(`Firebase 啟動失敗: ${e.message}`);
-			    setAuthReady(true);
-			  }
-			}, [appId]); // 確保 appId 改變時重新執行
+            if (!firebaseConfig) {
+                setError('Firebase configuration is missing.');
+                setAuthReady(true);
+                return;
+            }
 
+            try {
+                // 防止重複初始化
+                const app = firebase.apps.length ? firebase.app() : firebase.initializeApp(firebaseConfig);
+                const _auth = app.auth();
+                const _db = app.firestore();
+
+                setDb(_db);
+                setAuth(_auth);
+
+                const unsubscribe = _auth.onAuthStateChanged(async (user) => {
+                    try {
+                        if (user) {
+                            // --- 1. 基本狀態設定 ---
+                            const isAnon = user.isAnonymous;
+                            setUserId(user.uid);
+                            setIsGuest(isAnon);
+                            
+                            console.log("當前使用者 UID:", user.uid, "是否為匿名:", isAnon);
+
+                            // 定義路徑，確保 appId 是存在的
+                            const usersCollectionPath = `artifacts/${appId}/users`;
+                            const usersRef = _db.collection(usersCollectionPath);
+
+                            // --- 2. 處理短代碼與路徑解析 (包在內部 try-catch 以免權限錯誤導致 App 崩潰) ---
+                            let myShortCode = null;
+                            let targetCollectionId = user.uid;
+                            let targetShortCode = null;
+
+                            // 2a. 先嘗試獲取自己的短代碼 (如果是正式用戶)
+                            if (!isAnon) {
+                                try {
+                                    const myDocRef = usersRef.doc(user.uid);
+                                    const mySnap = await myDocRef.get();
+                                    if (mySnap.exists) {
+                                        myShortCode = mySnap.data()?.shortCode || null;
+                                    }
+
+                                    if (!myShortCode) {
+                                        myShortCode = generateShortCode();
+                                        await myDocRef.set({
+                                            shortCode: myShortCode,
+                                            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                                        }, { merge: true });
+                                    }
+                                    targetShortCode = myShortCode;
+                                } catch (err) {
+                                    console.warn('無法處理個人短代碼（可能權限不足）：', err);
+                                }
+                            }
+
+                            // 2b. 解析網址 (優先權最高)
+                            const url = new URL(window.location.href);
+                            const path = url.pathname || '';
+                            const marker = '/g/';
+                            const idx = path.indexOf(marker);
+                            
+                            if (idx !== -1) {
+                                const shortCodeFromPath = path.slice(idx + marker.length).split('/')[0];
+                                if (shortCodeFromPath) {
+                                    try {
+                                        // 💡 關鍵：如果這裡報權限不足，代表你的 index 還沒建好或規則不允許跨 Uid 查詢
+                                        const snap = await usersRef.where('shortCode', '==', shortCodeFromPath).limit(1).get();
+                                        if (!snap.empty) {
+                                            const foundDoc = snap.docs[0];
+                                            targetCollectionId = foundDoc.id;
+                                            targetShortCode = foundDoc.data()?.shortCode || shortCodeFromPath;
+                                        }
+                                    } catch (err) {
+                                        console.error('查詢分享連結失敗：', err);
+                                        // 發生權限錯誤時，維持留在自己的帳號 ID
+                                    }
+                                }
+                            }
+
+                            // --- 3. 確保群組文件存在 (僅針對本人) ---
+                            if (!isAnon && targetCollectionId === user.uid) {
+                                try {
+                                    await ensureDefaultGroup(_db, user.uid);
+                                } catch (err) {
+                                    console.warn('建立預設群組失敗：', err);
+                                }
+                            }
+
+                            // 最後設定全域狀態，讓頁面開始監聽資料
+                            setCurrentCollectionId(targetCollectionId);
+                            setCurrentCollectionShortCode(targetShortCode);
+
+                        } else {
+                            // 完全沒人登入時才啟動匿名登入
+                            await _auth.signInAnonymously();
+                        }
+                    } catch (e) {
+                        console.error('Auth 狀態處理失敗:', e);
+                        setError(`系統初始化失敗: ${e.message}`);
+                    } finally {
+                        setAuthReady(true);
+                    }
+                });
+
+                return () => unsubscribe();
+            } catch (e) {
+                console.error('Firebase 啟動失敗:', e);
+                setError(`Firebase 啟動失敗: ${e.message}`);
+                setAuthReady(true);
+            }
+        }, [appId, ensureDefaultGroup]);
 		// --- 監聽目前 group 的 owner / members ---
 		useEffect(() => {
 		  if (!db || !currentCollectionId) return;
