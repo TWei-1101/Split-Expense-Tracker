@@ -1302,181 +1302,124 @@
 		
           // --- 1. Firebase 初始化與驗證（支援 /g/短代碼） ---
           useEffect(() => {
-            if (!firebaseConfig) {
-              setError('Firebase configuration is missing.');
-              setAuthReady(true);
-              return;
-            }
-
-            try {
-              const app = firebase.initializeApp(firebaseConfig);
-              const _auth = app.auth();
-              const _db = app.firestore();
-
-              setDb(_db);
-              setAuth(_auth);
-
-              const usersCollectionPath = `artifacts/${appId}/users`;
-              const usersRef = _db.collection(usersCollectionPath);
-
-              const unsubscribe = _auth.onAuthStateChanged(async (user) => {
-                try {
-                  if (user) {
-                    // Persistent user (email/password) or a converted anonymous user
-                    const isAnon = user.isAnonymous; // NEW: 檢查是否為匿名用戶
-                    setUserId(user.uid);
-                    setIsGuest(isAnon); // NEW: 設定訪客狀態
-
-                    // 1. 先幫登入者自己建立 / 補上短代碼
-                    let myShortCode = null;
-                    try {
-                      const myDocRef = usersRef.doc(user.uid);
-                      const mySnap = await myDocRef.get();
-                      if (mySnap.exists) {
-                        const data = mySnap.data() || {};
-                        myShortCode = data.shortCode || null;
-                      }
-                      
-                      // NEW: 只有非匿名用戶才生成短代碼
-                      if (!myShortCode && !isAnon) { 
-                        myShortCode = generateShortCode();
-                        await myDocRef.set(
-                          {
-                            shortCode: myShortCode,
-                            createdAt: serverTimestamp(),
-                          },
-                          { merge: true }
-                        );
-                      }
-                    } catch (err) {
-                      console.error('初始化使用者短代碼失敗：', err);
-                    }
-
-                    // 2. 解析網址：優先支援 /g/SHORT，其次舊版 ?shareId=
-                    const url = new URL(window.location.href);
-                    const urlParams = url.searchParams;
-                    const shareId = urlParams.get('shareId');
-
-                    let shortCodeFromPath = null;
-                    const path = url.pathname || '';
-                    const marker = '/g/';
-                    const idx = path.indexOf(marker);
-                    if (idx !== -1) {
-                      const after = path.slice(idx + marker.length);
-                      shortCodeFromPath = after.split('/')[0] || null;
-                    }
-
-                    let targetCollectionId = user.uid;
-                    let targetShortCode = myShortCode || null;
-                    
-                    // If the user is anonymous, they can only view shared groups or their own temporary group.
-                    // We prioritize shared links for all users (including guests).
-
-                    if (shortCodeFromPath) {
-                      try {
-                        // 用短代碼查出擁有者的 userId
-                        const snap = await usersRef
-                          .where('shortCode', '==', shortCodeFromPath)
-                          .limit(1)
-                          .get();
-                        if (!snap.empty) {
-                          const doc = snap.docs[0];
-                          targetCollectionId = doc.id;
-                          const data = doc.data() || {};
-                          targetShortCode = data.shortCode || shortCodeFromPath;
-                        } else if (isAnon) { // MODIFIED: 訪客模式下找不到就切回訪客預設
-                            setError('找不到對應的分帳簿，已切回訪客模式。');
-                        } else { // MODIFIED: 登入用戶找不到就切回自己的
-                            setError('找不到對應的分帳簿，已切回自己的紀錄簿。');
-                        }
-                      } catch (err) {
-                        console.error('依短代碼尋找分帳簿失敗：', err);
-                        setError('連結載入失敗，已切回訪客模式/自己的紀錄簿。'); // MODIFIED
-                      }
-                    } else if (shareId) {
-                      // 舊版連結：?shareId=UID 還是可以用
-                      targetCollectionId = shareId;
-                      // 清掉舊版 query，避免之後重複解析
-                      window.history.replaceState(null, '', url.pathname);
-                    }
-                    
-                    // NEW: 只有非匿名用戶才確保預設群組存在
-                    if (!isAnon && targetCollectionId === user.uid) {
-                        await ensureDefaultGroup(_db, user.uid);
-                    }
-
-
-                    setCurrentCollectionId((prev) => prev || targetCollectionId);
-                    setCurrentCollectionShortCode(targetShortCode);
-                    
-                  } else {
-                    // User is signed out. Sign in anonymously for guest view.
-                    const anonUserCredential = await _auth.signInAnonymously();
-                    const anonUser = anonUserCredential.user;
-
-                    setUserId(anonUser.uid);
-                    setIsGuest(true); // NEW: 設為訪客
-                    
-                    // --- 沿用已有的 URL 解析邏輯 ---
-                    const url = new URL(window.location.href);
-                    const urlParams = url.searchParams;
-                    const shareId = urlParams.get('shareId');
-
-                    let shortCodeFromPath = null;
-                    const path = url.pathname || '';
-                    const marker = '/g/';
-                    const idx = path.indexOf(marker);
-                    if (idx !== -1) {
-                        const after = path.slice(idx + marker.length);
-                        shortCodeFromPath = after.split('/')[0] || null;
-                    }
-                    
-                    let targetCollectionId = anonUser.uid; // Default to anon's temporary group
-                    let targetShortCode = null; 
-
-                    if (shortCodeFromPath) {
-                        try {
-                            const snap = await usersRef
-                                .where('shortCode', '==', shortCodeFromPath)
-                                .limit(1)
-                                .get();
-                            if (!snap.empty) {
-                                const doc = snap.docs[0];
-                                targetCollectionId = doc.id;
-                                const data = doc.data() || {};
-                                targetShortCode = data.shortCode || shortCodeFromPath;
-                            } else {
-                                setError('找不到對應的分帳簿，已切回訪客模式。');
-                            }
-                        } catch (err) {
-                            console.error('依短代碼尋找分帳簿失敗：', err);
-                            setError('連結載入失敗，已切回訪客模式。');
-                        }
-                    } else if (shareId) {
-                        targetCollectionId = shareId;
-                        window.history.replaceState(null, '', url.pathname);
-                    }
-
-                    setCurrentCollectionId(targetCollectionId);
-                    setCurrentCollectionShortCode(targetShortCode);
-                  }
-                } catch (e) {
-                    // Handle anonymous sign-in failure (e.g., Firebase config issue)
-                    console.error('Auth error during sign-in/anonymous fallback:', e);
-                    setUserId(null);
-                    setIsGuest(false);
-                    setError(`認證失敗，應用程式無法運作: ${e.message}`);
-                } finally {
-                  setAuthReady(true);
-                }
-              });
-
-              return () => unsubscribe();
-            } catch (e) {
-              setError(`Firebase initialization failed: ${e.message}`);
-              setAuthReady(true);
-            }
-          }, []);
+			  if (!firebaseConfig) {
+			    setError('Firebase configuration is missing.');
+			    setAuthReady(true);
+			    return;
+			  }
+			
+			  try {
+			    // 防止重複初始化
+			    const app = firebase.apps.length ? firebase.app() : firebase.initializeApp(firebaseConfig);
+			    const _auth = app.auth();
+			    const _db = app.firestore();
+			
+			    setDb(_db);
+			    setAuth(_auth);
+			
+			    const unsubscribe = _auth.onAuthStateChanged(async (user) => {
+			      try {
+			        if (user) {
+			          // --- 1. 基本狀態設定 ---
+			          const isAnon = user.isAnonymous;
+			          setUserId(user.uid);
+			          setIsGuest(isAnon);
+			          
+			          console.log("當前使用者 UID:", user.uid, "是否為匿名:", isAnon);
+			
+			          // 定義路徑，確保 appId 是存在的
+			          const usersCollectionPath = `artifacts/${appId}/users`;
+			          const usersRef = _db.collection(usersCollectionPath);
+			
+			          // --- 2. 嘗試獲取/生成短代碼 (放在獨立的 try-catch 避免崩潰) ---
+			          let myShortCode = null;
+			          try {
+			            const myDocRef = usersRef.doc(user.uid);
+			            const mySnap = await myDocRef.get();
+			            if (mySnap.exists) {
+			              myShortCode = mySnap.data()?.shortCode || null;
+			            }
+			
+			            if (!myShortCode && !isAnon) {
+			              myShortCode = generateShortCode();
+			              await myDocRef.set({
+			                shortCode: myShortCode,
+			                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+			              }, { merge: true });
+			            }
+			          } catch (err) {
+			            console.warn('處理使用者短代碼時發生非致命錯誤：', err);
+			            // 即使短代碼處理失敗，也不要讓整個 Auth 崩潰
+			          }
+			
+			          // --- 3. 解析網址邏輯 ---
+			          const url = new URL(window.location.href);
+			          const urlParams = url.searchParams;
+			          const shareId = urlParams.get('shareId');
+			          let shortCodeFromPath = null;
+			          const path = url.pathname || '';
+			          const marker = '/g/';
+			          const idx = path.indexOf(marker);
+			          if (idx !== -1) {
+			            const after = path.slice(idx + marker.length);
+			            shortCodeFromPath = after.split('/')[0] || null;
+			          }
+			
+			          let targetCollectionId = user.uid;
+			          let targetShortCode = myShortCode || null;
+			
+			          // --- 4. 處理分享連結 (關鍵區塊) ---
+			          if (shortCodeFromPath) {
+			            try {
+			              const snap = await usersRef.where('shortCode', '==', shortCodeFromPath).limit(1).get();
+			              if (!snap.empty) {
+			                const foundDoc = snap.docs[0];
+			                targetCollectionId = foundDoc.id;
+			                targetShortCode = foundDoc.data()?.shortCode || shortCodeFromPath;
+			              }
+			            } catch (err) {
+			              console.error('查詢分享連結失敗：', err);
+			              // 如果查詢失敗，至少讓使用者留在自己的 UID 下
+			            }
+			          } else if (shareId) {
+			            targetCollectionId = shareId;
+			            window.history.replaceState(null, '', url.pathname);
+			          }
+			
+			          // --- 5. 確保群組存在 ---
+			          if (!isAnon && targetCollectionId === user.uid) {
+			            try {
+			              await ensureDefaultGroup(_db, user.uid);
+			            } catch (err) {
+			              console.error('建立預設群組失敗：', err);
+			            }
+			          }
+			
+			          // 最後設定狀態
+			          setCurrentCollectionId(targetCollectionId);
+			          setCurrentCollectionShortCode(targetShortCode);
+			
+			        } else {
+			          // 沒登入時，嘗試匿名登入
+			          console.log("偵測到未登入狀態，啟動匿名登入...");
+			          await _auth.signInAnonymously();
+			        }
+			      } catch (e) {
+			        console.error('Auth 內部處理崩潰:', e);
+			        setError(`認證初始化失敗: ${e.message}`);
+			        // ❌ 這裡移除 setUserId(null)，避免進入死迴圈
+			      } finally {
+			        setAuthReady(true);
+			      }
+			    });
+			
+			    return () => unsubscribe();
+			  } catch (e) {
+			    console.error('Firebase 頂層初始化失敗:', e);
+			    setError(`Firebase 啟動失敗: ${e.message}`);
+			    setAuthReady(true);
+			  }
+			}, [appId]); // 確保 appId 改變時重新執行
 
 		// --- 監聽目前 group 的 owner / members ---
 		useEffect(() => {
