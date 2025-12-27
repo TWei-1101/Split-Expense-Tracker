@@ -88,10 +88,10 @@
         const serverTimestamp = firestore.FieldValue.serverTimestamp; 
         
 		const getGroupExpensesPath = (groupId) =>
-		  `artifacts/${appId}/groups/${groupId}/expenses`;
+		  `artifacts/YOUR_APP_ID/groups/${groupId}/expenses`;
 
 		const getGroupMembersDocPath = (groupId) =>
-		  `artifacts/${appId}/groups/${groupId}/settings/members`;
+		  `artifacts/YOUR_APP_ID/groups/${groupId}/settings/members`;
 		
         // --- 匯率設定 (預設值作為備用) ---
         const PERMANENT_RATES_CACHE_KEY = "permanentExchangeRates";
@@ -285,7 +285,7 @@
          */
         const createOrUpdatePublicProfile = async (db, uid, displayName, email) => {
             if (!db || !uid || !displayName) return;
-            const profileDocPath = `artifacts/${appId}/public_profiles/${uid}`;
+            const profileDocPath = `artifacts/YOUR_APP_ID/public_profiles/${uid}`;
             try {
                 await db.doc(profileDocPath).set({ 
                     displayName: displayName,
@@ -1256,7 +1256,7 @@
 		    if (!_db || !uid) return null;
 
 		    const groupId = uid; // 先用 uid 當 groupId
-		    const groupRef = _db.doc(`artifacts/${appId}/groups/${groupId}`);
+		    const groupRef = _db.doc(`artifacts/YOUR_APP_ID/groups/${groupId}`);
 		    const snap = await groupRef.get();
 
 		    if (!snap.exists) {
@@ -1328,7 +1328,7 @@
                             console.log("當前使用者 UID:", user.uid, "是否為匿名:", isAnon);
 
                             // 定義路徑，確保 appId 是存在的
-                            const usersCollectionPath = `artifacts/${appId}/users`;
+                            const usersCollectionPath = `artifacts/YOUR_APP_ID/users`;
                             const usersRef = _db.collection(usersCollectionPath);
 
                             // --- 2. 處理短代碼與路徑解析 (包在內部 try-catch 以免權限錯誤導致 App 崩潰) ---
@@ -1418,7 +1418,7 @@
 		useEffect(() => {
 		  if (!db || !currentCollectionId) return;
 
-		  const groupDocRef = db.doc(`artifacts/${appId}/groups/${currentCollectionId}`);
+		  const groupDocRef = db.doc(`artifacts/YOUR_APP_ID/groups/${currentCollectionId}`);
 
 		  const unsub = groupDocRef.onSnapshot(
 			(snap) => {
@@ -1480,7 +1480,7 @@
 			setIsLoading(true);
 			setError(null);
 
-			const groupRef = db.doc(`artifacts/${appId}/groups/${currentCollectionId}`);
+			const groupRef = db.doc(`artifacts/YOUR_APP_ID/groups/${currentCollectionId}`);
 			await groupRef.set(
 			  {
 				name: trimmed,
@@ -1503,7 +1503,7 @@
           useEffect(() => {
             if (!authReady || !db) return;
             
-            const profilesCollectionPath = `artifacts/${appId}/public_profiles`;
+            const profilesCollectionPath = `artifacts/YOUR_APP_ID/public_profiles`;
             const profilesRef = db.collection(profilesCollectionPath);
 
             const unsubscribeProfiles = profilesRef.onSnapshot((snapshot) => {
@@ -1823,7 +1823,7 @@
 
 				try {
 				  // 1) 用 email 找 public_profiles
-				  const profilesRef = db.collection(`artifacts/${appId}/public_profiles`);
+				  const profilesRef = db.collection(`artifacts/YOUR_APP_ID/public_profiles`);
 				  const snap = await profilesRef.where('email', '==', emailToInvite).limit(1).get();
 
 				  if (snap.empty) {
@@ -1848,7 +1848,7 @@
 				  }
 
 				  // 3) 把 uid 加進 group.members
-				  const groupRef = db.doc(`artifacts/${appId}/groups/${currentCollectionId}`);
+				  const groupRef = db.doc(`artifacts/YOUR_APP_ID/groups/${currentCollectionId}`);
 				  await groupRef.update({
 					members: firebase.firestore.FieldValue.arrayUnion(invitedUid),
 				  });
@@ -1918,7 +1918,7 @@
 					setError(null);
 
 					// 1) 從 group.members 移除
-					const groupRef = db.doc(`artifacts/${appId}/groups/${currentCollectionId}`);
+					const groupRef = db.doc(`artifacts/YOUR_APP_ID/groups/${currentCollectionId}`);
 					await groupRef.update({
 					  members: firebase.firestore.FieldValue.arrayRemove(memberUid),
 					});
@@ -2384,7 +2384,7 @@
 				  setIsLoading(true);
 				  setError(null);
 
-				  const usersCollectionPath = `artifacts/${appId}/users`;
+				  const usersCollectionPath = `artifacts/YOUR_APP_ID/users`;
 				  const usersRef = db.collection(usersCollectionPath);
 				  const myDocRef = usersRef.doc(userId);
 				  const mySnap = await myDocRef.get();
