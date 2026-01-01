@@ -15,21 +15,34 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
     <style>
-        input[type='number'] { -moz-appearance: textfield; }
+        /* 修正：移除輸入框原生的增減控制項 */
+        input[type='number'] {
+            -moz-appearance: textfield;
+        }
         input[type='number']::-webkit-inner-spin-button,
-        input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-        .force-gpu { transform: translateZ(0); will-change: transform; }
+        input[type='number']::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        /* ✨ NEW: 修正 Modal 閃爍問題，針對 Safari/WebKit 優化 */
+        .force-gpu {
+            /* 讓瀏覽器推到獨立圖層，解決背景閃爍 */
+            transform: translateZ(0);
+            /* 告訴瀏覽器準備變化，避免重新計算 */
+            will-change: transform; 
+        }
     </style>
     
     <script>
+        // 設定 Tailwind CSS 顏色
         tailwind.config = {
             theme: {
                 extend: {
                     colors: {
                         primaryColor: {
-                            500: '#14b8a6',
-                            600: '#0d9488',
-                            700: '#0f766e',
+                            500: '#14b8a6', // teal-500
+                            600: '#0d9488', // teal-600
+                            700: '#0f766e', // teal-700
                         },
                     },
                 }
@@ -61,158 +74,315 @@
     <script type="text/babel">
         const React = window.React;
         const { useState, useEffect, useCallback, useMemo } = React;
+        
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
         const { firestore } = firebase;
         const serverTimestamp = firestore.FieldValue.serverTimestamp; 
-
-        // 儲存 Key
-        const PREFERRED_CURRENCY_KEY = "user_preferred_currency";
+        
+		const getGroupExpensesPath = (groupId) => `artifacts/${appId}/groups/${groupId}/expenses`;
+		const getGroupMembersDocPath = (groupId) => `artifacts/${appId}/groups/${groupId}/settings/members`;
+		
+        // --- 匯率設定 ---
+        const PERMANENT_RATES_CACHE_KEY = "permanentExchangeRates";
+        const LAST_USED_CURRENCY_KEY = "lastUsedCurrency"; // ✨ NEW: 幣別記憶 Key
 
         const HARDCODED_DEFAULT_RATES = {
-            'TWD': 1.0, 'CNY': 4.5, 'USD': 30.5, 'THB': 0.85, 'EUR': 33.0, 'CAD': 22.5,
-            'VND': 0.0013, 'IDR': 0.002, 'JPY': 0.25, 'KRW': 0.023, 'AUD': 20.0, 'NOK': 2.9,
+            'TWD': 1.0, 'CNY': 4.5, 'USD': 30.5, 'THB': 0.85, 'EUR': 33.0,
+            'CAD': 22.5, 'VND': 0.0013, 'IDR': 0.002, 'JPY': 0.25, 'KRW': 0.023,
+            'AUD': 20.0, 'NOK': 2.9,
         };
-        const CURRENCIES = Object.keys(HARDCODED_DEFAULT_RATES);
+
+        let DEFAULT_EXCHANGE_RATES = (function() {
+            try {
+                const cachedRates = localStorage.getItem(PERMANENT_RATES_CACHE_KEY);
+                if (cachedRates) return JSON.parse(cachedRates);
+            } catch (e) { console.warn("⚠ 讀取持久化匯率快取失敗", e); }
+            return HARDCODED_DEFAULT_RATES;
+        })();
+		
+		const CURRENCIES = Object.keys(HARDCODED_DEFAULT_RATES);
         const DEFAULT_CURRENCY = 'TWD';
 
-        // --- 核心匯率抓取 ---
+        // --- 匯率獲取函式 ---
 		const fetchExchangeRates = async () => {
 			const CACHE_KEY = "exchangeRatesCache";
 			const CACHE_TIME_KEY = "exchangeRatesCacheTime";
+			const FOUR_HOURS = 4 * 60 * 60 * 1000;
 			try {
 				const cachedRates = localStorage.getItem(CACHE_KEY);
 				const cachedTime = localStorage.getItem(CACHE_TIME_KEY);
-				if (cachedRates && cachedTime && (Date.now() - parseInt(cachedTime)) < 14400000) {
-					return { rates: JSON.parse(cachedRates), lastUpdate: parseInt(cachedTime) };
+				if (cachedRates && cachedTime) {
+					const lastUpdate = parseInt(cachedTime, 10);
+					if (Date.now() - lastUpdate < FOUR_HOURS) {
+						return { rates: JSON.parse(cachedRates), lastUpdate };
+					}
 				}
-			} catch (err) {}
+			} catch (err) { console.warn("⚠ 讀取臨時匯率快取失敗", err); }
+
+			const API_URL = "https://open.er-api.com/v6/latest/TWD";
 			try {
-				const res = await fetch("https://open.er-api.com/v6/latest/TWD");
+				const res = await fetch(API_URL);
 				const data = await res.json();
+				if (data.result !== "success") throw new Error("無效匯率資料");
 				const processedRates = { [DEFAULT_CURRENCY]: 1.0 };
 				CURRENCIES.forEach(code => {
-					processedRates[code] = data.rates[code] ? 1 / data.rates[code] : HARDCODED_DEFAULT_RATES[code];
+					if (code === DEFAULT_CURRENCY) return;
+					const rateTWDToCode = data.rates[code];
+					processedRates[code] = rateTWDToCode ? 1 / rateTWDToCode : HARDCODED_DEFAULT_RATES[code];
 				});
+				const now = Date.now();
 				localStorage.setItem(CACHE_KEY, JSON.stringify(processedRates));
-				localStorage.setItem(CACHE_TIME_KEY, Date.now().toString());
-				return { rates: processedRates, lastUpdate: Date.now() };
+				localStorage.setItem(CACHE_TIME_KEY, now.toString());
+				localStorage.setItem(PERMANENT_RATES_CACHE_KEY, JSON.stringify(processedRates));
+				DEFAULT_EXCHANGE_RATES = processedRates;
+				return { rates: processedRates, lastUpdate: now };
 			} catch (err) {
-				return { rates: HARDCODED_DEFAULT_RATES, lastUpdate: Date.now() };
+				return { rates: DEFAULT_EXCHANGE_RATES, lastUpdate: Date.now() };
 			}
 		};
 
-        // --- SVG Icons ---
-        const IconProps = { stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", fill: "none" };
-        const CircleDollarSign = (p) => <svg {...p} {...IconProps} viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/></svg>;
-        const Trash2 = (p) => <svg {...p} {...IconProps} viewBox="0 0 24 24"><path d="M3 6h18m-2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m-6 5v6m4-6v6"/></svg>;
-        const Plus = (p) => <svg {...p} {...IconProps} viewBox="0 0 24 24"><path d="M12 5v14m-7-7h14"/></svg>;
-        const Minus = (p) => <svg {...p} {...IconProps} viewBox="0 0 24 24"><path d="M5 12h14"/></svg>;
-        const Users = (p) => <svg {...p} {...IconProps} viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>;
-        const X = (p) => <svg {...p} {...IconProps} viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>;
-        const CircleCheck = (p) => <svg {...p} {...IconProps} viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14 9 11"/></svg>;
-        const Pencil = (p) => <svg {...p} {...IconProps} viewBox="0 0 24 24"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>;
-        const LogOut = (p) => <svg {...p} {...IconProps} viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9"/></svg>;
-        const Search = (p) => <svg {...p} {...IconProps} viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>;
-        const Share2 = (p) => <svg {...p} {...IconProps} viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.42" y1="6.51" x2="8.59" y2="10.49"/></svg>;
+        const generateShortCode = (length = 6) => {
+            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+            let result = '';
+            for (let i = 0; i < length; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
+            return result;
+        };
 
-        /** * 1. 支出 Modal 
-         */
-        const ExpenseModal = React.memo(({ db, currentUserId, members, getInitialShares, state, onClose, getDisplayName, isReadOnly, collectionId, liveExchangeRates, defaultCurrency }) => {
-            const [newExpense, setNewExpense] = useState({ description: '', originalAmount: '', currency: DEFAULT_CURRENCY, payerName: '', shares: {} });
+        // --- 內聯 SVG 圖標 ---
+        const IconProps = { stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", fill: "none" };
+        const CircleDollarSign = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><line x1="10" x2="8" y1="9" y2="9"/></svg>;
+        const Trash2 = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>;
+        const Plus = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>;
+        const Minus = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M5 12h14"></path></svg>;
+        const Users = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>;
+        const X = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>;
+        const CircleCheck = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14 9 11"></polyline></svg>;
+        const Pencil = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path></svg>;
+        const UserMinus = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><line x1="22" x2="16" y1="11" y2="11"></line></svg>;
+        const LogOut = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" x2="9" y1="12" y2="12"></line></svg>;
+        const Share2 = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"></line><line x1="15.42" x2="8.59" y1="6.51" y2="10.49"></line></svg>;
+        const Search = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" x2="16.65" y1="21" y2="16.65"></line></svg>;
+
+        const createOrUpdatePublicProfile = async (db, uid, displayName, email) => {
+            if (!db || !uid || !displayName) return;
+            try {
+                await db.doc(`artifacts/${appId}/public_profiles/${uid}`).set({ displayName, email, uid }, { merge: true });
+            } catch (e) { console.error("Error updating profile:", e); }
+        };
+
+        const ConfirmationModal = React.memo(({ isOpen, onClose, onConfirm, title, message, confirmText, confirmColor = 'red' }) => {
+            if (!isOpen) return null;
+            const colorClass = confirmColor === 'green' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700';
+            return (
+                <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-[9999] transition-opacity force-gpu">
+                    <div className="bg-white rounded-xl w-full max-w-sm shadow-2xl transform transition-transform duration-300 scale-100 force-gpu">
+                        <div className="p-6">
+                            <h3 className="text-xl font-bold text-gray-800 mb-4">{title}</h3>
+                            <p className="text-gray-600 mb-6">{message}</p>
+                            <div className="flex justify-end space-x-3">
+                                <button onClick={onClose} className="px-4 py-2 rounded-full text-gray-700 bg-gray-200 hover:bg-gray-300 transition font-semibold">取消</button>
+                                <button onClick={onConfirm} className={`px-4 py-2 rounded-full text-white font-semibold transition duration-150 shadow-md ${colorClass}`}>{confirmText}</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        });
+
+        const AuthModal = React.memo(({ auth, db, setToastMessage, isOpen, onClose }) => {
+            if (!isOpen) return null;
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [nickname, setNickname] = useState('');
+            const [isLogin, setIsLogin] = useState(true);
+            const [isLoading, setIsLoading] = useState(false);
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setIsLoading(true);
+                try {
+                    let userCredential;
+                    let finalDisplayName = nickname.trim();
+                    if (isLogin) {
+                        userCredential = await auth.signInWithEmailAndPassword(email, password);
+                        finalDisplayName = userCredential.user.displayName || email;
+                    } else {
+                        userCredential = await auth.createUserWithEmailAndPassword(email, password);
+                        await userCredential.user.updateProfile({ displayName: finalDisplayName });
+                    }
+                    if (db) await createOrUpdatePublicProfile(db, userCredential.user.uid, finalDisplayName, email);
+                    setToastMessage(`✅ 歡迎 ${finalDisplayName}`);
+                    onClose();
+                } catch (e) { setToastMessage(`❌ 失敗: ${e.message}`); } finally { setIsLoading(false); }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-gray-900 bg-opacity-95 flex items-center justify-center p-4 z-50 force-gpu">
+                    <div className="bg-white rounded-xl w-full max-w-md shadow-2xl p-6 sm:p-8 force-gpu relative">
+                        <button onClick={onClose} className="absolute top-4 right-4 p-1 rounded-full hover:bg-gray-100 text-gray-600 transition hover:scale-110 transform"><X className="w-6 h-6" /></button>
+                        <h3 className="text-3xl font-bold text-primaryColor-600 text-center mb-6">{isLogin ? '登入紀錄簿' : '註冊新帳號'}</h3>
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            {!isLogin && (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">暱稱</label>
+                                    <input type="text" value={nickname} onChange={(e) => setNickname(e.target.value)} className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500" required={!isLogin} />
+                                </div>
+                            )}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">電子郵件</label>
+                                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500" required />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">密碼</label>
+                                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500" minLength="6" required />
+                            </div>
+                            <button type="submit" disabled={isLoading} className={`w-full py-3 rounded-full text-white font-semibold shadow-lg ${isLoading ? "bg-gray-400" : "bg-primaryColor-600 hover:bg-primaryColor-700"}`}>
+                                {isLoading ? '處理中...' : (isLogin ? '登入' : '註冊')}
+                            </button>
+                        </form>
+                        <div className="mt-6 text-center">
+                            <button onClick={() => { setIsLogin(!isLogin); setNickname(''); }} className="text-primaryColor-600 text-sm font-medium">{isLogin ? '還沒有帳號？點此註冊' : '已經有帳號了？點此登入'}</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        });
+
+        const ExpenseModal = React.memo(({ db, currentUserId, members, getInitialShares, state, onClose, getDisplayName, isReadOnly, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel}) => {
+            const [newExpense, setNewExpense] = useState({
+                description: '', originalAmount: '', currency: DEFAULT_CURRENCY, payerName: '', shares: {}, 
+            });
             const [isLoadingModal, setIsLoadingModal] = useState(false);
             const [modalError, setModalError] = useState(null);
 
             const isEditing = state.isEditing;
             const expenseToEdit = state.editingExpense;
-            const currentExchangeRate = liveExchangeRates[newExpense.currency] || HARDCODED_DEFAULT_RATES[newExpense.currency] || 1.0;
+            
+            const currentExchangeRate = liveExchangeRates[newExpense.currency] || DEFAULT_EXCHANGE_RATES[newExpense.currency] || 1.0;
+            const amountInTWD = useMemo(() => {
+                const amount = parseFloat(newExpense.originalAmount) || 0;
+                return amount * currentExchangeRate;
+            }, [newExpense.originalAmount, currentExchangeRate]);
 
             useEffect(() => {
                 if (state.isOpen) {
                     if (isEditing && expenseToEdit) {
-                        const initialShares = members.reduce((acc, name) => ({ ...acc, [name]: expenseToEdit.shares[name] ?? 0 }), {});
-                        setNewExpense({ ...expenseToEdit, shares: initialShares });
-                    } else {
-                        // ✨ 記憶幣別邏輯
-                        const savedCurrency = localStorage.getItem(PREFERRED_CURRENCY_KEY);
+                        const initialShares = members.reduce((acc, name) => ({ 
+                            ...acc, [name]: expenseToEdit.shares[name] !== undefined ? expenseToEdit.shares[name] : 0 
+                        }), {});
                         setNewExpense({
-                            description: '', originalAmount: '',
-                            currency: savedCurrency || defaultCurrency || DEFAULT_CURRENCY,
-                            payerName: currentUserId || members[0] || '',
-                            shares: getInitialShares()
+                            description: expenseToEdit.description,
+                            originalAmount: expenseToEdit.originalAmount,
+                            currency: expenseToEdit.currency || DEFAULT_CURRENCY,
+                            payerName: expenseToEdit.payerName,
+                            shares: initialShares,
+                        });
+                    } else {
+                        // ✨ 記憶功能邏輯：從 localStorage 讀取最後一次使用的幣別
+                        const savedCurrency = localStorage.getItem(LAST_USED_CURRENCY_KEY);
+                        const initialCurrency = savedCurrency || defaultCurrency || DEFAULT_CURRENCY;
+
+                        let defaultPayerId = null;
+                        if (currentUserId && members.includes(currentUserId)) defaultPayerId = currentUserId;
+                        if (!defaultPayerId && currentUserLabel) {
+                            for (const m of members) if (getDisplayName(m) === currentUserLabel) { defaultPayerId = m; break; }
+                        }
+                        if (!defaultPayerId) defaultPayerId = currentUserId || members[0] || '';
+
+                        setNewExpense({
+                            description: '',
+                            originalAmount: '',
+                            currency: initialCurrency, // ✨ 使用記憶的幣別
+                            payerName: defaultPayerId,
+                            shares: getInitialShares(),
                         });
                     }
                     setModalError(null);
                 }
-            }, [state.isOpen, isEditing, expenseToEdit, members, currentUserId, getInitialShares, defaultCurrency]);
+            }, [state.isOpen, isEditing, expenseToEdit, members, currentUserId, getInitialShares, currentUserLabel, getDisplayName, defaultCurrency]);
+
+            const handleInputChange = (e) => {
+                const { name, value } = e.target;
+                setNewExpense(prev => ({ ...prev, [name]: name === 'originalAmount' ? (value === '' ? '' : parseFloat(value) || '') : value }));
+            };
 
             const handleCurrencyChange = (e) => {
-                const val = e.target.value;
-                localStorage.setItem(PREFERRED_CURRENCY_KEY, val); // ✨ 存入手動選擇
-                setNewExpense(prev => ({ ...prev, currency: val }));
+                 const selectedCurrency = e.target.value;
+                 setNewExpense(prev => ({ ...prev, currency: selectedCurrency }));
+                 // ✨ 記憶功能邏輯：儲存目前選擇的幣別
+                 localStorage.setItem(LAST_USED_CURRENCY_KEY, selectedCurrency);
+            };
+
+            const handleShareChange = (name, delta) => {
+                setNewExpense(prev => ({ ...prev, shares: { ...prev.shares, [name]: Math.max(0, (prev.shares[name] || 0) + delta) } }));
             };
 
             const saveExpense = async () => {
                 if (isReadOnly || !db || !currentUserId) return;
-                if (!newExpense.description.trim() || newExpense.originalAmount <= 0) { setModalError('請填寫完整資訊'); return; }
+                if (!newExpense.description.trim() || newExpense.originalAmount <= 0 || !newExpense.payerName) {
+                    setModalError('請輸入有效資訊！'); return;
+                }
                 setIsLoadingModal(true);
                 try {
                     const data = {
-                        ...newExpense,
-                        exchangeRate: currentExchangeRate,
-                        amountInTWD: newExpense.originalAmount * currentExchangeRate,
-                        shares: Object.fromEntries(Object.entries(newExpense.shares).filter(([_, s]) => s > 0)),
+                        description: newExpense.description, originalAmount: newExpense.originalAmount,
+                        currency: newExpense.currency, exchangeRate: currentExchangeRate, amountInTWD,
+                        payerName: newExpense.payerName,
+                        shares: Object.entries(newExpense.shares).reduce((acc, [n, s]) => { if(s > 0) acc[n] = s; return acc; }, {}),
+                        ...(isEditing ? {} : { timestamp: serverTimestamp(), creatorId: currentUserId }),
                         appId: appId,
-                        ...(isEditing ? {} : { timestamp: serverTimestamp(), creatorId: currentUserId })
                     };
-                    const path = `artifacts/${appId}/groups/${collectionId}/expenses`;
+                    const path = getGroupExpensesPath(collectionId);
                     if (isEditing) await db.doc(`${path}/${expenseToEdit.id}`).update(data);
                     else await db.collection(path).add(data);
                     onClose();
-                } catch (e) { setModalError(e.message); } finally { setIsLoadingModal(false); }
+                } catch (e) { setModalError(`錯誤: ${e.message}`); } finally { setIsLoadingModal(false); }
             };
-
+            
             if (!state.isOpen) return null;
+
             return (
-                <div className="fixed inset-0 bg-black bg-opacity-60 flex items-start justify-center p-4 z-50 overflow-y-auto force-gpu">
-                    <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl my-8 flex flex-col">
-                        <div className="p-6 border-b flex justify-between items-center">
+                <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-start justify-center p-4 z-50 overflow-y-auto force-gpu">
+                    <div className="bg-white rounded-xl w-full max-w-lg shadow-2xl my-4 flex flex-col force-gpu">
+                        <div className="p-6 border-b flex justify-between items-center flex-shrink-0">
                             <h3 className="text-xl font-bold">{isEditing ? '編輯支出' : '新增支出'}</h3>
-                            <button onClick={onClose}><X className="w-6 h-6"/></button>
+                            <button onClick={onClose}><X className="w-6 h-6" /></button>
                         </div>
-                        <div className="p-6 space-y-4">
-                            {modalError && <p className="text-red-500 bg-red-50 p-3 rounded-lg text-sm">{modalError}</p>}
+                        <div className="p-6 space-y-5 flex-1 overflow-y-auto">
+                            {modalError && <p className="text-red-600 bg-red-100 p-2 rounded">{modalError}</p>}
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div>
-                                    <label className="text-sm font-bold text-gray-600">品項</label>
-                                    <input type="text" value={newExpense.description} onChange={e=>setNewExpense(p=>({...p, description: e.target.value}))} className="w-full border rounded-xl p-3 mt-1"/>
+                                    <label className="block text-sm font-medium">品項</label>
+                                    <input type="text" name="description" value={newExpense.description} onChange={handleInputChange} className="mt-1 block w-full border rounded-lg p-3" />
                                 </div>
                                 <div>
-                                    <label className="text-sm font-bold text-gray-600">金額與幣別</label>
-                                    <div className="flex gap-2 mt-1">
-                                        <select value={newExpense.currency} onChange={handleCurrencyChange} className="border rounded-xl p-3 bg-gray-50">
+                                    <label className="block text-sm font-medium">幣別/金額</label>
+                                    <div className="flex space-x-2 mt-1">
+                                        <select value={newExpense.currency} onChange={handleCurrencyChange} className="border rounded-lg p-3 bg-white">
                                             {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
                                         </select>
-                                        <input type="number" value={newExpense.originalAmount} onChange={e=>setNewExpense(p=>({...p, originalAmount: e.target.value}))} className="w-full border rounded-xl p-3"/>
+                                        <input type="number" name="originalAmount" value={newExpense.originalAmount} onChange={handleInputChange} className="w-full border rounded-lg p-3" />
                                     </div>
+                                    <p className="mt-1 text-xs text-gray-500">換算 TWD: {amountInTWD.toFixed(2)}</p>
                                 </div>
                             </div>
                             <div>
-                                <label className="text-sm font-bold text-gray-600">付款人</label>
-                                <select value={newExpense.payerName} onChange={e=>setNewExpense(p=>({...p, payerName: e.target.value}))} className="w-full border rounded-xl p-3 mt-1 bg-white">
+                                <label className="block text-sm font-medium">付款人</label>
+                                <select name="payerName" value={newExpense.payerName} onChange={handleInputChange} className="mt-1 block w-full border rounded-lg p-3 bg-white">
                                     {members.map(m => <option key={m} value={m}>{getDisplayName(m)}</option>)}
                                 </select>
                             </div>
-                            <div className="border-t pt-4">
-                                <p className="font-bold mb-3">分帳份數</p>
-                                <div className="space-y-2">
+                            <div className="pt-4 border-t">
+                                <label className="text-lg font-bold">分帳份數</label>
+                                <div className="space-y-3 mt-3">
                                     {members.map(m => (
-                                        <div key={m} className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border">
-                                            <span className="truncate pr-4">{getDisplayName(m)}</span>
-                                            <div className="flex items-center gap-3">
-                                                <button onClick={()=>setNewExpense(p=>({...p, shares:{...p.shares, [m]: Math.max(0, (p.shares[m]||0)-1)}}))} className="p-1 bg-white border rounded shadow-sm text-red-500"><Minus className="w-5 h-5"/></button>
-                                                <span className="w-6 text-center font-bold">{newExpense.shares[m]||0}</span>
-                                                <button onClick={()=>setNewExpense(p=>({...p, shares:{...p.shares, [m]: (p.shares[m]||0)+1}}))} className="p-1 bg-white border rounded shadow-sm text-green-500"><Plus className="w-5 h-5"/></button>
+                                        <div key={m} className="flex justify-between items-center bg-gray-50 p-3 rounded-lg">
+                                            <span>{getDisplayName(m)}</span>
+                                            <div className="flex items-center space-x-2">
+                                                <button onClick={() => handleShareChange(m, -1)} className="p-1 border rounded"><Minus className="w-4 h-4"/></button>
+                                                <span className="w-8 text-center">{newExpense.shares[m] || 0}</span>
+                                                <button onClick={() => handleShareChange(m, 1)} className="p-1 border rounded"><Plus className="w-4 h-4"/></button>
                                             </div>
                                         </div>
                                     ))}
@@ -220,8 +390,8 @@
                             </div>
                         </div>
                         <div className="p-6 border-t flex justify-end">
-                            <button onClick={saveExpense} disabled={isLoadingModal} className="bg-primaryColor-600 text-white px-8 py-3 rounded-full font-bold shadow-lg disabled:bg-gray-400">
-                                {isLoadingModal ? '儲存中...' : '確認儲存'}
+                            <button onClick={saveExpense} disabled={isLoadingModal} className="px-6 py-3 bg-primaryColor-600 text-white rounded-full font-semibold shadow-md">
+                                {isLoadingModal ? '處理中...' : '儲存支出'}
                             </button>
                         </div>
                     </div>
@@ -229,172 +399,315 @@
             );
         });
 
-        /** * 2. 結餘總結元件
-         */
-        const BalanceSummary = React.memo(({ settlements, balances, getDisplayName, settleMemberDebt }) => (
-            <div className="mt-8 p-6 bg-white rounded-2xl shadow-xl border border-gray-100">
-                <h2 className="text-xl font-bold mb-4 flex items-center"><Users className="w-6 h-6 mr-2 text-primaryColor-500"/>結餘總結</h2>
-                {settlements.length === 0 ? <p className="text-green-600 font-medium bg-green-50 p-4 rounded-xl text-center">🎉 帳目已清！</p> : (
-                    <div className="space-y-3">
-                        {settlements.map((s, i) => (
-                            <div key={i} className="flex justify-between items-center bg-orange-50 p-4 rounded-xl border border-orange-100">
-                                <div>
-                                    <span className="font-bold text-red-600">{getDisplayName(s.from)}</span> 應付 
-                                    <span className="font-bold text-green-600 ml-1">{getDisplayName(s.to)}</span>
-                                    <p className="text-2xl font-black text-orange-700 mt-1">TWD {s.amount.toFixed(0)}</p>
-                                </div>
-                                <button onClick={()=>settleMemberDebt(s.from, s.amount, s.to)} className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm">結清</button>
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
-        ));
+        const MemberManagementModal = React.memo(({ db, currentUserId, members, customMembers, defaultSharesConfig, isMemberModalOpen, setIsMemberModalOpen, saveMembers, handleSaveDefaultShares, handleDeleteMember, isLoading, getDisplayName, isReadOnly, groupMembers, groupOwner, inviteUserByEmail, removeGroupMember, setToastMessage, migrateMemberID }) => {
+            const [memberInput, setMemberInput] = useState('');
+            const [tempDefaultShares, setTempDefaultShares] = useState({});
+            const [modalMessage, setModalMessage] = useState(null);
+            const [nameToReplace, setNameToReplace] = useState(null);
+            const [availableUidsForReplace, setAvailableUidsForReplace] = useState([]);
 
-        /** * 3. 支出清單元件
-         */
-        const ExpenseList = React.memo(({ expenses, deleteExpense, startEdit, getDisplayName, searchKeyword, setSearchKeyword }) => {
-            const filtered = expenses.filter(e => (e.description||'').toLowerCase().includes(searchKeyword.toLowerCase()))
-                                     .sort((a,b) => (b.timestamp||0) - (a.timestamp||0));
+            useEffect(() => {
+                if (isMemberModalOpen) {
+                    const initial = members.reduce((acc, n) => ({ ...acc, [n]: defaultSharesConfig[n] !== undefined ? defaultSharesConfig[n] : 1 }), {});
+                    setTempDefaultShares(initial);
+                    setMemberInput('');
+                    setModalMessage(null);
+                    setAvailableUidsForReplace(groupMembers.filter(uid => uid.length > 20 && uid !== currentUserId));
+                    setNameToReplace(null);
+                }
+            }, [isMemberModalOpen, members, defaultSharesConfig, groupMembers, currentUserId]);
+
+            const handleSubmit = async () => {
+                if (isReadOnly || !memberInput.trim()) return;
+                const input = memberInput.trim();
+                if (input.includes('@')) await inviteUserByEmail(input, setModalMessage);
+                else {
+                    if (!customMembers.includes(input)) await saveMembers([...customMembers, input]);
+                    setModalMessage(`✅ 已新增 ${input}`);
+                }
+                setMemberInput('');
+            };
+
+            const handleReplace = (oldName, newId) => {
+                migrateMemberID(oldName, newId, setModalMessage);
+                setNameToReplace(null);
+                setIsMemberModalOpen(false);
+            };
+
+            if (!isMemberModalOpen) return null;
+
             return (
-                <div className="mt-8">
-                    <div className="flex justify-between items-center mb-4">
-                        <h2 className="text-xl font-bold flex items-center"><CircleDollarSign className="w-6 h-6 mr-2 text-primaryColor-500"/>支出明細</h2>
-                        <div className="relative">
-                            <input type="text" placeholder="搜尋..." value={searchKeyword} onChange={e=>setSearchKeyword(e.target.value)} className="border rounded-full py-1.5 pl-9 pr-4 text-sm focus:ring-2 focus:ring-primaryColor-500"/>
-                            <Search className="w-4 h-4 absolute left-3 top-2.5 text-gray-400"/>
+                <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-start justify-center p-4 z-50 overflow-y-auto force-gpu">
+                    <div className="bg-white rounded-xl w-full max-w-2xl shadow-2xl my-4 flex flex-col force-gpu">
+                        <div className="p-6 border-b flex justify-between items-center">
+                            <h3 className="text-xl font-bold">成員與預設份數管理</h3>
+                            <button onClick={() => setIsMemberModalOpen(false)}><X className="w-6 h-6"/></button>
                         </div>
-                    </div>
-                    <div className="space-y-3">
-                        {filtered.length === 0 ? <p className="text-center text-gray-400 py-10 bg-white rounded-2xl shadow-sm italic">尚無記錄</p> : filtered.map(exp => (
-                            <div key={exp.id} className="bg-white p-4 rounded-2xl shadow-sm border-l-4 border-primaryColor-500 flex justify-between items-center transition hover:shadow-md">
-                                <div className="flex-grow min-w-0 pr-4">
-                                    <p className="font-bold text-gray-800 truncate">{exp.description}</p>
-                                    <p className="text-2xl font-black text-primaryColor-600">{exp.currency} {exp.originalAmount}</p>
-                                    <div className="flex gap-2 text-xs text-gray-500 mt-1">
-                                        <span className="bg-gray-100 px-2 py-0.5 rounded">付: {getDisplayName(exp.payerName)}</span>
-                                        {exp.currency !== 'TWD' && <span className="bg-teal-50 text-teal-700 px-2 py-0.5 rounded">≈ TWD {exp.amountInTWD?.toFixed(0)}</span>}
+                        <div className="p-6 space-y-6 flex-1 overflow-y-auto">
+                            {modalMessage && <div className="p-3 bg-blue-50 text-blue-700 rounded text-sm">{modalMessage}</div>}
+                            
+                            {nameToReplace && (
+                                <div className="border border-red-300 p-4 rounded-lg bg-red-50">
+                                    <h4 className="font-semibold mb-2">將「{getDisplayName(nameToReplace)}」轉移至：</h4>
+                                    <div className="flex gap-2 flex-wrap">
+                                        {availableUidsForReplace.map(uid => <button key={uid} onClick={() => handleReplace(nameToReplace, uid)} className="px-3 py-1 bg-red-500 text-white rounded text-sm">替換為 {getDisplayName(uid)}</button>)}
+                                        <button onClick={() => setNameToReplace(null)} className="px-3 py-1 bg-gray-200 rounded text-sm">取消</button>
                                     </div>
                                 </div>
+                            )}
+
+                            <div className="bg-gray-50 p-4 rounded-lg border">
+                                <h4 className="font-semibold mb-3">新增成員/邀請共享</h4>
                                 <div className="flex gap-2">
-                                    <button onClick={()=>startEdit(exp)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-full border"><Pencil className="w-4 h-4"/></button>
-                                    <button onClick={()=>deleteExpense(exp.id)} className="p-2 text-red-500 hover:bg-red-50 rounded-full border"><Trash2 className="w-4 h-4"/></button>
+                                    <input type="text" value={memberInput} onChange={(e) => setMemberInput(e.target.value)} placeholder="名稱或 Email" className="flex-grow border rounded-lg p-3" />
+                                    <button onClick={handleSubmit} className="px-4 py-3 bg-primaryColor-600 text-white rounded-lg">加入</button>
+                                </div>
+                                <div className="mt-4 flex flex-wrap gap-2">
+                                    {groupMembers.map(uid => (
+                                        <div key={uid} className="flex items-center bg-white border rounded px-2 py-1 text-sm">
+                                            {getDisplayName(uid)} {uid === groupOwner && '(擁有者)'}
+                                            {uid !== groupOwner && !isReadOnly && <button onClick={() => removeGroupMember(uid, setModalMessage)} className="ml-2 text-red-500">×</button>}
+                                        </div>
+                                    ))}
                                 </div>
                             </div>
-                        ))}
+
+                            <div className="space-y-3">
+                                <h4 className="font-semibold">設定預設份數</h4>
+                                {members.map(m => {
+                                    const isCustom = m !== currentUserId && !groupMembers.includes(m);
+                                    return (
+                                        <div key={m} className="flex justify-between items-center p-3 border rounded-lg bg-white">
+                                            <span onClick={() => isCustom && setNameToReplace(m)} className={isCustom ? "cursor-pointer text-blue-600 underline" : ""}>{getDisplayName(m)}</span>
+                                            <div className="flex items-center space-x-2">
+                                                <button onClick={() => setTempDefaultShares({...tempDefaultShares, [m]: Math.max(0, (tempDefaultShares[m] || 0) - 1)})} className="p-1 border rounded"><Minus className="w-4 h-4"/></button>
+                                                <input type="number" value={tempDefaultShares[m] || 0} onChange={(e) => setTempDefaultShares({...tempDefaultShares, [m]: parseInt(e.target.value) || 0})} className="w-12 text-center border rounded p-1"/>
+                                                <button onClick={() => setTempDefaultShares({...tempDefaultShares, [m]: (tempDefaultShares[m] || 0) + 1})} className="p-1 border rounded"><Plus className="w-4 h-4"/></button>
+                                                {m !== currentUserId && <button onClick={() => handleDeleteMember(m, setModalMessage)} className="ml-2 text-red-500"><Trash2 className="w-5 h-5"/></button>}
+                                            </div>
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        </div>
+                        <div className="p-6 border-t flex justify-end">
+                            <button onClick={() => handleSaveDefaultShares(tempDefaultShares, setModalMessage)} className="px-6 py-3 bg-primaryColor-600 text-white rounded-full">儲存設定</button>
+                        </div>
                     </div>
                 </div>
             );
         });
 
-        /** * 4. 主要 App 元件
-         */
         const App = () => {
             const [db, setDb] = useState(null);
+            const [auth, setAuth] = useState(null);
             const [userId, setUserId] = useState(null);
             const [authReady, setAuthReady] = useState(false);
-            const [expenses, setExpenses] = useState([]);
-            const [members, setMembers] = useState([]);
-            const [customMembers, setCustomMembers] = useState([]);
-            const [liveRates, setLiveRates] = useState(HARDCODED_DEFAULT_RATES);
+            const [isGuest, setIsGuest] = useState(false);
+            const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+            const [userProfiles, setUserProfiles] = useState({});
+            const [liveExchangeRates, setLiveExchangeRates] = useState(DEFAULT_EXCHANGE_RATES);
+            const [lastExchangeUpdate, setLastExchangeUpdate] = useState(null);
+            const [defaultCurrency, setDefaultCurrency] = useState(DEFAULT_CURRENCY);
             const [currentCollectionId, setCurrentCollectionId] = useState(null);
+            const [currentCollectionShortCode, setCurrentCollectionShortCode] = useState(null);
+            const [groupOwner, setGroupOwner] = useState(null);
+            const [groupMembers, setGroupMembers] = useState([]);
+            const [groupName, setGroupName] = useState('分帳記帳簿');
+            const [expenses, setExpenses] = useState([]);
+            const [customMembers, setCustomMembers] = useState([]);
+            const [defaultSharesConfig, setDefaultSharesConfig] = useState({});
+            const [members, setMembers] = useState([]);
             const [searchKeyword, setSearchKeyword] = useState('');
-            const [expenseModal, setExpenseModal] = useState({ isOpen: false, isEditing: false, editingExpense: null });
+            const [converterSourceCurrency, setConverterSourceCurrency] = useState(localStorage.getItem('lastConverterSourceCurrency') || DEFAULT_CURRENCY);
+            const [converterTargetCurrency, setConverterTargetCurrency] = useState(DEFAULT_CURRENCY);
+            const [converterAmount, setConverterAmount] = useState('');
+            const [copyMessage, setCopyMessage] = useState('');
+            const [error, setError] = useState(null);
+            const [isLoading, setIsLoading] = useState(false);
 
-            // 初始化
+            const [expenseModalState, setExpenseModalState] = useState({ isOpen: false, editingExpense: null, isEditing: false });
+            const [confirmModalState, setConfirmModalState] = useState({ isOpen: false, title: '', message: '', onConfirm: () => {} });
+            const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
+
+            const isReadOnly = isGuest || !groupMembers.includes(userId);
+
             useEffect(() => {
+                if (!firebaseConfig) return;
                 const app = firebase.initializeApp(firebaseConfig);
-                const auth = app.auth(); setDb(app.firestore());
-                auth.onAuthStateChanged(async user => {
-                    const uid = user ? user.uid : (await auth.signInAnonymously()).user.uid;
-                    setUserId(uid); setCurrentCollectionId(uid); setAuthReady(true);
+                const _auth = app.auth();
+                const _db = app.firestore();
+                setDb(_db); setAuth(_auth);
+
+                const unsub = _auth.onAuthStateChanged(async (user) => {
+                    if (user) {
+                        setUserId(user.uid); setIsGuest(user.isAnonymous);
+                        const userDoc = await _db.doc(`artifacts/${appId}/users/${user.uid}`).get();
+                        let sc = userDoc.exists ? userDoc.data().shortCode : null;
+                        if (!sc && !user.isAnonymous) {
+                            sc = generateShortCode();
+                            await _db.doc(`artifacts/${appId}/users/${user.uid}`).set({ shortCode: sc, createdAt: serverTimestamp() }, { merge: true });
+                        }
+                        const url = new URL(window.location.href);
+                        let targetId = user.uid; let targetSc = sc;
+                        const match = url.pathname.match(/\/g\/([A-Z0-9]+)/);
+                        if (match) {
+                            const snap = await _db.collection(`artifacts/${appId}/users`).where('shortCode', '==', match[1]).limit(1).get();
+                            if (!snap.empty) { targetId = snap.docs[0].id; targetSc = match[1]; }
+                        }
+                        setCurrentCollectionId(targetId); setCurrentCollectionShortCode(targetSc);
+                    } else await _auth.signInAnonymously();
+                    setAuthReady(true);
                 });
-                fetchExchangeRates().then(r => setLiveRates(r.rates));
+                return unsub;
             }, []);
 
-            // 數據監聽
             useEffect(() => {
                 if (!db || !currentCollectionId) return;
-                const unsub1 = db.collection(`artifacts/${appId}/groups/${currentCollectionId}/expenses`).onSnapshot(s => 
-                    setExpenses(s.docs.map(d => ({ id: d.id, ...d.data(), timestamp: d.data().timestamp?.toDate() })))
-                );
-                const unsub2 = db.doc(`artifacts/${appId}/groups/${currentCollectionId}/settings/members`).onSnapshot(d => 
-                    setCustomMembers(d.exists ? d.data().list || [] : [])
-                );
-                return () => { unsub1(); unsub2(); };
+                return db.doc(`artifacts/${appId}/groups/${currentCollectionId}`).onSnapshot(snap => {
+                    if (snap.exists) {
+                        const d = snap.data();
+                        setGroupOwner(d.owner); setGroupMembers(d.members || []); setGroupName(d.name || '分帳記帳簿');
+                    }
+                });
             }, [db, currentCollectionId]);
 
             useEffect(() => {
-                setMembers([...new Set([currentCollectionId, ...customMembers])].filter(Boolean));
-            }, [currentCollectionId, customMembers]);
+                if (!db || !currentCollectionId) return;
+                const unsubExp = db.collection(getGroupExpensesPath(currentCollectionId)).onSnapshot(snap => {
+                    setExpenses(snap.docs.map(d => ({ id: d.id, ...d.data(), timestamp: d.data().timestamp?.toDate() })));
+                });
+                const unsubMem = db.doc(getGroupMembersDocPath(currentCollectionId)).onSnapshot(snap => {
+                    if (snap.exists) {
+                        setCustomMembers(snap.data().list || []); setDefaultSharesConfig(snap.data().defaultShares || {});
+                    }
+                });
+                return () => { unsubExp(); unsubMem(); };
+            }, [db, currentCollectionId]);
 
-            const getDisplayName = useCallback(id => (id === userId ? '我' : id.substring(0,8)), [userId]);
+            useEffect(() => {
+                let m = []; if (!isGuest && currentCollectionId) m.push(currentCollectionId);
+                groupMembers.forEach(uid => { if (!m.includes(uid)) m.push(uid); });
+                customMembers.forEach(n => { if (!m.includes(n)) m.push(n); });
+                setMembers(m);
+            }, [currentCollectionId, customMembers, isGuest, groupMembers]);
 
-            // 分帳計算
-            const balances = useMemo(() => {
-                const b = Object.fromEntries(members.map(m => [m, 0]));
+            useEffect(() => { fetchExchangeRates().then(r => { setLiveExchangeRates(r.rates); setLastExchangeUpdate(r.lastUpdate); }); }, []);
+
+            const getDisplayName = useCallback((id) => {
+                if (userProfiles[id]) return userProfiles[id];
+                if (id === userId) return auth?.currentUser?.isAnonymous ? '訪客' : (auth?.currentUser?.displayName || '我');
+                return id.length > 20 ? `${id.slice(0,5)}...${id.slice(-5)}` : id;
+            }, [userId, auth, userProfiles]);
+
+            const calculateBalances = useMemo(() => {
+                const b = members.reduce((acc, n) => ({ ...acc, [n]: 0 }), {});
                 expenses.forEach(e => {
-                    const totalS = Object.values(e.shares||{}).reduce((acc, v) => acc + v, 0);
-                    if (totalS === 0) return;
-                    const perS = (e.amountInTWD||0) / totalS;
-                    if (b[e.payerName] !== undefined) b[e.payerName] += (e.amountInTWD||0);
-                    Object.entries(e.shares||{}).forEach(([m, s]) => { if (b[m] !== undefined) b[m] -= (perS * s); });
+                    const amount = e.amountInTWD || 0;
+                    const shares = e.shares || {};
+                    const ts = Object.values(shares).reduce((s, v) => s + v, 0);
+                    if (ts === 0) return;
+                    if (b[e.payerName] !== undefined) b[e.payerName] += amount;
+                    Object.entries(shares).forEach(([m, s]) => { if (b[m] !== undefined) b[m] -= (amount / ts) * s; });
                 });
                 return b;
             }, [expenses, members]);
 
-            const settlements = useMemo(() => {
-                const c = [], d = [], s = [], b = { ...balances };
-                Object.entries(b).forEach(([m, v]) => v >= 1 ? c.push({m, v}) : (v <= -1 && d.push({m, v: -v})));
-                let ci=0, di=0;
-                while(ci < c.length && di < d.length) {
-                    const amt = Math.min(c[ci].v, d[di].v);
-                    if (amt >= 1) s.push({ from: d[di].m, to: c[ci].m, amount: amt });
-                    c[ci].v -= amt; d[di].v -= amt;
-                    if (c[ci].v < 1) ci++; if (d[di].v < 1) di++;
+            const calculateSettlements = useMemo(() => {
+                const b = { ...calculateBalances };
+                const s = []; const cre = []; const deb = [];
+                Object.entries(b).forEach(([m, val]) => {
+                    if (val >= 1) cre.push({ n: m, a: val });
+                    else if (val <= -1) deb.push({ n: m, a: -val });
+                });
+                let i = 0; let j = 0;
+                while (i < deb.length && j < cre.length) {
+                    const amt = Math.round(Math.min(deb[i].a, cre[j].a));
+                    if (amt > 0) s.push({ from: deb[i].n, to: cre[j].n, amount: amt });
+                    deb[i].a -= amt; cre[j].a -= amt;
+                    if (deb[i].a < 1) i++; if (cre[j].a < 1) j++;
                 }
                 return s;
-            }, [balances]);
+            }, [calculateBalances]);
 
-            const settleMemberDebt = async (from, amt, to) => {
-                if (!db || !userId) return;
-                try {
-                    await db.collection(`artifacts/${appId}/groups/${currentCollectionId}/expenses`).add({
-                        description: `[結清] ${getDisplayName(from)} 支付給 ${getDisplayName(to)}`,
-                        originalAmount: Math.round(amt), currency: 'TWD', exchangeRate: 1, amountInTWD: Math.round(amt),
-                        payerName: from, shares: { [to]: Math.round(amt) }, timestamp: serverTimestamp(), creatorId: userId, appId
-                    });
-                } catch (e) { alert(e.message); }
-            };
+            const setToastMessage = useCallback((msg) => { setCopyMessage(msg); if(msg) setTimeout(() => setCopyMessage(''), 3000); }, []);
 
-            if (!authReady) return <div className="h-screen flex items-center justify-center bg-gray-50 text-primaryColor-600 font-bold">載入中...</div>;
+            if (!authReady) return <div className="min-h-screen flex items-center justify-center">載入中...</div>;
 
             return (
-                <div className="min-h-screen bg-gray-50 pb-20">
-                    <div className="max-w-xl mx-auto p-4 sm:p-6">
-                        <header className="py-6 flex justify-between items-center">
+                <div className="min-h-screen bg-gray-50 p-4 sm:p-8">
+                    <div className="max-w-4xl mx-auto">
+                        <header className="py-6 border-b flex justify-between items-start">
                             <div>
-                                <h1 className="text-3xl font-black text-primaryColor-700 tracking-tight">分帳記帳簿</h1>
-                                <p className="text-xs text-gray-400 font-medium mt-1 uppercase tracking-widest">Expense Tracker</p>
+                                <h1 className="text-3xl font-extrabold text-primaryColor-700">{groupName}</h1>
+                                <p className="text-xs text-gray-500 mt-2">匯率更新: {lastExchangeUpdate ? new Date(lastExchangeUpdate).toLocaleTimeString() : '---'}</p>
                             </div>
-                            <div className="text-right">
-                                <span className="text-[10px] bg-white px-2 py-1 rounded-full border text-gray-500 shadow-sm">
-                                    幣別: {localStorage.getItem(PREFERRED_CURRENCY_KEY) || '自動'}
-                                </span>
+                            <div className="flex flex-col items-end gap-2">
+                                {isGuest ? 
+                                    <button onClick={() => setIsAuthModalOpen(true)} className="px-3 py-1.5 border rounded-lg text-sm font-semibold text-primaryColor-600">註冊/登入</button> :
+                                    <button onClick={() => auth.signOut()} className="px-3 py-1.5 border rounded-lg text-sm font-semibold text-red-600">登出</button>
+                                }
+                                <button onClick={() => {
+                                    const url = `${window.location.origin}${window.location.pathname.replace(/\/g\/.*/, '')}/g/${currentCollectionShortCode}`;
+                                    navigator.clipboard.writeText(url); setToastMessage('✨ 連結已複製');
+                                }} disabled={isGuest} className="text-xs text-blue-600 underline">分享此紀錄簿</button>
                             </div>
                         </header>
 
-                        <div className="sticky top-4 z-30">
-                            <button onClick={()=>setExpenseModal({isOpen:true, isEditing:false})} className="w-full bg-primaryColor-600 text-white p-4 rounded-2xl shadow-xl hover:scale-[1.02] transform transition font-bold text-lg flex items-center justify-center gap-2">
-                                <Plus className="w-6 h-6"/>新增支出記錄
-                            </button>
+                        <div className="mt-6 flex space-x-4">
+                            <button onClick={() => setExpenseModalState({ isOpen: true, editingExpense: null, isEditing: false })} disabled={isReadOnly} className="flex-1 py-4 bg-primaryColor-600 text-white rounded-xl font-bold shadow-lg">＋ 新增支出</button>
+                            <button onClick={() => setIsMemberModalOpen(true)} disabled={isReadOnly} className="px-6 py-4 border-2 border-primaryColor-600 text-primaryColor-600 rounded-xl"><Users className="w-6 h-6"/></button>
                         </div>
 
-                        <BalanceSummary settlements={settlements} balances={balances} getDisplayName={getDisplayName} settleMemberDebt={settleMemberDebt} />
-                        
-                        <ExpenseList expenses={expenses} deleteExpense={id=>db.doc(`artifacts/${appId}/groups/${currentCollectionId}/expenses/${id}`).delete()} startEdit={e=>setExpenseModal({isOpen:true, isEditing:true, editingExpense:e})} getDisplayName={getDisplayName} searchKeyword={searchKeyword} setSearchKeyword={setSearchKeyword} />
+                        <div className="mt-8 p-6 bg-white rounded-xl shadow-lg">
+                            <h2 className="text-xl font-bold mb-4">結餘總結</h2>
+                            {calculateSettlements.length === 0 ? <p className="text-green-600">帳目已清！</p> : 
+                                <div className="space-y-3">
+                                    {calculateSettlements.map((s, idx) => (
+                                        <div key={idx} className="p-4 bg-yellow-50 border-l-4 border-yellow-400 flex justify-between items-center">
+                                            <span>{getDisplayName(s.from)} ➔ {getDisplayName(s.to)} : <b>TWD {s.amount}</b></span>
+                                        </div>
+                                    ))}
+                                </div>
+                            }
+                        </div>
 
-                        <ExpenseModal db={db} currentUserId={userId} members={members} getInitialShares={()=>Object.fromEntries(members.map(m=>[m,1]))} state={expenseModal} onClose={()=>setExpenseModal({isOpen:false})} getDisplayName={getDisplayName} isReadOnly={false} collectionId={currentCollectionId} liveExchangeRates={liveRates} defaultCurrency={null} />
+                        <div className="mt-8">
+                            <div className="flex justify-between items-center mb-4">
+                                <h2 className="text-xl font-bold">支出明細 ({expenses.length})</h2>
+                                <button onClick={() => {
+                                    setConfirmModalState({ isOpen: true, title: '清除全部', message: '確定刪除所有記錄？', onConfirm: async () => {
+                                        const b = db.batch(); expenses.forEach(e => b.delete(db.doc(`${getGroupExpensesPath(currentCollectionId)}/${e.id}`)));
+                                        await b.commit(); setConfirmModalState({ isOpen: false });
+                                    }});
+                                }} className="text-sm text-red-500">清除全部</button>
+                            </div>
+                            <div className="space-y-3">
+                                {expenses.map(e => (
+                                    <div key={e.id} className="p-4 bg-white rounded-lg shadow flex justify-between">
+                                        <div>
+                                            <p className="font-bold">{e.description}</p>
+                                            <p className="text-primaryColor-600 font-bold">{e.currency} {e.originalAmount}</p>
+                                            <p className="text-xs text-gray-500">付款: {getDisplayName(e.payerName)}</p>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <button onClick={() => setExpenseModalState({ isOpen: true, editingExpense: e, isEditing: true })} className="p-2 text-blue-500"><Pencil className="w-4 h-4"/></button>
+                                            <button onClick={() => db.doc(`${getGroupExpensesPath(currentCollectionId)}/${e.id}`).delete()} className="p-2 text-red-500"><Trash2 className="w-4 h-4"/></button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <ExpenseModal db={db} currentUserId={userId} members={members} getInitialShares={() => members.reduce((a,n)=>({...a, [n]:1}),{})} state={expenseModalState} onClose={() => setExpenseModalState({ isOpen: false })} getDisplayName={getDisplayName} isReadOnly={isReadOnly} collectionId={currentCollectionId} liveExchangeRates={liveExchangeRates} defaultCurrency={defaultCurrency} currentUserLabel={getDisplayName(userId)} />
+                        
+                        <MemberManagementModal db={db} currentUserId={userId} members={members} customMembers={customMembers} defaultSharesConfig={defaultSharesConfig} isMemberModalOpen={isMemberModalOpen} setIsMemberModalOpen={setIsMemberModalOpen} saveMembers={(list) => db.doc(getGroupMembersDocPath(currentCollectionId)).set({ list }, { merge: true })} handleDeleteMember={(n) => db.doc(getGroupMembersDocPath(currentCollectionId)).update({ list: customMembers.filter(x => x !== n) })} getDisplayName={getDisplayName} isReadOnly={isReadOnly} groupMembers={groupMembers} groupOwner={groupOwner} inviteUserByEmail={async (email) => {}} removeGroupMember={(uid) => {}} setToastMessage={setToastMessage} migrateMemberID={() => {}} />
+
+                        <ConfirmationModal isOpen={confirmModalState.isOpen} onClose={() => setConfirmModalState({ isOpen: false })} onConfirm={confirmModalState.onConfirm} title={confirmModalState.title} message={confirmModalState.message} confirmText="確定" />
+                        
+                        {copyMessage && <div className="fixed top-10 left-1/2 -translate-x-1/2 px-6 py-3 bg-black/80 text-white rounded-full z-[100]">{copyMessage}</div>}
+                        
+                        {isGuest && <AuthModal auth={auth} db={db} setToastMessage={setToastMessage} isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />}
                     </div>
                 </div>
             );
