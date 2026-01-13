@@ -1703,35 +1703,37 @@
 
           // --- 5. 衍生成員清單 ---
 			useEffect(() => {
-			  // 只有非訪客模式下，才將自己的 UID 作為預設成員
 			  let currentMembers = [].filter(Boolean);
-              
-              // 訪客模式下，不應預設自己的臨時 UID 作為分帳成員，除非它是群組的 ID
-              if (!isGuest && currentCollectionId) {
-                  currentMembers.push(currentCollectionId);
-              } else if (isGuest && currentCollectionId && currentCollectionId.length < 20) {
-                 // 如果是訪客模式，但 URL 上帶了短名稱 ID (例如: 小明)，讓它先成為初始成員
-                 // 但這裡的 currentCollectionId 應是 group owner 的 UID，所以這邏輯應為多餘
-                 // 保險起見，讓 currentCollectionId (group owner UID) 總是被包含，即使是訪客
-                 currentMembers.push(currentCollectionId);
-              }
 
-              // 確保所有有編輯權限的 UID 都在成員清單中 (即使他們沒有暱稱或不在 customMembers)
-              groupMembers.forEach(uid => {
-                  if (!currentMembers.includes(uid)) {
-                      currentMembers.push(uid);
-                  }
-              });
+			  if (!isGuest && currentCollectionId) {
+				currentMembers.push(currentCollectionId);
+			  }
 
-              // 將自訂成員加入清單
+			  // 群組可編輯成員一定要在
+			  groupMembers.forEach(uid => {
+				if (!currentMembers.includes(uid)) currentMembers.push(uid);
+			  });
+
+			  // 自訂分帳成員一定要在
 			  customMembers.forEach(name => {
 				if (name !== currentCollectionId && !currentMembers.includes(name)) {
 				  currentMembers.push(name);
 				}
 			  });
 
+			  // ✅ NEW: 把支出資料實際用到的所有成員 key 也加進來（防止結餘被「刪名」影響）
+			  expenses.forEach(exp => {
+				if (exp?.payerName && !currentMembers.includes(exp.payerName)) {
+				  currentMembers.push(exp.payerName);
+				}
+				const shareKeys = Object.keys(exp?.shares || {});
+				shareKeys.forEach(k => {
+				  if (k && !currentMembers.includes(k)) currentMembers.push(k);
+				});
+			  });
+
 			  setMembers(currentMembers);
-			}, [currentCollectionId, customMembers, isGuest, groupMembers]); // FIX: Added isGuest, groupMembers dependency
+			}, [currentCollectionId, customMembers, isGuest, groupMembers, expenses]); // ✅ NEW: 加上 expenses 依賴
 
           const getInitialShares = useCallback(() => {
             return members.reduce((acc, name) => {
@@ -1928,29 +1930,19 @@
 				  });
 
 				  // 4) 把他也加入「分帳成員名單」（settings/members.list）
-				  let newMemberList = customMembers;
-				  let removedOldName = null; // ✨ NEW: 追蹤是否移除了舊名稱
-
+				  // ⚠️ 修正：不要自動刪除同名自訂成員，避免舊支出仍用舊 key 導致結餘消失
 				  if (!customMembers.includes(invitedUid)) {
-					  // 4-a) 移除任何與新用戶暱稱相同的**非 UID**的自訂名稱
-					  const filteredMembers = newMemberList.filter(name => {
-						  // 判斷是否為「自訂名稱」：不是 owner's UID 且在 userProfiles 中查不到 (即不是已知的 UID)
-						  // 這裡假設所有 UID 都在 userProfiles 中有記錄，而自訂名稱是純字串且不在 userProfiles 中
-						  const isCustomString = name !== currentCollectionId && !userProfiles[name];
+				    const newMemberList = [...customMembers, invitedUid];
+				    await saveMembers(newMemberList);
 
-						  // 檢查是否與新加入的用戶名稱（暱稱或 Email 前綴）相同
-						  if (isCustomString && name === invitedDisplayName) {
-							  removedOldName = name; // 記錄被移除的舊名稱
-							  return false; // 移除
-						  }
-						  return true; // 保留
-					  });
-					  
-					  // 4-b) 加入新的 UID
-					  newMemberList = [...filteredMembers, invitedUid];
-					  
-					  // 儲存新的成員列表
-					  await saveMembers(newMemberList);
+				    // 如果偵測到同名自訂成員，提示用戶用「替換」功能合併（你的 migrateMemberID）
+				    if (customMembers.includes(invitedDisplayName)) {
+					  setModalMessage(
+					    `⚠️ 偵測到既有分帳成員名稱「${invitedDisplayName}」與新加入帳號暱稱相同。` +
+					    `我已保留舊名稱以避免資料遺失。` +
+					    `請在成員清單點「${invitedDisplayName}」並使用替換功能合併到 ${getDisplayName(invitedUid)}。`
+					  );
+				    }
 				  }
 
 				  // 5) 清空輸入框 and Success Message
