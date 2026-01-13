@@ -1930,28 +1930,32 @@
 				  });
 
 				  // 4) 把他也加入「分帳成員名單」（settings/members.list）
-				  // ⚠️ 修正：不要自動刪除同名自訂成員，避免舊支出仍用舊 key 導致結餘消失
 				  if (!customMembers.includes(invitedUid)) {
 				    const newMemberList = [...customMembers, invitedUid];
 				    await saveMembers(newMemberList);
+				  }
 
-				    // 如果偵測到同名自訂成員，提示用戶用「替換」功能合併（你的 migrateMemberID）
-				    if (customMembers.includes(invitedDisplayName)) {
-					  setModalMessage(
-					    `⚠️ 偵測到既有分帳成員名稱「${invitedDisplayName}」與新加入帳號暱稱相同。` +
-					    `我已保留舊名稱以避免資料遺失。` +
-					    `請在成員清單點「${invitedDisplayName}」並使用替換功能合併到 ${getDisplayName(invitedUid)}。`
-					  );
-				    }
+				  // ✅ NEW: 如果「舊自訂名稱」剛好等於新帳號 displayName → 直接自動替換
+				  // 判斷條件：customMembers 內存在同名字串，且它看起來是「舊自訂名稱」(非 uid)
+				  const sameNicknameOldNameExists =
+				    customMembers.includes(invitedDisplayName) &&
+				    typeof invitedDisplayName === 'string' &&
+				    invitedDisplayName.length < 20 &&        // 你的 UI 判斷 custom name 的方式
+				    invitedDisplayName !== invitedUid &&
+				    invitedDisplayName !== currentCollectionId;
+
+				  if (sameNicknameOldNameExists) {
+				    // 自動合併：不跳確認
+				    await migrateMemberID(invitedDisplayName, invitedUid, setModalMessage, { skipConfirm: true });
+				    // 合併後不需要再提示手動替換
+				  } else {
+				    // 不同暱稱或沒有舊名稱 → 維持原本行為（不同就手動替換）
+				    // 你可以保留提示（可選）
 				  }
 
 				  // 5) 清空輸入框 and Success Message
 				  setInviteEmail('');
-				  let successMessage = `✅ 已成功邀請成員: ${invitedDisplayName}`;
-				  if (removedOldName) { // <-- NEW: 根據是否移除舊名稱顯示不同訊息
-					  successMessage += `，並已自動移除您之前建立的重複名稱「${removedOldName}」。`;
-				  }
-				  setModalMessage(successMessage); // 成功 Modal Message
+				  setModalMessage(`✅ 已成功邀請成員: ${invitedDisplayName}`);
 				  console.log(
 					`已邀請成員 ${invitedDisplayName} (${invitedUid}) 並加入分帳成員名單`
 				  );
@@ -2075,127 +2079,154 @@
           }, [db, currentCollectionId, customMembers, members, isReadOnly, setError, setIsLoading]);
           
           
-        // --- 11. 成員 ID 遷移/替換功能 ---
-		const migrateMemberID = React.useCallback(async (oldName, newId, setModalMessage) => {
-		    if (isReadOnly) {
-		        setModalMessage('❌ 唯讀模式下無法進行成員合併/替換操作。');
-		        return;
-		    }
-		    if (!db || !currentCollectionId || oldName === newId) return;
+			// --- 11. 成員 ID 遷移/替換功能 ---
+			// options = { skipConfirm: boolean }
+			const migrateMemberID = React.useCallback(async (oldName, newId, setModalMessage, options = {}) => {
+			  const { skipConfirm = false } = options;
 
-		    // 確保新 ID 是群組成員 (有編輯權限的 UID)
-		    if (!groupMembers.includes(newId)) {
-		        setModalMessage('❌ 目標帳號（新 ID）必須是已加入本紀錄簿的用戶 ID。');
-		        return;
-		    }
+			  if (isReadOnly) {
+				setModalMessage?.('❌ 唯讀模式下無法進行成員合併/替換操作。');
+				return;
+			  }
+			  if (!db || !currentCollectionId || !oldName || !newId || oldName === newId) return;
 
-		    const onConfirm = async () => {
-		        closeConfirmModal();
-		        setIsLoading(true);
-		        setError(null);
+			  // ✅ 改成直接讀取 group doc，避免 state 還沒更新造成誤判
+			  try {
+				const groupRef = db.doc(`artifacts/${appId}/groups/${currentCollectionId}`);
+				const groupSnap = await groupRef.get();
+				const data = groupSnap.data() || {};
+				const membersFromDb = Array.isArray(data.members) ? data.members : [];
+				const ownerFromDb = data.owner || null;
+				const merged = membersFromDb.includes(ownerFromDb) ? membersFromDb : [...membersFromDb, ownerFromDb].filter(Boolean);
 
-		        try {
-		            // --- 1. 更新 members/defaultShares 設定文檔 (使用 Transaction 確保原子性) ---
-		            const membersDocPath = getGroupMembersDocPath(currentCollectionId);
-		            const membersDocRef = db.doc(membersDocPath);
-		            
-		            await db.runTransaction(async (transaction) => {
-		                const docSnap = await transaction.get(membersDocRef);
-		                const data = docSnap.data() || {};
-		                let list = Array.isArray(data.list) ? data.list : [];
-		                let shares = data.defaultShares || {};
-		                
-		                // a. 替換 list 中的舊名稱為新 ID
-		                const oldIndex = list.findIndex(name => name === oldName);
-		                if (oldIndex !== -1) {
-		                    // 移除舊名稱
-		                    list.splice(oldIndex, 1);
-		                    // 加入新 ID (如果還不在清單中)
-		                    if (!list.includes(newId)) {
-		                        list.push(newId);
-		                    }
-		                }
+				if (!merged.includes(newId)) {
+				  setModalMessage?.('❌ 目標帳號（新 ID）必須是已加入本紀錄簿的用戶 ID。');
+				  return;
+				}
+			  } catch (e) {
+				console.error('讀取 group members 失敗:', e);
+				setModalMessage?.(`❌ 檢查群組成員失敗：${e.message}`);
+				return;
+			  }
 
-		                // b. 遷移 defaultShares: 新 ID 繼承舊名稱的份數
-		                if (shares[oldName] !== undefined) {
-		                    shares[newId] = (shares[newId] || 0) + shares[oldName]; // 合併舊的份數設定
-		                    delete shares[oldName];
-		                }
-		                
-		                // 過濾並儲存新的 list (確保唯一且不含 owner UID)
-		                const sanitizedList = Array.from(new Set(
-		                    list.filter(name => name.trim() !== '' && name !== currentCollectionId)
-		                ));
+			  const doMigrate = async () => {
+				setIsLoading(true);
+				setError(null);
 
-		                transaction.set(membersDocRef, { list: sanitizedList, defaultShares: shares }, { merge: false });
-		            });
+				try {
+				  // --- 1) 更新 settings/members 文檔 (Transaction)
+				  const membersDocPath = getGroupMembersDocPath(currentCollectionId);
+				  const membersDocRef = db.doc(membersDocPath);
 
-		            // --- 2. 批量更新支出記錄 (使用 Batch) ---
-		            const expensesCollectionPath = getGroupExpensesPath(currentCollectionId);
-		            const expensesSnapshot = await db.collection(expensesCollectionPath).get();
-		            
-		            // 批量操作限制為 500，使用 400 作為安全閾值
-		            let batch = db.batch();
-		            let updateCount = 0;
-		            let batchOpCount = 0;
+				  await db.runTransaction(async (transaction) => {
+					const docSnap = await transaction.get(membersDocRef);
+					const data = docSnap.data() || {};
+					let list = Array.isArray(data.list) ? data.list : [];
+					let shares = data.defaultShares || {};
 
-		            for (const docSnap of expensesSnapshot.docs) {
-		                const data = docSnap.data();
-		                let needsUpdate = false;
-		                const updateData = {};
-		                
-		                // 檢查 payerName
-		                if (data.payerName === oldName) {
-		                    updateData.payerName = newId;
-		                    needsUpdate = true;
-		                }
+					// a) list: oldName -> newId
+					const oldIndex = list.findIndex((name) => name === oldName);
+					if (oldIndex !== -1) {
+					  list.splice(oldIndex, 1);
+					  if (!list.includes(newId)) list.push(newId);
+					} else {
+					  // list 裡沒有 oldName 也沒關係，但如果 newId 不在 list，順便補進去
+					  if (!list.includes(newId)) list.push(newId);
+					}
 
-		                // 檢查 shares
-		                const shares = data.shares || {};
-		                if (shares[oldName] !== undefined) {
-		                    const newShares = { ...shares };
-		                    const shareValue = newShares[oldName];
-		                    
-		                    // 將份數移到新 ID (如果新 ID 已經有份數，則合併)
-		                    newShares[newId] = (newShares[newId] || 0) + shareValue;
-		                    delete newShares[oldName];
-		                    
-		                    updateData.shares = newShares;
-		                    needsUpdate = true;
-		                }
+					// b) defaultShares: oldName -> newId（合併）
+					if (shares[oldName] !== undefined) {
+					  shares[newId] = (shares[newId] || 0) + shares[oldName];
+					  delete shares[oldName];
+					}
 
-		                if (needsUpdate) {
-		                    batch.update(docSnap.ref, updateData);
-		                    updateCount++;
-		                    batchOpCount++;
+					// 保持唯一，且避免把 groupId(owner uid) 重複塞進 list
+					const sanitizedList = Array.from(new Set(
+					  list.filter((name) => (name || '').trim() !== '' && name !== currentCollectionId)
+					));
 
-		                    if (batchOpCount >= 400) { 
-		                        await batch.commit();
-		                        batch = db.batch(); // 重設新的 batch
-		                        batchOpCount = 0;
-		                    }
-		                }
-		            }
-		            
-		            // 提交剩餘的 batch
-		            if (batchOpCount > 0) {
-		                await batch.commit();
-		            }
+					transaction.set(membersDocRef, { list: sanitizedList, defaultShares: shares }, { merge: false });
+				  });
 
-		            setModalMessage(`✅ 成員「${oldName}」已成功替換為「${getDisplayName(newId)}」並同步了 ${updateCount} 筆支出記錄！`);
-		        } catch (e) {
-		            console.error("Error migrating member ID:", e);
-		            setError(`成員替換失敗: ${e.message}`);
-		        } finally {
-		            setIsLoading(false);
-		        }
-		    };
-		    
-		    const message = `確認後會將所有與「${oldName}」相關的支出記錄和設定轉移到新成員「${getDisplayName(newId)}」上。`;
-		    
-		    openConfirmModal('轉移資料', message, onConfirm, '確認', 'red');
+				  // --- 2) 批量更新 expenses (Batch)
+				  const expensesCollectionPath = getGroupExpensesPath(currentCollectionId);
+				  const expensesSnapshot = await db.collection(expensesCollectionPath).get();
 
-		}, [db, currentCollectionId, isReadOnly, groupMembers, members, openConfirmModal, closeConfirmModal, setIsLoading, setError, getDisplayName]); // <-- FIXED: Removed top-level const functions from dependencies
+				  let batch = db.batch();
+				  let updateCount = 0;
+				  let batchOpCount = 0;
+
+				  for (const docSnap of expensesSnapshot.docs) {
+					const data = docSnap.data();
+					let needsUpdate = false;
+					const updateData = {};
+
+					if (data.payerName === oldName) {
+					  updateData.payerName = newId;
+					  needsUpdate = true;
+					}
+
+					const shares = data.shares || {};
+					if (shares[oldName] !== undefined) {
+					  const newShares = { ...shares };
+					  const shareValue = newShares[oldName];
+					  newShares[newId] = (newShares[newId] || 0) + shareValue;
+					  delete newShares[oldName];
+
+					  updateData.shares = newShares;
+					  needsUpdate = true;
+					}
+
+					if (needsUpdate) {
+					  batch.update(docSnap.ref, updateData);
+					  updateCount++;
+					  batchOpCount++;
+
+					  if (batchOpCount >= 400) {
+						await batch.commit();
+						batch = db.batch();
+						batchOpCount = 0;
+					  }
+					}
+				  }
+
+				  if (batchOpCount > 0) await batch.commit();
+
+				  setModalMessage?.(`✅ 已將「${oldName}」自動替換為「${getDisplayName(newId)}」，並同步 ${updateCount} 筆支出。`);
+				} catch (e) {
+				  console.error("Error migrating member ID:", e);
+				  setError(`成員替換失敗: ${e.message}`);
+				  setModalMessage?.(`❌ 成員替換失敗: ${e.message}`);
+				} finally {
+				  setIsLoading(false);
+				}
+			  };
+
+			  if (skipConfirm) {
+				// ✅ 自動模式：不跳確認
+				await doMigrate();
+				return;
+			  }
+
+			  // 原本手動模式：保留 confirm modal
+			  const onConfirm = async () => {
+				closeConfirmModal();
+				await doMigrate();
+			  };
+
+			  const message = `確認後會將所有與「${oldName}」相關的支出記錄和設定轉移到新成員「${getDisplayName(newId)}」上。`;
+			  openConfirmModal('轉移資料', message, onConfirm, '確認', 'red');
+
+			}, [
+			  db,
+			  currentCollectionId,
+			  isReadOnly,
+			  openConfirmModal,
+			  closeConfirmModal,
+			  setIsLoading,
+			  setError,
+			  getDisplayName
+			]);
 
           // --- 8. 清算結餘功能 ---
           const settleMemberDebt = useCallback(async (debtorId, amount, creditorId) => {
