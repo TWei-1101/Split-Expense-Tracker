@@ -1887,147 +1887,112 @@
 			// 透過 email 邀請使用者加入這個群組（有編輯權）
 			// NEW: 傳入 setModalMessage
 			const inviteUserByEmail = React.useCallback(
-			  async (emailToInviteRaw, setModalMessage) => { 
-				if (!db || !currentCollectionId || isReadOnly) return;
-				const emailToInvite = (emailToInviteRaw || '').trim().toLowerCase();
-				if (!emailToInvite) return;
-
-				setIsLoading(true);
-				setError(null);
-
-				try {
-				  // 1) 用 email 找 public_profiles
-				  const profilesRef = db.collection(`artifacts/${appId}/public_profiles`);
-				  const snap = await profilesRef.where('email', '==', emailToInvite).limit(1).get();
-
-				  if (snap.empty) {
-					setModalMessage('❌ 找不到使用這個 Email 註冊的帳號，請對方先在這個系統登入一次。'); // 使用 Modal Message
-					return;
-				  }
-
-				  const profileData = snap.docs[0].data();
-				  const invitedUid = profileData.uid;
-				  const invitedDisplayName =
-					profileData.displayName || profileData.email || emailToInvite;
-
-				  if (!invitedUid) {
-					setError('這個 Email 的使用者資料異常，請稍後再試。'); 
-					return;
-				  }
-
-				  // 2) 檢查是否已經是成員：如果是，提示就好，不要重複加入
-				  if (groupMembers.includes(invitedUid)) {
-					setModalMessage(`❌ 「${getDisplayName(invitedUid)}」已經是這本記帳簿的成員了。`); // <-- MODIFIED
-					return;
-				  }
-
-				  // 3) 把 uid 加進 group.members
-				  const groupRef = db.doc(`artifacts/${appId}/groups/${currentCollectionId}`);
-				  await groupRef.update({
-					members: firebase.firestore.FieldValue.arrayUnion(invitedUid),
-				  });
-
-				  // 4) 把他也加入「分帳成員名單」（settings/members.list）
-				  let newMemberList = customMembers;
-				  let removedOldName = null; // ✨ NEW: 追蹤是否移除了舊名稱
-
-				  if (!customMembers.includes(invitedUid)) {
-					  // 4-a) 移除任何與新用戶暱稱相同的**非 UID**的自訂名稱
-					  const filteredMembers = newMemberList.filter(name => {
-						  // 判斷是否為「自訂名稱」：不是 owner's UID 且在 userProfiles 中查不到 (即不是已知的 UID)
-						  // 這裡假設所有 UID 都在 userProfiles 中有記錄，而自訂名稱是純字串且不在 userProfiles 中
-						  const isCustomString = name !== currentCollectionId && !userProfiles[name];
-
-						  // 檢查是否與新加入的用戶名稱（暱稱或 Email 前綴）相同
-						  if (isCustomString && name === invitedDisplayName) {
-							  removedOldName = name; // 記錄被移除的舊名稱
-							  return false; // 移除
-						  }
-						  return true; // 保留
-					  });
-					  
-					  // 4-b) 加入新的 UID
-					  newMemberList = [...filteredMembers, invitedUid];
-					  
-					  // 儲存新的成員列表
-					  await saveMembers(newMemberList);
-				  }
-
-				  // 5) 清空輸入框 and Success Message
-				  setInviteEmail('');
-				  let successMessage = `✅ 已成功邀請成員: ${invitedDisplayName}`;
-				  if (removedOldName) { // <-- NEW: 根據是否移除舊名稱顯示不同訊息
-					  successMessage += `，並已自動移除您之前建立的重複名稱「${removedOldName}」。`;
-				  }
-				  setModalMessage(successMessage); // 成功 Modal Message
-				  console.log(
-					`已邀請成員 ${invitedDisplayName} (${invitedUid}) 並加入分帳成員名單`
-				  );
-				} catch (e) {
-				  console.error('inviteUserByEmail error:', e);
-				  setError(`邀請成員失敗: ${e.message}`); 
-				} finally {
-				  setIsLoading(false);
-				}
-			  },
-			  [db, currentCollectionId, customMembers, saveMembers, groupMembers, userProfiles, getDisplayName, isReadOnly, setError, setIsLoading]
-			);
-
-			// 從群組中移除成員（同時從分帳成員名單中移除）
-			// NEW: 傳入 setModalMessage，讓移除成功的訊息顯示在 Modal 內部
-			const removeGroupMember = React.useCallback(
-			  (memberUid, setModalMessage) => {
-				if (isReadOnly) return;
-
-				// 不允許移除 owner
-				if (memberUid === groupOwner) {
-				  setError('無法移除擁有者。如需變更，請先移轉或建立新的記帳簿。');
-				  return;
-				}
-
-				const onConfirm = async () => {
-				  closeConfirmModal();
-				  try {
-					setIsLoading(true);
-					setError(null);
-
-					// 1) 從 group.members 移除
-					const groupRef = db.doc(`artifacts/${appId}/groups/${currentCollectionId}`);
-					await groupRef.update({
-					  members: firebase.firestore.FieldValue.arrayRemove(memberUid),
-					});
-
-					// 2) 從分帳成員列表移除
-					const newMemberList = customMembers.filter(id => id !== memberUid);
-					await saveMembers(newMemberList);
-                    if (setModalMessage) setModalMessage(`🗑️ 已移除共享成員: ${getDisplayName(memberUid)}`);
-
-				  } catch (e) {
-					console.error('removeGroupMember error:', e);
-					setError(`移除成員失敗：${e.message}`);
-				  } finally {
-					setIsLoading(false);
-				  }
-				};
-
-				openConfirmModal(
-				  '確認移除共享成員',
-				  `確定要移除成員「${getDisplayName(memberUid)}」嗎？`,
-				  onConfirm
-				);
+			  async (emailToInviteRaw, setModalMessage) => {
+			    if (!db || !currentCollectionId || isReadOnly) return;
+			
+			    const emailToInvite = (emailToInviteRaw || '').trim().toLowerCase();
+			    if (!emailToInvite) return;
+			
+			    setIsLoading(true);
+			    setError(null);
+			
+			    try {
+			      // 1) 用 email 找 public_profiles
+			      const profilesRef = db.collection(`artifacts/${appId}/public_profiles`);
+			      const snap = await profilesRef.where('email', '==', emailToInvite).limit(1).get();
+			
+			      if (snap.empty) {
+			        if (setModalMessage) {
+			          setModalMessage('❌ 找不到使用這個 Email 註冊的帳號，請對方先在這個系統登入一次。');
+			        }
+			        return;
+			      }
+			
+			      const profileData = snap.docs[0].data() || {};
+			      const invitedUid = profileData.uid;
+			
+			      // 顯示名稱以 public profile 為主
+			      const invitedDisplayName = (profileData.displayName || profileData.email || emailToInvite).trim();
+			
+			      if (!invitedUid) {
+			        setError('這個 Email 的使用者資料異常，請稍後再試。');
+			        return;
+			      }
+			
+			      // 2) 已經是成員就提示
+			      if (groupMembers.includes(invitedUid)) {
+			        if (setModalMessage) {
+			          setModalMessage(`❌ 「${getDisplayName(invitedUid)}」已經是這本記帳簿的成員了。`);
+			        }
+			        return;
+			      }
+			
+			      // 3) 先把 uid 加進 group.members（他會成為可編輯成員）
+			      const groupRef = db.doc(`artifacts/${appId}/groups/${currentCollectionId}`);
+			      await groupRef.update({
+			        members: firebase.firestore.FieldValue.arrayUnion(invitedUid),
+			      });
+			
+			      // 4) 決定是否需要「自動合併」
+			      //    規則：如果 customMembers 裡存在一個「自訂名稱」剛好等於 invitedDisplayName，
+			      //    而且它不是 uid（不在 groupMembers 且看起來不是長 uid），就把它合併到 invitedUid
+			      const isLikelyUid = (s) => typeof s === 'string' && s.length > 20; // 你的 uid 通常很長
+			      const isExistingCustomName = customMembers.includes(invitedDisplayName);
+			      const shouldAutoMerge =
+			        isExistingCustomName &&
+			        !isLikelyUid(invitedDisplayName) &&
+			        invitedDisplayName !== currentCollectionId;
+			
+			      // 5) 把 invitedUid 加入分帳名單 list（先加，後續合併會保證存在）
+			      if (!customMembers.includes(invitedUid)) {
+			        const newMemberList = [...customMembers, invitedUid];
+			        await saveMembers(newMemberList);
+			      }
+			
+			      // 6) 若撞名：自動把舊字串成員（例如 "郁傑"）的資料搬到 invitedUid
+			      if (shouldAutoMerge) {
+			        // 這裡不要依賴 groupMembers snapshot 是否已更新，因為我們剛 arrayUnion 了。
+			        await migrateMemberIDCore(invitedDisplayName, invitedUid, setModalMessage);
+			
+			        // 合併完後，把舊字串從 customMembers 移掉（避免 UI 顯示兩個郁傑）
+			        const cleanedList = customMembers
+			          .filter((x) => x !== invitedDisplayName)
+			          .filter((x) => x !== currentCollectionId);
+			
+			        // 確保 invitedUid 還在 list
+			        const finalList = cleanedList.includes(invitedUid) ? cleanedList : [...cleanedList, invitedUid];
+			        await saveMembers(finalList);
+			
+			        if (setModalMessage) {
+			          setModalMessage(`✅ 已邀請成員: ${invitedDisplayName}，並自動合併舊成員資料到該帳號。`);
+			        }
+			      } else {
+			        if (setModalMessage) {
+			          setModalMessage(`✅ 已成功邀請成員: ${invitedDisplayName}`);
+			        }
+			      }
+			
+			      setInviteEmail('');
+			      console.log(`已邀請成員 ${invitedDisplayName} (${invitedUid})`);
+			    } catch (e) {
+			      console.error('inviteUserByEmail error:', e);
+			      setError(`邀請成員失敗: ${e.message}`);
+			    } finally {
+			      setIsLoading(false);
+			    }
 			  },
 			  [
-				db,
-				currentCollectionId,
-				isReadOnly,
-				groupOwner,
-				customMembers,
-				saveMembers,
-				openConfirmModal,
-				closeConfirmModal,
-				getDisplayName,
-				setError,
-				setIsLoading
+			    db,
+			    currentCollectionId,
+			    isReadOnly,
+			    groupMembers,
+			    customMembers,
+			    saveMembers,
+			    migrateMemberIDCore,
+			    getDisplayName,
+			    setInviteEmail,
+			    setError,
+			    setIsLoading
 			  ]
 			);
 
@@ -2082,128 +2047,161 @@
             }
           }, [db, currentCollectionId, customMembers, members, isReadOnly, setError, setIsLoading]);
           
-          
-        // --- 11. 成員 ID 遷移/替換功能 ---
-		const migrateMemberID = React.useCallback(async (oldName, newId, setModalMessage) => {
-		    if (isReadOnly) {
-		        setModalMessage('❌ 唯讀模式下無法進行成員合併/替換操作。');
-		        return;
-		    }
-		    if (!db || !currentCollectionId || oldName === newId) return;
-
-		    // 確保新 ID 是群組成員 (有編輯權限的 UID)
-		    if (!groupMembers.includes(newId)) {
-		        setModalMessage('❌ 目標帳號（新 ID）必須是已加入本紀錄簿的用戶 ID。');
-		        return;
-		    }
-
-		    const onConfirm = async () => {
-		        closeConfirmModal();
-		        setIsLoading(true);
-		        setError(null);
-
-		        try {
-		            // --- 1. 更新 members/defaultShares 設定文檔 (使用 Transaction 確保原子性) ---
-		            const membersDocPath = getGroupMembersDocPath(currentCollectionId);
-		            const membersDocRef = db.doc(membersDocPath);
-		            
-		            await db.runTransaction(async (transaction) => {
-		                const docSnap = await transaction.get(membersDocRef);
-		                const data = docSnap.data() || {};
-		                let list = Array.isArray(data.list) ? data.list : [];
-		                let shares = data.defaultShares || {};
-		                
-		                // a. 替換 list 中的舊名稱為新 ID
-		                const oldIndex = list.findIndex(name => name === oldName);
-		                if (oldIndex !== -1) {
-		                    // 移除舊名稱
-		                    list.splice(oldIndex, 1);
-		                    // 加入新 ID (如果還不在清單中)
-		                    if (!list.includes(newId)) {
-		                        list.push(newId);
-		                    }
-		                }
-
-		                // b. 遷移 defaultShares: 新 ID 繼承舊名稱的份數
-		                if (shares[oldName] !== undefined) {
-		                    shares[newId] = (shares[newId] || 0) + shares[oldName]; // 合併舊的份數設定
-		                    delete shares[oldName];
-		                }
-		                
-		                // 過濾並儲存新的 list (確保唯一且不含 owner UID)
-		                const sanitizedList = Array.from(new Set(
-		                    list.filter(name => name.trim() !== '' && name !== currentCollectionId)
-		                ));
-
-		                transaction.set(membersDocRef, { list: sanitizedList, defaultShares: shares }, { merge: false });
-		            });
-
-		            // --- 2. 批量更新支出記錄 (使用 Batch) ---
-		            const expensesCollectionPath = getGroupExpensesPath(currentCollectionId);
-		            const expensesSnapshot = await db.collection(expensesCollectionPath).get();
-		            
-		            // 批量操作限制為 500，使用 400 作為安全閾值
-		            let batch = db.batch();
-		            let updateCount = 0;
-		            let batchOpCount = 0;
-
-		            for (const docSnap of expensesSnapshot.docs) {
-		                const data = docSnap.data();
-		                let needsUpdate = false;
-		                const updateData = {};
-		                
-		                // 檢查 payerName
-		                if (data.payerName === oldName) {
-		                    updateData.payerName = newId;
-		                    needsUpdate = true;
-		                }
-
-		                // 檢查 shares
-		                const shares = data.shares || {};
-		                if (shares[oldName] !== undefined) {
-		                    const newShares = { ...shares };
-		                    const shareValue = newShares[oldName];
-		                    
-		                    // 將份數移到新 ID (如果新 ID 已經有份數，則合併)
-		                    newShares[newId] = (newShares[newId] || 0) + shareValue;
-		                    delete newShares[oldName];
-		                    
-		                    updateData.shares = newShares;
-		                    needsUpdate = true;
-		                }
-
-		                if (needsUpdate) {
-		                    batch.update(docSnap.ref, updateData);
-		                    updateCount++;
-		                    batchOpCount++;
-
-		                    if (batchOpCount >= 400) { 
-		                        await batch.commit();
-		                        batch = db.batch(); // 重設新的 batch
-		                        batchOpCount = 0;
-		                    }
-		                }
-		            }
-		            
-		            // 提交剩餘的 batch
-		            if (batchOpCount > 0) {
-		                await batch.commit();
-		            }
-
-		            setModalMessage(`✅ 成員「${oldName}」已成功替換為「${getDisplayName(newId)}」並同步了 ${updateCount} 筆支出記錄！`);
-		        } catch (e) {
-		            console.error("Error migrating member ID:", e);
-		            setError(`成員替換失敗: ${e.message}`);
-		        } finally {
-		            setIsLoading(false);
+		// --- 11-A. 核心遷移：不跳 Confirm，供自動合併與手動合併共用 ---
+		const migrateMemberIDCore = React.useCallback(async (oldName, newId, setModalMessage) => {
+		  if (isReadOnly) {
+		    if (setModalMessage) setModalMessage('❌ 唯讀模式下無法進行成員合併/替換操作。');
+		    return { ok: false, updateCount: 0 };
+		  }
+		  if (!db || !currentCollectionId || !oldName || !newId || oldName === newId) {
+		    return { ok: false, updateCount: 0 };
+		  }
+		
+		  try {
+		    setIsLoading(true);
+		    setError(null);
+		
+		    // --- 1) 更新 settings/members（Transaction）---
+		    const membersDocPath = getGroupMembersDocPath(currentCollectionId);
+		    const membersDocRef = db.doc(membersDocPath);
+		
+		    await db.runTransaction(async (transaction) => {
+		      const docSnap = await transaction.get(membersDocRef);
+		      const data = docSnap.data() || {};
+		      let list = Array.isArray(data.list) ? data.list : [];
+		      let shares = data.defaultShares || {};
+		
+		      // a) list 中：移除 oldName，加入 newId
+		      const oldIndex = list.findIndex((name) => name === oldName);
+		      if (oldIndex !== -1) {
+		        list.splice(oldIndex, 1);
+		      }
+		      if (!list.includes(newId)) {
+		        list.push(newId);
+		      }
+		
+		      // b) defaultShares：把 oldName 的份數挪到 newId（若 newId 已有就合併）
+		      if (shares[oldName] !== undefined) {
+		        shares[newId] = (shares[newId] || 0) + shares[oldName];
+		        delete shares[oldName];
+		      }
+		
+		      // 移除空字串 / owner uid
+		      const sanitizedList = Array.from(
+		        new Set(list.filter((name) => (name || '').trim() !== '' && name !== currentCollectionId))
+		      );
+		
+		      transaction.set(
+		        membersDocRef,
+		        { list: sanitizedList, defaultShares: shares },
+		        { merge: false }
+		      );
+		    });
+		
+		    // --- 2) 批次更新 expenses（Batch, 每批最多 400）---
+		    const expensesCollectionPath = getGroupExpensesPath(currentCollectionId);
+		    const expensesSnapshot = await db.collection(expensesCollectionPath).get();
+		
+		    let batch = db.batch();
+		    let updateCount = 0;
+		    let batchOpCount = 0;
+		
+		    for (const docSnap of expensesSnapshot.docs) {
+		      const data = docSnap.data() || {};
+		      let needsUpdate = false;
+		      const updateData = {};
+		
+		      // payerName: oldName -> newId
+		      if (data.payerName === oldName) {
+		        updateData.payerName = newId;
+		        needsUpdate = true;
+		      }
+		
+		      // shares: key oldName -> newId
+		      const shares = data.shares || {};
+		      if (shares[oldName] !== undefined) {
+		        const newShares = { ...shares };
+		        const shareValue = newShares[oldName];
+		
+		        newShares[newId] = (newShares[newId] || 0) + shareValue;
+		        delete newShares[oldName];
+		
+		        updateData.shares = newShares;
+		        needsUpdate = true;
+		      }
+		
+		      if (needsUpdate) {
+		        batch.update(docSnap.ref, updateData);
+		        updateCount++;
+		        batchOpCount++;
+		
+		        if (batchOpCount >= 400) {
+		          await batch.commit();
+		          batch = db.batch();
+		          batchOpCount = 0;
 		        }
-		    };
-		    
-		    const message = `確認後會將所有與「${oldName}」相關的支出記錄和設定轉移到新成員「${getDisplayName(newId)}」上。`;
-		    
-		    openConfirmModal('轉移資料', message, onConfirm, '確認', 'red');
+		      }
+		    }
+		
+		    if (batchOpCount > 0) {
+		      await batch.commit();
+		    }
+		
+		    if (setModalMessage) {
+		      setModalMessage(
+		        `✅ 已自動合併：將「${oldName}」轉移到「${getDisplayName(newId)}」，並同步 ${updateCount} 筆支出記錄。`
+		      );
+		    }
+		
+		    return { ok: true, updateCount };
+		  } catch (e) {
+		    console.error('migrateMemberIDCore error:', e);
+		    setError(`成員合併失敗: ${e.message}`);
+		    return { ok: false, updateCount: 0 };
+		  } finally {
+		    setIsLoading(false);
+		  }
+		}, [
+		  db,
+		  currentCollectionId,
+		  isReadOnly,
+		  setIsLoading,
+		  setError,
+		  getDisplayName
+		]);
 
-		}, [db, currentCollectionId, isReadOnly, groupMembers, members, openConfirmModal, closeConfirmModal, setIsLoading, setError, getDisplayName]); // <-- FIXED: Removed top-level const functions from dependencies
+		// --- 11. 成員 ID 遷移/替換功能（保留 Confirm，但內部改用 Core） ---
+		const migrateMemberID = React.useCallback(async (oldName, newId, setModalMessage) => {
+		  if (isReadOnly) {
+		    if (setModalMessage) setModalMessage('❌ 唯讀模式下無法進行成員合併/替換操作。');
+		    return;
+		  }
+		  if (!db || !currentCollectionId || !oldName || !newId || oldName === newId) return;
+		
+		  // 手動替換時仍要求 newId 必須是群組成員
+		  if (!groupMembers.includes(newId)) {
+		    if (setModalMessage) setModalMessage('❌ 目標帳號（新 ID）必須是已加入本紀錄簿的用戶 ID。');
+		    return;
+		  }
+		
+		  const onConfirm = async () => {
+		    closeConfirmModal();
+		    await migrateMemberIDCore(oldName, newId, setModalMessage);
+		  };
+		
+		  const message = `確認後會將所有與「${oldName}」相關的支出記錄和設定轉移到新成員「${getDisplayName(newId)}」上。`;
+		
+		  openConfirmModal('轉移資料', message, onConfirm, '確認', 'red');
+		}, [
+		  db,
+		  currentCollectionId,
+		  isReadOnly,
+		  groupMembers,
+		  openConfirmModal,
+		  closeConfirmModal,
+		  migrateMemberIDCore,
+		  getDisplayName
+		]);
 
           // --- 8. 清算結餘功能 ---
           const settleMemberDebt = useCallback(async (debtorId, amount, creditorId) => {
