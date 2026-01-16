@@ -2564,7 +2564,7 @@
                 </div>
             );
           }
-
+          const isOwner = userId === groupOwner;  // ✅ 只有 owner 才能管理共享/成員
 		  return (
             <div className="min-h-screen bg-gray-50 p-4 sm:p-8">
               <div className="max-w-4xl mx-auto">
@@ -2789,17 +2789,25 @@
                     新增支出 {isReadOnly && '(唯讀)'}
                   </button>
                   <button
-                    onClick={() => { setIsMemberModalOpen(true); setError(null); }}
-                    disabled={isReadOnly}
-                    className={
-                      "px-4 py-3 border text-lg font-bold rounded-xl bg-white focus:outline-none focus:ring-4 transition duration-300 shadow-xl hover:scale-[1.03] transform disabled:border-gray-400 disabled:text-gray-400 disabled:cursor-not-allowed " +
-                      (isReadOnly
-                        ? "border-gray-400 text-gray-400"
-                        : "focus:ring-primaryColor-300 border-primaryColor-500 text-primaryColor-600 hover:bg-primaryColor-50")
-                    }
-                    aria-label="管理成員與預設份數"
-                  >
-                    <Users className="w-6 h-6" />
+					onClick={() => {
+					   if (!isOwner) {
+					     setError('只有記帳簿擁有者可以管理分帳成員及共享權限。');
+					     return;
+					   }
+					   setIsMemberModalOpen(true);
+					   setError(null);
+					 }}
+					 disabled={!isOwner}
+					 className={
+					   "px-4 py-3 border text-lg font-bold rounded-xl bg-white focus:outline-none focus:ring-4 transition duration-300 shadow-xl hover:scale-[1.03] transform disabled:border-gray-400 disabled:text-gray-400 disabled:cursor-not-allowed " +
+					   (!isOwner
+					     ? "border-gray-400 text-gray-400"
+					     : "focus:ring-primaryColor-300 border-primaryColor-500 text-primaryColor-600 hover:bg-primaryColor-50")
+					 }
+					 aria-label="管理成員與預設份數"
+					 title={!isOwner ? "只有記帳簿擁有者可以操作" : "管理分帳成員與共享權限"}
+				  >
+				     <Users className="w-6 h-6" />
                   </button>
                 </div>
 
