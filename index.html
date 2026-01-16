@@ -1583,10 +1583,12 @@
             const unsubscribeProfiles = profilesRef.onSnapshot((snapshot) => {
                 const profiles = {};
                 snapshot.forEach(docSnap => {
-                    const data = docSnap.data();
-                    if (data.uid && data.displayName) {
-                        profiles[data.uid] = data.displayName;
-                    }
+					const data = docSnap.data() || {};
+					const uid = data.uid || docSnap.id;           // ✅ doc.id 就是 uid
+					const displayName = data.displayName || data.email; // ✅ 沒暱稱就退回 email
+					if (uid && displayName) {
+					  profiles[uid] = displayName;
+					}
                 });
                 setUserProfiles(profiles);
             }, (err) => {
