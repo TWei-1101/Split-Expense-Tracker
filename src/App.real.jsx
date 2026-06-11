@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import firebase from 'firebase/compat/app';
 import 'firebase/compat/auth';
 import 'firebase/compat/firestore';
+import 'firebase/compat/storage';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
@@ -30,6 +31,11 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
 
 		const getGroupMembersDocPath = (groupId) =>
 		  `artifacts/${appId}/groups/${groupId}/settings/members`;
+
+		const getExpenseImagePath = (groupId, expenseId, fileName) => {
+		  const safeName = (fileName || 'receipt').replace(/[^\w.\-]+/g, '_').slice(-80);
+		  return `artifacts/${appId}/groups/${groupId}/expense-images/${expenseId}-${Date.now()}-${safeName}`;
+		};
 		
         // --- 匯率設定 (預設值作為備用) ---
         const PERMANENT_RATES_CACHE_KEY = "permanentExchangeRates";
@@ -426,7 +432,13 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                 currency: defaultCurrency || DEFAULT_CURRENCY,
                 payerName: currentUserId || '',
                 shares: {}, 
+                imageUrl: '',
+                imagePath: '',
+                imageName: '',
             });
+            const [imageFile, setImageFile] = useState(null);
+            const [imagePreviewUrl, setImagePreviewUrl] = useState('');
+            const [removeExistingImage, setRemoveExistingImage] = useState(false);
             const [isLoadingModal, setIsLoadingModal] = useState(false);
             const [modalError, setModalError] = useState(null);
 
@@ -455,7 +467,11 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                             currency: expenseToEdit.currency || DEFAULT_CURRENCY,
                             payerName: expenseToEdit.payerName,
                             shares: initialShares,
+                            imageUrl: expenseToEdit.imageUrl || '',
+                            imagePath: expenseToEdit.imagePath || '',
+                            imageName: expenseToEdit.imageName || '',
                         });
+                        setImagePreviewUrl(expenseToEdit.imageUrl || '');
 					} else {
 					  // 決定預設的付款人：
 					  // 1. 如果 members 裡包含 currentUserId，優先用 currentUserId
@@ -495,12 +511,26 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
 						currency: initialCurrency, // ✨ 改用記憶或預設幣別
 						payerName: defaultPayerId,
 						shares: getInitialShares(),
+                        imageUrl: '',
+                        imagePath: '',
+                        imageName: '',
 					  });
+                      setImagePreviewUrl('');
 					}
 
+                    setImageFile(null);
+                    setRemoveExistingImage(false);
                     setModalError(null);
                 }
             }, [state.isOpen, isEditing, expenseToEdit, members, currentUserId, getInitialShares, currentUserLabel, getDisplayName, defaultCurrency]);
+
+            useEffect(() => {
+                return () => {
+                    if (imagePreviewUrl && imagePreviewUrl.startsWith('blob:')) {
+                        URL.revokeObjectURL(imagePreviewUrl);
+                    }
+                };
+            }, [imagePreviewUrl]);
 
             const handleInputChange = (e) => {
                 const { name, value } = e.target;
@@ -518,6 +548,35 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                  }));
                  // ✨ NEW: 幣別記憶儲存邏輯
                  localStorage.setItem(LAST_EXPENSE_CURRENCY_KEY, selectedCurrency);
+            };
+
+            const handleImageChange = (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                if (!file.type.startsWith('image/')) {
+                    setModalError('請選擇圖片檔。');
+                    return;
+                }
+                if (file.size > 5 * 1024 * 1024) {
+                    setModalError('圖片檔案請小於 5MB。');
+                    return;
+                }
+                if (imagePreviewUrl && imagePreviewUrl.startsWith('blob:')) {
+                    URL.revokeObjectURL(imagePreviewUrl);
+                }
+                setImageFile(file);
+                setImagePreviewUrl(URL.createObjectURL(file));
+                setRemoveExistingImage(false);
+                setModalError(null);
+            };
+
+            const clearSelectedImage = () => {
+                if (imagePreviewUrl && imagePreviewUrl.startsWith('blob:')) {
+                    URL.revokeObjectURL(imagePreviewUrl);
+                }
+                setImageFile(null);
+                setImagePreviewUrl('');
+                setRemoveExistingImage(Boolean(newExpense.imageUrl));
             };
 
             const handleShareChange = (name, delta) => {
@@ -557,6 +616,51 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                 setIsLoadingModal(true);
                 setModalError(null);
                 try {
+                    const collectionPath = getGroupExpensesPath(collectionId);
+                    const docRef = isEditing
+                        ? db.doc(`${collectionPath}/${expenseToEdit.id}`)
+                        : db.collection(collectionPath).doc();
+
+                    let imageFields = {
+                        imageUrl: newExpense.imageUrl || '',
+                        imagePath: newExpense.imagePath || '',
+                        imageName: newExpense.imageName || '',
+                    };
+
+                    if (removeExistingImage && newExpense.imagePath) {
+                        try {
+                            await firebase.storage().ref(newExpense.imagePath).delete();
+                        } catch (imageDeleteError) {
+                            console.warn('Delete old expense image failed:', imageDeleteError);
+                        }
+                        imageFields = { imageUrl: '', imagePath: '', imageName: '' };
+                    }
+
+                    if (imageFile) {
+                        if (newExpense.imagePath) {
+                            try {
+                                await firebase.storage().ref(newExpense.imagePath).delete();
+                            } catch (imageDeleteError) {
+                                console.warn('Delete replaced expense image failed:', imageDeleteError);
+                            }
+                        }
+                        const imagePath = getExpenseImagePath(collectionId, docRef.id, imageFile.name);
+                        const imageRef = firebase.storage().ref(imagePath);
+                        await imageRef.put(imageFile, {
+                            contentType: imageFile.type,
+                            customMetadata: {
+                                expenseId: docRef.id,
+                                groupId: collectionId,
+                                uploadedBy: currentUserId,
+                            },
+                        });
+                        imageFields = {
+                            imageUrl: await imageRef.getDownloadURL(),
+                            imagePath,
+                            imageName: imageFile.name,
+                        };
+                    }
+
                     const expenseToSave = {
                         description: newExpense.description,
                         originalAmount: newExpense.originalAmount,
@@ -570,15 +674,13 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                         }, {}),
                         ...(isEditing ? {} : { timestamp: serverTimestamp(), creatorId: currentUserId }),
                         appId: appId,
+                        ...imageFields,
                     };
 
-                    const collectionPath = getGroupExpensesPath(collectionId);
-                    
                     if (isEditing) {
-                        const docPath = `${collectionPath}/${expenseToEdit.id}`;
-                        await db.doc(docPath).update(expenseToSave);
+                        await docRef.update(expenseToSave);
                     } else {
-                        await db.collection(collectionPath).add(expenseToSave);
+                        await docRef.set(expenseToSave);
                     }
 
                     onClose();
@@ -675,6 +777,41 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                            </p>
                         )}
                       </div>
+                    </div>
+
+                    {/* 2. 收據 / 圖片 */}
+                    <div className="pt-4 border-t border-gray-100">
+                      <label htmlFor="expenseImage" className="block text-sm font-medium text-gray-700">收據 / 圖片</label>
+                      <div className="mt-2 flex flex-col sm:flex-row gap-3 sm:items-center">
+                        <input
+                          type="file"
+                          id="expenseImage"
+                          accept="image/*"
+                          onChange={handleImageChange}
+                          className="block w-full text-sm text-gray-600 file:mr-4 file:rounded-full file:border-0 file:bg-primaryColor-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-primaryColor-700 hover:file:bg-primaryColor-100 disabled:opacity-50"
+                          disabled={isReadOnly}
+                        />
+                        {imagePreviewUrl && (
+                          <button
+                            type="button"
+                            onClick={clearSelectedImage}
+                            className="px-3 py-2 text-sm rounded-lg text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 disabled:opacity-50"
+                            disabled={isReadOnly}
+                          >
+                            移除圖片
+                          </button>
+                        )}
+                      </div>
+                      <p className="mt-1 text-xs text-gray-500">支援圖片檔，單張上限 5MB。</p>
+                      {imagePreviewUrl && (
+                        <div className="mt-3">
+                          <img
+                            src={imagePreviewUrl}
+                            alt="支出圖片預覽"
+                            className="h-32 w-32 rounded-lg object-cover border border-gray-200 shadow-sm"
+                          />
+                        </div>
+                      )}
                     </div>
 
                     {/* 2. 付款人 */}
@@ -1769,20 +1906,29 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
 
           // --- 6. 支出 CRUD ---
 
-          const deleteExpense = useCallback(async (id) => {
+          const deleteExpense = useCallback(async (expense) => {
             if (isReadOnly) {
                 setError('唯讀模式下無法刪除。');
                 return;
             }
             if (!db) return;
+            const expenseId = typeof expense === 'string' ? expense : expense?.id;
+            if (!expenseId) return;
 
             const onConfirm = async () => {
                 closeConfirmModal();
                 setIsLoading(true);
                 setError(null);
                 try {
-                    const docPath = `${getGroupExpensesPath(currentCollectionId)}/${id}`;
+                    const docPath = `${getGroupExpensesPath(currentCollectionId)}/${expenseId}`;
                     await db.doc(docPath).delete();
+                    if (expense?.imagePath) {
+                        try {
+                            await firebase.storage().ref(expense.imagePath).delete();
+                        } catch (imageDeleteError) {
+                            console.warn('Delete expense image failed:', imageDeleteError);
+                        }
+                    }
                 } catch (e) {
                     console.error("Error deleting document: ", e);
                     setError(`刪除支出失敗: ${e.message}`);
@@ -1810,10 +1956,16 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                       const snapshot = await db.collection(expensesCollectionPath).get();
 
                       const batch = db.batch();
+                      const imagePaths = [];
                       snapshot.docs.forEach(doc => {
+                          const data = doc.data() || {};
+                          if (data.imagePath) imagePaths.push(data.imagePath);
                           batch.delete(doc.ref);
                       });
                       await batch.commit();
+                      await Promise.allSettled(
+                          imagePaths.map(path => firebase.storage().ref(path).delete())
+                      );
                   } catch (e) {
                       console.error("Error clearing all documents: ", e);
                       setError(`清除所有資料失敗: ${e.message}`);
@@ -2843,6 +2995,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
         
         // --- 獨立的列表和總結組件 ---
         const ExpenseList = memo(({ expenses, deleteExpense, startEdit, isLoading, getDisplayName, formatTimestamp, isReadOnly, clearAllExpenses, searchKeyword, setSearchKeyword }) => { // ✨ 接受搜尋相關 props
+            const [previewImage, setPreviewImage] = useState(null);
             const sortedExpenses = useMemo(() => {
                 // 1. Sort by timestamp
                 const sorted = [...expenses].sort((a, b) => {
@@ -2925,8 +3078,23 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                       const convertedTWD = exp.currency !== DEFAULT_CURRENCY ? ` (TWD ${exp.amountInTWD.toFixed(0)})` : '';
 
                       return (
-                        <div key={exp.id} className="bg-white p-4 rounded-xl shadow-lg border-l-4 border-primaryColor-400 flex justify-between items-center transition duration-150 hover:shadow-xl">
-                          <div className="flex-grow">
+                        <div key={exp.id} className="bg-white p-4 rounded-xl shadow-lg border-l-4 border-primaryColor-400 flex gap-3 justify-between items-start transition duration-150 hover:shadow-xl">
+                          {exp.imageUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setPreviewImage({ url: exp.imageUrl, title: exp.description })}
+                              className="flex-shrink-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primaryColor-500"
+                              aria-label={`查看 ${exp.description} 的圖片`}
+                            >
+                              <img
+                                src={exp.imageUrl}
+                                alt={`${exp.description} 的支出圖片`}
+                                className="h-20 w-20 rounded-lg object-cover border border-gray-200 shadow-sm"
+                                loading="lazy"
+                              />
+                            </button>
+                          )}
+                          <div className="min-w-0 flex-grow">
                             <p className="font-semibold text-lg text-gray-800">{exp.description}</p>
                             <p className="text-3xl font-extrabold text-primaryColor-600 my-1">
                                 {displayAmount}
@@ -2942,7 +3110,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                               <span className="font-medium">時間:</span> {formatTimestamp(exp.timestamp)}
                             </p>
                           </div>
-                          <div className={`flex space-x-2 ${isReadOnly ? 'opacity-50' : ''}`}>
+                          <div className={`flex flex-shrink-0 space-x-2 ${isReadOnly ? 'opacity-50' : ''}`}>
                             <button
                               onClick={() => startEdit(exp)}
                               className="p-2 text-blue-500 bg-white hover:bg-blue-50 rounded-full transition duration-150 hover:scale-110 transform border border-transparent hover:border-blue-300 shadow-md disabled:cursor-not-allowed"
@@ -2953,7 +3121,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                               <Pencil className="w-5 h-5" />
                             </button>
                             <button
-                              onClick={() => deleteExpense(exp.id)}
+                              onClick={() => deleteExpense(exp)}
                               disabled={isLoading || isReadOnly}
                               className="p-2 text-red-500 bg-white hover:bg-blue-50 rounded-full transition duration-150 hover:scale-110 transform border border-transparent hover:border-red-300 shadow-md disabled:cursor-not-allowed"
                               aria-label="刪除支出"
@@ -2965,6 +3133,25 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                         </div>
                       );
                     })}
+                  </div>
+                )}
+                {previewImage && (
+                  <div className="fixed inset-0 bg-gray-900 bg-opacity-80 z-50 flex items-center justify-center p-4" onClick={() => setPreviewImage(null)}>
+                    <div className="relative max-w-4xl max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewImage(null)}
+                        className="absolute -top-3 -right-3 bg-white rounded-full p-2 text-gray-700 hover:text-gray-900 shadow-lg"
+                        aria-label="關閉圖片預覽"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                      <img
+                        src={previewImage.url}
+                        alt={previewImage.title || '支出圖片'}
+                        className="max-h-[90vh] max-w-full rounded-xl object-contain bg-white shadow-2xl"
+                      />
+                    </div>
                   </div>
                 )}
               </div>
