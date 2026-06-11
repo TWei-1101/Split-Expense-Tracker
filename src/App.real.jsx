@@ -3148,57 +3148,61 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                       const convertedTWD = exp.currency !== DEFAULT_CURRENCY ? ` (TWD ${exp.amountInTWD.toFixed(0)})` : '';
 
                       return (
-                        <div key={exp.id} className="bg-white p-4 rounded-xl shadow-lg border-l-4 border-primaryColor-400 flex gap-3 justify-between items-start transition duration-150 hover:shadow-xl">
-                          {expenseImageSrc && (
-                            <button
-                              type="button"
-                              onClick={() => setPreviewImage({ url: expenseImageSrc, title: exp.description })}
-                              className="flex-shrink-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primaryColor-500"
-                              aria-label={`查看 ${exp.description} 的圖片`}
-                            >
-                              <img
-                                src={expenseImageSrc}
-                                alt={`${exp.description} 的支出圖片`}
-                                className="h-20 w-20 rounded-lg object-cover border border-gray-200 shadow-sm"
-                                loading="lazy"
-                              />
-                            </button>
-                          )}
-                          <div className="min-w-0 flex-grow">
-                            <p className="font-semibold text-lg text-gray-800">{exp.description}</p>
-                            <p className="text-3xl font-extrabold text-primaryColor-600 my-1">
-                                {displayAmount}
-                                <span className="text-xl font-normal text-gray-500">{convertedTWD}</span>
-                            </p> 
-                            <p className="text-sm text-gray-600">
-                              <span className="font-medium text-primaryColor-700">付款人:</span> {getDisplayName(exp.payerName)}
-                            </p>
-                            <p className="text-xs text-gray-500 mt-1">
-                              <span className="font-medium">分帳:</span> {sharesDetail || '無人分帳'} (總份數: {totalShares})
-                            </p>
-                            <p className="text-xs text-gray-400 mt-1">
-                              <span className="font-medium">時間:</span> {formatTimestamp(exp.timestamp)}
-                            </p>
-                          </div>
-                          <div className={`flex flex-shrink-0 space-x-2 ${isReadOnly ? 'opacity-50' : ''}`}>
-                            <button
-                              onClick={() => startEdit(exp)}
-                              className="p-2 text-blue-500 bg-white hover:bg-blue-50 rounded-full transition duration-150 hover:scale-110 transform border border-transparent hover:border-blue-300 shadow-md disabled:cursor-not-allowed"
-                              aria-label="編輯支出"
-                              disabled={isReadOnly}
-                              title={isReadOnly ? "唯讀模式下無法編輯" : "編輯支出"}
-                            >
-                              <Pencil className="w-5 h-5" />
-                            </button>
-                            <button
-                              onClick={() => deleteExpense(exp)}
-                              disabled={isLoading || isReadOnly}
-                              className="p-2 text-red-500 bg-white hover:bg-blue-50 rounded-full transition duration-150 hover:scale-110 transform border border-transparent hover:border-red-300 shadow-md disabled:cursor-not-allowed"
-                              aria-label="刪除支出"
-                              title={isReadOnly ? "唯讀模式下無法刪除" : "刪除支出"}
-                            >
-                              <Trash2 className="w-5 h-5" />
-                            </button>
+                        <div key={exp.id} className="bg-white p-4 rounded-xl shadow-lg border-l-4 border-primaryColor-400 transition duration-150 hover:shadow-xl">
+                          <div className="flex gap-3 justify-between items-start">
+                            <div className="min-w-0 flex-grow">
+                              <p className="font-semibold text-lg text-gray-800">{exp.description}</p>
+                              <p className="text-3xl font-extrabold text-primaryColor-600 my-1">
+                                  {displayAmount}
+                                  <span className="text-xl font-normal text-gray-500">{convertedTWD}</span>
+                              </p>
+                              <p className="text-sm text-gray-600">
+                                <span className="font-medium text-primaryColor-700">付款人:</span> {getDisplayName(exp.payerName)}
+                              </p>
+                              <p className="text-xs text-gray-500 mt-1">
+                                <span className="font-medium">分帳:</span> {sharesDetail || '無人分帳'} (總份數: {totalShares})
+                              </p>
+                              <p className="text-xs text-gray-400 mt-1">
+                                <span className="font-medium">時間:</span> {formatTimestamp(exp.timestamp)}
+                              </p>
+                            </div>
+                            <div className={`flex flex-col items-end space-y-2 flex-shrink-0 ${isReadOnly ? 'opacity-50' : ''}`}>
+                              <div className="flex space-x-2">
+                                <button
+                                  onClick={() => startEdit(exp)}
+                                  className="p-2 text-blue-500 bg-white hover:bg-blue-50 rounded-full transition duration-150 hover:scale-110 transform border border-transparent hover:border-blue-300 shadow-md disabled:cursor-not-allowed"
+                                  aria-label="編輯支出"
+                                  disabled={isReadOnly}
+                                  title={isReadOnly ? "唯讀模式下無法編輯" : "編輯支出"}
+                                >
+                                  <Pencil className="w-5 h-5" />
+                                </button>
+                                <button
+                                  onClick={() => deleteExpense(exp)}
+                                  disabled={isLoading || isReadOnly}
+                                  className="p-2 text-red-500 bg-white hover:bg-blue-50 rounded-full transition duration-150 hover:scale-110 transform border border-transparent hover:border-red-300 shadow-md disabled:cursor-not-allowed"
+                                  aria-label="刪除支出"
+                                  title={isReadOnly ? "唯讀模式下無法刪除" : "刪除支出"}
+                                >
+                                  <Trash2 className="w-5 h-5" />
+                                </button>
+                              </div>
+                              {expenseImageSrc && (
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewImage({ url: expenseImageSrc, title: exp.description })}
+                                  className="rounded-lg focus:outline-none focus:ring-2 focus:ring-primaryColor-500"
+                                  aria-label={`查看 ${exp.description} 的圖片`}
+                                >
+                                  <img
+                                    src={expenseImageSrc}
+                                    alt={`${exp.description} 的支出圖片`}
+                                    className="h-20 w-20 rounded-lg object-cover border border-gray-200 shadow-sm"
+                                    loading="lazy"
+                                  />
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       );
