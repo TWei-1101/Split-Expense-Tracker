@@ -1392,6 +1392,19 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
           // 右邊幣值 (Target): 預設 TWD，不讀取 localStorage
           const [converterTargetCurrency, setConverterTargetCurrency] = useState(DEFAULT_CURRENCY); 
           const [converterAmount, setConverterAmount] = useState('');
+          // 切換金額顯示狀態：用 expenseId 記錄目前要顯示 TWD 的卡片，沒記錄 = 顯示原幣
+          const [showTwdExpenseIds, setShowTwdExpenseIds] = useState(new Set());
+          const toggleAmountDisplay = useCallback((expenseId) => {
+            setShowTwdExpenseIds(prev => {
+              const next = new Set(prev);
+              if (next.has(expenseId)) {
+                next.delete(expenseId);
+              } else {
+                next.add(expenseId);
+              }
+              return next;
+            });
+          }, []);
 
           // --- 0. 匯率換算器來源幣別持久化 ---
           // 只有 Source Currency (左邊) 需要記錄
@@ -3144,15 +3157,28 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                         .join(', ');
                       const expenseImageSrc = exp.imageUrl || exp.imageDataUrl || '';
 
-                      const displayAmount = `${exp.currency} ${Math.round(exp.originalAmount).toFixed(0)}`;
-                      const convertedTWD = exp.currency !== DEFAULT_CURRENCY ? ` (TWD ${exp.amountInTWD.toFixed(0)})` : '';
+                      const isTwd = exp.currency === DEFAULT_CURRENCY;
+                      const isShowingTwd = showTwdExpenseIds.has(exp.id);
+                      const displayAmount = isShowingTwd
+                        ? `${DEFAULT_CURRENCY} ${exp.amountInTWD.toFixed(0)}`
+                        : `${exp.currency} ${Math.round(exp.originalAmount).toFixed(0)}`;
+                      const convertedTWD = !isTwd && !isShowingTwd ? ` (TWD ${exp.amountInTWD.toFixed(0)})` : '';
+                      const canToggle = !isTwd;
 
                       return (
                         <div key={exp.id} className="bg-white p-4 rounded-xl shadow-lg border-l-4 border-primaryColor-400 transition duration-150 hover:shadow-xl">
                           <div className="flex gap-3 justify-between items-start">
                             <div className="min-w-0 flex-grow">
                               <p className="font-semibold text-lg text-gray-800">{exp.description}</p>
-                              <p className="text-3xl font-extrabold text-primaryColor-600 my-1">
+                              <p
+                                className={`text-3xl font-extrabold text-primaryColor-600 my-1 ${canToggle ? 'cursor-pointer select-none hover:underline' : ''}`}
+                                onClick={canToggle ? () => toggleAmountDisplay(exp.id) : undefined}
+                                role={canToggle ? 'button' : undefined}
+                                tabIndex={canToggle ? 0 : undefined}
+                                onKeyDown={canToggle ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleAmountDisplay(exp.id); } } : undefined}
+                                title={canToggle ? (isShowingTwd ? '點擊換回原幣' : '點擊切換為台幣') : undefined}
+                                aria-label={canToggle ? (isShowingTwd ? `切換回 ${exp.currency} 顯示` : `切換為台幣顯示`) : undefined}
+                              >
                                   {displayAmount}
                                   <span className="text-xl font-normal text-gray-500">{convertedTWD}</span>
                               </p>
