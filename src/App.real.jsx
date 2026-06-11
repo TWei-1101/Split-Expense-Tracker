@@ -3162,7 +3162,6 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                       const displayAmount = isShowingTwd
                         ? `${DEFAULT_CURRENCY} ${exp.amountInTWD.toFixed(0)}`
                         : `${exp.currency} ${Math.round(exp.originalAmount).toFixed(0)}`;
-                      const convertedTWD = !isTwd && !isShowingTwd ? ` (TWD ${exp.amountInTWD.toFixed(0)})` : '';
                       const canToggle = !isTwd;
 
                       return (
@@ -3180,7 +3179,6 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                                 aria-label={canToggle ? (isShowingTwd ? `切換回 ${exp.currency} 顯示` : `切換為台幣顯示`) : undefined}
                               >
                                   {displayAmount}
-                                  <span className="text-xl font-normal text-gray-500">{convertedTWD}</span>
                               </p>
                               <p className="text-sm text-gray-600">
                                 <span className="font-medium text-primaryColor-700">付款人:</span> {getDisplayName(exp.payerName)}
