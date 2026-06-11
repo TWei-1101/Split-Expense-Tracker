@@ -441,6 +441,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
             const [removeExistingImage, setRemoveExistingImage] = useState(false);
             const [isLoadingModal, setIsLoadingModal] = useState(false);
             const [modalError, setModalError] = useState(null);
+            const [uploadStatus, setUploadStatus] = useState('');
 
             const isEditing = state.isEditing;
             const expenseToEdit = state.editingExpense;
@@ -521,6 +522,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                     setImageFile(null);
                     setRemoveExistingImage(false);
                     setModalError(null);
+                    setUploadStatus('');
                 }
             }, [state.isOpen, isEditing, expenseToEdit, members, currentUserId, getInitialShares, currentUserLabel, getDisplayName, defaultCurrency]);
 
@@ -557,8 +559,8 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                     setModalError('請選擇圖片檔。');
                     return;
                 }
-                if (file.size > 5 * 1024 * 1024) {
-                    setModalError('圖片檔案請小於 5MB。');
+                if (file.size > 20 * 1024 * 1024) {
+                    setModalError('圖片檔案請小於 20MB。');
                     return;
                 }
                 if (imagePreviewUrl && imagePreviewUrl.startsWith('blob:')) {
@@ -569,6 +571,55 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                 setRemoveExistingImage(false);
                 setModalError(null);
             };
+
+            const compressImageFile = (file) => new Promise((resolve, reject) => {
+                const imageUrl = URL.createObjectURL(file);
+                const image = new Image();
+                image.onload = () => {
+                    try {
+                        const maxSide = 1600;
+                        const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+                        const width = Math.max(1, Math.round(image.width * scale));
+                        const height = Math.max(1, Math.round(image.height * scale));
+                        const canvas = document.createElement('canvas');
+                        canvas.width = width;
+                        canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(image, 0, 0, width, height);
+
+                        canvas.toBlob((blob) => {
+                            URL.revokeObjectURL(imageUrl);
+                            if (!blob) {
+                                reject(new Error('圖片壓縮失敗，請換一張圖片。'));
+                                return;
+                            }
+                            const baseName = (file.name || 'receipt').replace(/\.[^.]+$/, '');
+                            const compressedName = `${baseName}.jpg`;
+                            resolve(new File([blob], compressedName, { type: 'image/jpeg' }));
+                        }, 'image/jpeg', 0.82);
+                    } catch (err) {
+                        URL.revokeObjectURL(imageUrl);
+                        reject(err);
+                    }
+                };
+                image.onerror = () => {
+                    URL.revokeObjectURL(imageUrl);
+                    reject(new Error('圖片讀取失敗，請換一張圖片。'));
+                };
+                image.src = imageUrl;
+            });
+
+            const uploadWithTimeout = (uploadTask, timeoutMs = 45000) => Promise.race([
+                uploadTask,
+                new Promise((_, reject) => {
+                    setTimeout(() => {
+                        if (typeof uploadTask.cancel === 'function') {
+                            uploadTask.cancel();
+                        }
+                        reject(new Error('圖片上傳逾時，請確認網路或稍後再試。'));
+                    }, timeoutMs);
+                }),
+            ]);
 
             const clearSelectedImage = () => {
                 if (imagePreviewUrl && imagePreviewUrl.startsWith('blob:')) {
@@ -644,21 +695,26 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                                 console.warn('Delete replaced expense image failed:', imageDeleteError);
                             }
                         }
-                        const imagePath = getExpenseImagePath(collectionId, docRef.id, imageFile.name);
+                        setUploadStatus('正在壓縮圖片...');
+                        const uploadFile = await compressImageFile(imageFile);
+                        setUploadStatus('正在上傳圖片...');
+                        const imagePath = getExpenseImagePath(collectionId, docRef.id, uploadFile.name);
                         const imageRef = firebase.storage().ref(imagePath);
-                        await imageRef.put(imageFile, {
-                            contentType: imageFile.type,
+                        const uploadTask = imageRef.put(uploadFile, {
+                            contentType: uploadFile.type,
                             customMetadata: {
                                 expenseId: docRef.id,
                                 groupId: collectionId,
                                 uploadedBy: currentUserId,
                             },
                         });
+                        await uploadWithTimeout(uploadTask);
                         imageFields = {
                             imageUrl: await imageRef.getDownloadURL(),
                             imagePath,
                             imageName: imageFile.name,
                         };
+                        setUploadStatus('');
                     }
 
                     const expenseToSave = {
@@ -687,6 +743,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                 } catch (e) {
                     console.error("Error saving document: ", e);
                     setModalError(`儲存支出失敗: ${e.message}`);
+                    setUploadStatus('');
                 } finally {
                     setIsLoadingModal(false);
                 }
@@ -716,6 +773,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                   {/* 中間內容：可滾動 (flex-1 overflow-y-auto) */}
                   <div className="p-6 space-y-5 flex-1 overflow-y-auto">
                     {modalError && <p className="text-red-600 bg-red-100 p-3 rounded-lg text-sm">{modalError}</p>}
+                    {uploadStatus && <p className="text-primaryColor-700 bg-primaryColor-50 p-3 rounded-lg text-sm">{uploadStatus}</p>}
                     
                     {/* 1. 品項與金額 */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -802,7 +860,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                           </button>
                         )}
                       </div>
-                      <p className="mt-1 text-xs text-gray-500">支援圖片檔，單張上限 5MB。</p>
+                      <p className="mt-1 text-xs text-gray-500">支援圖片檔，原圖上限 20MB；儲存前會自動壓縮。</p>
                       {imagePreviewUrl && (
                         <div className="mt-3">
                           <img
