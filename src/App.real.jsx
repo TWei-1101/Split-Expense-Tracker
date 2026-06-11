@@ -435,6 +435,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                 imageUrl: '',
                 imagePath: '',
                 imageName: '',
+                imageDataUrl: '',
             });
             const [imageFile, setImageFile] = useState(null);
             const [imagePreviewUrl, setImagePreviewUrl] = useState('');
@@ -471,8 +472,9 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                             imageUrl: expenseToEdit.imageUrl || '',
                             imagePath: expenseToEdit.imagePath || '',
                             imageName: expenseToEdit.imageName || '',
+                            imageDataUrl: expenseToEdit.imageDataUrl || '',
                         });
-                        setImagePreviewUrl(expenseToEdit.imageUrl || '');
+                        setImagePreviewUrl(expenseToEdit.imageUrl || expenseToEdit.imageDataUrl || '');
 					} else {
 					  // 決定預設的付款人：
 					  // 1. 如果 members 裡包含 currentUserId，優先用 currentUserId
@@ -515,6 +517,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                         imageUrl: '',
                         imagePath: '',
                         imageName: '',
+                        imageDataUrl: '',
 					  });
                       setImagePreviewUrl('');
 					}
@@ -572,12 +575,20 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                 setModalError(null);
             };
 
-            const compressImageFile = (file) => new Promise((resolve, reject) => {
+            const compressImageToDataUrl = (file) => new Promise((resolve, reject) => {
                 const imageUrl = URL.createObjectURL(file);
                 const image = new Image();
                 image.onload = () => {
-                    try {
-                        const maxSide = 1600;
+                    const targets = [
+                        { maxSide: 1600, quality: 0.82 },
+                        { maxSide: 1200, quality: 0.76 },
+                        { maxSide: 1000, quality: 0.72 },
+                        { maxSide: 800, quality: 0.70 },
+                    ];
+
+                    const renderTarget = (targetIndex) => {
+                      try {
+                        const { maxSide, quality } = targets[targetIndex];
                         const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
                         const width = Math.max(1, Math.round(image.width * scale));
                         const height = Math.max(1, Math.round(image.height * scale));
@@ -588,19 +599,39 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                         ctx.drawImage(image, 0, 0, width, height);
 
                         canvas.toBlob((blob) => {
-                            URL.revokeObjectURL(imageUrl);
                             if (!blob) {
+                                URL.revokeObjectURL(imageUrl);
                                 reject(new Error('圖片壓縮失敗，請換一張圖片。'));
                                 return;
                             }
-                            const baseName = (file.name || 'receipt').replace(/\.[^.]+$/, '');
-                            const compressedName = `${baseName}.jpg`;
-                            resolve(new File([blob], compressedName, { type: 'image/jpeg' }));
-                        }, 'image/jpeg', 0.82);
-                    } catch (err) {
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                                const dataUrl = reader.result;
+                                if (typeof dataUrl === 'string' && dataUrl.length <= 850000) {
+                                    URL.revokeObjectURL(imageUrl);
+                                    resolve(dataUrl);
+                                    return;
+                                }
+                                if (targetIndex < targets.length - 1) {
+                                    renderTarget(targetIndex + 1);
+                                    return;
+                                }
+                                URL.revokeObjectURL(imageUrl);
+                                reject(new Error('圖片壓縮後仍太大，請裁切或換一張圖片。'));
+                            };
+                            reader.onerror = () => {
+                                URL.revokeObjectURL(imageUrl);
+                                reject(new Error('圖片轉換失敗，請換一張圖片。'));
+                            };
+                            reader.readAsDataURL(blob);
+                        }, 'image/jpeg', quality);
+                      } catch (err) {
                         URL.revokeObjectURL(imageUrl);
                         reject(err);
-                    }
+                      }
+                    };
+
+                    renderTarget(0);
                 };
                 image.onerror = () => {
                     URL.revokeObjectURL(imageUrl);
@@ -609,25 +640,13 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                 image.src = imageUrl;
             });
 
-            const uploadWithTimeout = (uploadTask, timeoutMs = 45000) => Promise.race([
-                uploadTask,
-                new Promise((_, reject) => {
-                    setTimeout(() => {
-                        if (typeof uploadTask.cancel === 'function') {
-                            uploadTask.cancel();
-                        }
-                        reject(new Error('圖片上傳逾時，請確認網路或稍後再試。'));
-                    }, timeoutMs);
-                }),
-            ]);
-
             const clearSelectedImage = () => {
                 if (imagePreviewUrl && imagePreviewUrl.startsWith('blob:')) {
                     URL.revokeObjectURL(imagePreviewUrl);
                 }
                 setImageFile(null);
                 setImagePreviewUrl('');
-                setRemoveExistingImage(Boolean(newExpense.imageUrl));
+                setRemoveExistingImage(Boolean(newExpense.imageUrl || newExpense.imageDataUrl));
             };
 
             const handleShareChange = (name, delta) => {
@@ -676,15 +695,18 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                         imageUrl: newExpense.imageUrl || '',
                         imagePath: newExpense.imagePath || '',
                         imageName: newExpense.imageName || '',
+                        imageDataUrl: newExpense.imageDataUrl || '',
                     };
 
-                    if (removeExistingImage && newExpense.imagePath) {
-                        try {
-                            await firebase.storage().ref(newExpense.imagePath).delete();
-                        } catch (imageDeleteError) {
-                            console.warn('Delete old expense image failed:', imageDeleteError);
+                    if (removeExistingImage && (newExpense.imagePath || newExpense.imageUrl || newExpense.imageDataUrl)) {
+                        if (newExpense.imagePath) {
+                            try {
+                                await firebase.storage().ref(newExpense.imagePath).delete();
+                            } catch (imageDeleteError) {
+                                console.warn('Delete old expense image failed:', imageDeleteError);
+                            }
                         }
-                        imageFields = { imageUrl: '', imagePath: '', imageName: '' };
+                        imageFields = { imageUrl: '', imagePath: '', imageName: '', imageDataUrl: '' };
                     }
 
                     if (imageFile) {
@@ -696,23 +718,12 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                             }
                         }
                         setUploadStatus('正在壓縮圖片...');
-                        const uploadFile = await compressImageFile(imageFile);
-                        setUploadStatus('正在上傳圖片...');
-                        const imagePath = getExpenseImagePath(collectionId, docRef.id, uploadFile.name);
-                        const imageRef = firebase.storage().ref(imagePath);
-                        const uploadTask = imageRef.put(uploadFile, {
-                            contentType: uploadFile.type,
-                            customMetadata: {
-                                expenseId: docRef.id,
-                                groupId: collectionId,
-                                uploadedBy: currentUserId,
-                            },
-                        });
-                        await uploadWithTimeout(uploadTask);
+                        const imageDataUrl = await compressImageToDataUrl(imageFile);
                         imageFields = {
-                            imageUrl: await imageRef.getDownloadURL(),
-                            imagePath,
+                            imageUrl: '',
+                            imagePath: '',
                             imageName: imageFile.name,
+                            imageDataUrl,
                         };
                         setUploadStatus('');
                     }
@@ -3131,21 +3142,22 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                         .filter(([, share]) => share > 0)
                         .map(([name, share]) => `${getDisplayName(name)} (${share}份)`)
                         .join(', ');
+                      const expenseImageSrc = exp.imageUrl || exp.imageDataUrl || '';
 
                       const displayAmount = `${exp.currency} ${Math.round(exp.originalAmount).toFixed(0)}`;
                       const convertedTWD = exp.currency !== DEFAULT_CURRENCY ? ` (TWD ${exp.amountInTWD.toFixed(0)})` : '';
 
                       return (
                         <div key={exp.id} className="bg-white p-4 rounded-xl shadow-lg border-l-4 border-primaryColor-400 flex gap-3 justify-between items-start transition duration-150 hover:shadow-xl">
-                          {exp.imageUrl && (
+                          {expenseImageSrc && (
                             <button
                               type="button"
-                              onClick={() => setPreviewImage({ url: exp.imageUrl, title: exp.description })}
+                              onClick={() => setPreviewImage({ url: expenseImageSrc, title: exp.description })}
                               className="flex-shrink-0 rounded-lg focus:outline-none focus:ring-2 focus:ring-primaryColor-500"
                               aria-label={`查看 ${exp.description} 的圖片`}
                             >
                               <img
-                                src={exp.imageUrl}
+                                src={expenseImageSrc}
                                 alt={`${exp.description} 的支出圖片`}
                                 className="h-20 w-20 rounded-lg object-cover border border-gray-200 shadow-sm"
                                 loading="lazy"
