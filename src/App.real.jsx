@@ -1392,19 +1392,6 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
           // 右邊幣值 (Target): 預設 TWD，不讀取 localStorage
           const [converterTargetCurrency, setConverterTargetCurrency] = useState(DEFAULT_CURRENCY); 
           const [converterAmount, setConverterAmount] = useState('');
-          // 切換金額顯示狀態：用 expenseId 記錄目前要顯示 TWD 的卡片，沒記錄 = 顯示原幣
-          const [showTwdExpenseIds, setShowTwdExpenseIds] = useState(new Set());
-          const toggleAmountDisplay = useCallback((expenseId) => {
-            setShowTwdExpenseIds(prev => {
-              const next = new Set(prev);
-              if (next.has(expenseId)) {
-                next.delete(expenseId);
-              } else {
-                next.add(expenseId);
-              }
-              return next;
-            });
-          }, []);
 
           // --- 0. 匯率換算器來源幣別持久化 ---
           // 只有 Source Currency (左邊) 需要記錄
@@ -3078,6 +3065,19 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
         // --- 獨立的列表和總結組件 ---
         const ExpenseList = memo(({ expenses, deleteExpense, startEdit, isLoading, getDisplayName, formatTimestamp, isReadOnly, clearAllExpenses, searchKeyword, setSearchKeyword }) => { // ✨ 接受搜尋相關 props
             const [previewImage, setPreviewImage] = useState(null);
+            // 切換金額顯示狀態：用 expenseId 記錄目前要顯示 TWD 的卡片
+            const [showTwdExpenseIds, setShowTwdExpenseIds] = useState(() => new Set());
+            const toggleAmountDisplay = (expenseId) => {
+                setShowTwdExpenseIds(prev => {
+                    const next = new Set(prev);
+                    if (next.has(expenseId)) {
+                        next.delete(expenseId);
+                    } else {
+                        next.add(expenseId);
+                    }
+                    return next;
+                });
+            };
             const sortedExpenses = useMemo(() => {
                 // 1. Sort by timestamp
                 const sorted = [...expenses].sort((a, b) => {
