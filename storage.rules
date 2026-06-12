@@ -1,0 +1,22 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isImage() {
+      return request.resource.contentType.matches('image/.*');
+    }
+    function under10MB() {
+      return request.resource.size < 10 * 1024 * 1024;
+    }
+
+    // groups/{groupId}/{any path}
+    match /groups/{groupId}/{allPaths=**} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isImage() && under10MB();
+      allow delete: if isSignedIn();
+    }
+  }
+}
