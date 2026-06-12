@@ -459,6 +459,11 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                 return amount * currentExchangeRate;
             }, [newExpense.originalAmount, currentExchangeRate]);
 
+            // ✨ NEW: 選單不列 TWD（因為是預設幣），TWD 改用左邊的 TW 按鈕切換
+            const nonTwdCurrencies = CURRENCIES.filter(c => c !== DEFAULT_CURRENCY);
+            // 當 currency 是 TWD 時，下拉選單顯示「最後一次選的外幣」作為參考
+            const lastForeignCurrency = localStorage.getItem(LAST_EXPENSE_CURRENCY_KEY) || nonTwdCurrencies[0] || 'JPY';
+
 
             useEffect(() => {
                 if (state.isOpen) {
@@ -817,20 +822,40 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                       <div>
                         <label htmlFor="originalAmount" className="block text-sm font-medium text-gray-700">幣值/金額</label>
                         <div className="flex space-x-2 mt-1">
+                          {/* ✨ NEW: TW toggle button - 在幣值下拉左邊，按下去這筆變 TWD，再按一次切回最後選的外幣 */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNewExpense(prev => ({
+                                ...prev,
+                                currency: prev.currency === DEFAULT_CURRENCY ? lastForeignCurrency : DEFAULT_CURRENCY
+                              }));
+                              // 注意：兩種情況都不寫 localStorage — 切換 TWD 跟切回外幣都不影響下次預設
+                            }}
+                            className={`flex-shrink-0 px-3 py-2 rounded-lg border text-sm font-semibold transition ${
+                              newExpense.currency === DEFAULT_CURRENCY
+                                ? 'bg-primaryColor-600 text-white border-primaryColor-600 shadow-sm'
+                                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                            }`}
+                            disabled={isReadOnly}
+                            title="點擊切換 TWD ↔ 最後選的幣值（不影響下次預設）"
+                          >
+                            TW
+                          </button>
                           <select
                               id="currency"
                               name="currency"
-                              value={newExpense.currency}
+                              value={newExpense.currency === DEFAULT_CURRENCY ? lastForeignCurrency : newExpense.currency}
                               onChange={handleCurrencyChange}
                               className="block flex-shrink-0 w-auto border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500 bg-white disabled:bg-gray-100"
                               disabled={isReadOnly}
                           >
-                            {CURRENCIES.map(code => (
+                            {nonTwdCurrencies.map(code => (
                                 <option key={code} value={code}>{code}</option>
                             ))}
                           </select>
                           <input
-                            key="expense-amount" 
+                            key="expense-amount"
                             type="number"
                             id="originalAmount"
                             name="originalAmount"
