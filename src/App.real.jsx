@@ -3201,7 +3201,6 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                                 const isActive = filterPayer === m.displayName;
                                 const trimmedName = (m.displayName || '').trim();
                                 const initial = trimmedName ? trimmedName.charAt(trimmedName.length - 1).toUpperCase() : '?';
-                                const sharePct = totalSpending > 0 ? (m.amount / totalSpending) * 100 : 0;
                                 return (
                                     <div
                                         key={m.userId}
@@ -3231,9 +3230,6 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                                             </p>
                                             <p className={`text-lg font-bold leading-tight ${isActive || isTop ? 'text-primaryColor-700' : 'text-gray-800'}`}>
                                                 TWD {m.amount.toFixed(0)}
-                                            </p>
-                                            <p className={`text-[11px] leading-tight ${isActive || isTop ? 'text-primaryColor-600' : 'text-gray-500'}`}>
-                                                佔 {sharePct.toFixed(1)}%
                                             </p>
                                         </div>
                                         {isActive && (
