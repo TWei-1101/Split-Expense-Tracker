@@ -226,6 +226,10 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
         const Share2 = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"></line><line x1="15.42" x2="8.59" y1="6.51" y2="10.49"></line></svg>;
         // ✨ NEW: 放大鏡圖標 (Search)
         const Search = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"></circle><line x1="21" x2="16.65" y1="21" y2="16.65"></line></svg>;
+        // ✨ NEW: 錢包圖標 (Wallet) — 給每人花費區塊用
+        const Wallet = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>;
+        // ✨ NEW: 皇冠圖標 (Crown) — 給最高花費者用
+        const Crown = (props) => <svg {...props} {...IconProps} viewBox="0 0 24 24"><path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.734H5.81a1 1 0 0 1-.957-.734L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294z"/><path d="M5 21h14"/></svg>;
         // --- 圖標元件結束 ---
 
         /**
@@ -3098,7 +3102,30 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                 );
                 
             }, [expenses, searchKeyword]); // ✨ 依賴 searchKeyword
-              
+
+            // ✨ NEW: 計算每人分攤到的花費金額 (TWD)。不受 searchKeyword 影響。
+            const memberSpending = useMemo(() => {
+                const totals = {};
+                for (const exp of expenses) {
+                    const shares = exp.shares || {};
+                    const totalShares = Object.values(shares).reduce((s, n) => s + n, 0);
+                    if (totalShares <= 0) continue;
+                    const amountTwd = exp.amountInTWD || 0;
+                    if (amountTwd <= 0) continue;
+                    for (const [uid, share] of Object.entries(shares)) {
+                        if (share <= 0) continue;
+                        totals[uid] = (totals[uid] || 0) + amountTwd * (share / totalShares);
+                    }
+                }
+                return Object.entries(totals)
+                    .map(([uid, amt]) => ({ userId: uid, amount: amt, displayName: getDisplayName(uid) }))
+                    .sort((a, b) => b.amount - a.amount);
+            }, [expenses, getDisplayName]);
+
+            // 1 人以上才標註「最高花費者」皇冠
+            const topSpenderId = memberSpending.length > 1 ? memberSpending[0]?.userId : null;
+            const totalSpending = memberSpending.reduce((s, m) => s + m.amount, 0);
+
             return (
               <div className="mt-8">
                 {/* 1. 支出列表標題與清除按鈕 - 保持在同一行 */}
@@ -3141,6 +3168,56 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                     <p className="text-sm text-gray-600 mb-4 italic p-2 bg-gray-100 rounded-lg">
                         🔍 顯示 {sortedExpenses.length} 筆符合「{searchKeyword}」的結果 (總計 {expenses.length} 筆)。
                     </p>
+                )}
+
+                {/* ✨ NEW: 每人花費金額摘要 - 搜尋欄下方，與「結餘總結」計算一致 */}
+                {memberSpending.length > 0 && (
+                    <div className="mb-5 p-4 sm:p-5 bg-gradient-to-br from-white via-white to-primaryColor-50/60 rounded-2xl border border-gray-100 shadow-sm">
+                        <div className="flex items-center justify-between mb-3 flex-wrap gap-y-1">
+                            <h3 className="text-sm font-semibold text-gray-700 flex items-center">
+                                <Wallet className="w-4 h-4 mr-1.5 text-primaryColor-600" />
+                                每人花費金額
+                            </h3>
+                            <span className="text-xs text-gray-400">
+                                統計範圍：全部 {expenses.length} 筆 · 合計 TWD {totalSpending.toFixed(0)}
+                            </span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                            {memberSpending.map((m) => {
+                                const isTop = m.userId === topSpenderId;
+                                const initial = (m.displayName || '?').trim().charAt(0).toUpperCase() || '?';
+                                const sharePct = totalSpending > 0 ? (m.amount / totalSpending) * 100 : 0;
+                                return (
+                                    <div
+                                        key={m.userId}
+                                        className={`relative flex items-center p-3 rounded-xl transition-all duration-200 ${
+                                            isTop
+                                                ? 'bg-gradient-to-r from-primaryColor-50 to-white border-2 border-primaryColor-400 shadow-sm'
+                                                : 'bg-gray-50 border border-gray-100 hover:bg-gray-100'
+                                        }`}
+                                    >
+                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-white flex-shrink-0 text-sm ${
+                                            isTop ? 'bg-primaryColor-600' : 'bg-gray-400'
+                                        }`}>
+                                            {initial}
+                                        </div>
+                                        <div className="ml-3 min-w-0 flex-1">
+                                            <p className={`text-sm font-medium truncate flex items-center ${isTop ? 'text-primaryColor-800' : 'text-gray-700'}`}>
+                                                <span className="truncate">{m.displayName}</span>
+                                                {isTop && <Crown className="w-3.5 h-3.5 ml-1 text-amber-500 flex-shrink-0" />}
+                                            </p>
+                                            <p className={`text-lg font-bold leading-tight ${isTop ? 'text-primaryColor-700' : 'text-gray-800'}`}>
+                                                TWD {m.amount.toFixed(0)}
+                                            </p>
+                                            <p className={`text-[11px] leading-tight ${isTop ? 'text-primaryColor-600' : 'text-gray-500'}`}>
+                                                佔 {sharePct.toFixed(1)}%
+                                            </p>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
                 )}
                 
                 {sortedExpenses.length === 0 ? (
