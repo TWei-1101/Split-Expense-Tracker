@@ -3088,6 +3088,12 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                     return next;
                 });
             };
+            // ✨ NEW: 點擊「每人花費」卡片 → 切換只顯示該付款人的支出
+            // null = 全部；否則存 displayName，過濾時比對 exp.payerName
+            const [filterPayer, setFilterPayer] = useState(null);
+            const togglePayerFilter = (displayName) => {
+                setFilterPayer(prev => (prev === displayName ? null : displayName));
+            };
             const sortedExpenses = useMemo(() => {
                 // 1. Sort by timestamp
                 const sorted = [...expenses].sort((a, b) => {
@@ -3095,19 +3101,20 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                     const timeB = b.timestamp ? b.timestamp.getTime() : 0;
                     return timeB - timeA;
                 });
-                
+
                 // 2. Filter by searchKeyword (case-insensitive on description)
-                if (!searchKeyword.trim()) {
-                    return sorted;
-                }
-                
-                const lowerCaseKeyword = searchKeyword.toLowerCase();
-                
-                return sorted.filter(exp => 
-                    (exp.description || '').toLowerCase().includes(lowerCaseKeyword)
-                );
-                
-            }, [expenses, searchKeyword]); // ✨ 依賴 searchKeyword
+                const kw = searchKeyword.trim().toLowerCase();
+                const kwFiltered = kw
+                    ? sorted.filter(exp => (exp.description || '').toLowerCase().includes(kw))
+                    : sorted;
+
+                // 3. Filter by filterPayer (AND with searchKeyword)
+                // 注意：歷史資料的 exp.payerName 可能是 userId 或 name 兩種形式混雜
+                // 兩邊都用 getDisplayName normalize 後再比對，才不會誤過濾
+                if (!filterPayer) return kwFiltered;
+                return kwFiltered.filter(exp => getDisplayName(exp.payerName) === filterPayer);
+
+            }, [expenses, searchKeyword, filterPayer, getDisplayName]); // ✨ 依賴 filterPayer + getDisplayName
 
             // ✨ NEW: 計算每人分攤到的花費金額 (TWD)。不受 searchKeyword 影響。
             const memberSpending = useMemo(() => {
@@ -3136,9 +3143,9 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
               <div className="mt-8">
                 {/* 1. 支出列表標題與清除按鈕 - 保持在同一行 */}
                 <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-2xl font-bold text-gray-800 flex items-center">
-                    <CircleDollarSign className="w-7 h-7 mr-3 text-primaryColor-500" /> 
-                    所有支出 ({expenses.length})
+                  <h2 className="text-2xl font-bold text-gray-800 flex items-center flex-wrap">
+                    <CircleDollarSign className="w-7 h-7 mr-3 text-primaryColor-500" />
+                    所有支出 ({sortedExpenses.length}{filterPayer || searchKeyword ? ` / ${expenses.length}` : ''})
                   </h2>
                   
                   {/* 清除所有資料按鈕 */}
@@ -3191,34 +3198,49 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
                             {memberSpending.map((m) => {
                                 const isTop = m.userId === topSpenderId;
-                                const initial = (m.displayName || '?').trim().charAt(0).toUpperCase() || '?';
+                                const isActive = filterPayer === m.displayName;
+                                const trimmedName = (m.displayName || '').trim();
+                                const initial = trimmedName ? trimmedName.charAt(trimmedName.length - 1).toUpperCase() : '?';
                                 const sharePct = totalSpending > 0 ? (m.amount / totalSpending) * 100 : 0;
                                 return (
                                     <div
                                         key={m.userId}
-                                        className={`relative flex items-center p-3 rounded-xl transition-all duration-200 ${
-                                            isTop
-                                                ? 'bg-gradient-to-r from-primaryColor-50 to-white border-2 border-primaryColor-400 shadow-sm'
-                                                : 'bg-gray-50 border border-gray-100 hover:bg-gray-100'
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => togglePayerFilter(m.displayName)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePayerFilter(m.displayName); } }}
+                                        aria-pressed={isActive}
+                                        title={isActive ? `取消「${m.displayName}」篩選` : `只顯示付款人為「${m.displayName}」的支出`}
+                                        className={`relative flex items-center p-3 rounded-xl cursor-pointer transition-all duration-200 ${
+                                            isActive
+                                                ? 'bg-gradient-to-r from-primaryColor-100 to-white border-2 border-primaryColor-500 shadow-md ring-2 ring-primaryColor-300'
+                                                : isTop
+                                                    ? 'bg-gradient-to-r from-primaryColor-50 to-white border-2 border-primaryColor-400 shadow-sm hover:shadow-md'
+                                                    : 'bg-gray-50 border border-gray-100 hover:bg-gray-100 hover:border-gray-200'
                                         }`}
                                     >
                                         <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-white flex-shrink-0 text-sm ${
-                                            isTop ? 'bg-primaryColor-600' : 'bg-gray-400'
+                                            isActive || isTop ? 'bg-primaryColor-600' : 'bg-gray-400'
                                         }`}>
                                             {initial}
                                         </div>
                                         <div className="ml-3 min-w-0 flex-1">
-                                            <p className={`text-sm font-medium truncate flex items-center ${isTop ? 'text-primaryColor-800' : 'text-gray-700'}`}>
+                                            <p className={`text-sm font-medium truncate flex items-center ${isActive || isTop ? 'text-primaryColor-800' : 'text-gray-700'}`}>
                                                 <span className="truncate">{m.displayName}</span>
                                                 {isTop && <Crown className="w-3.5 h-3.5 ml-1 text-amber-500 flex-shrink-0" />}
                                             </p>
-                                            <p className={`text-lg font-bold leading-tight ${isTop ? 'text-primaryColor-700' : 'text-gray-800'}`}>
+                                            <p className={`text-lg font-bold leading-tight ${isActive || isTop ? 'text-primaryColor-700' : 'text-gray-800'}`}>
                                                 TWD {m.amount.toFixed(0)}
                                             </p>
-                                            <p className={`text-[11px] leading-tight ${isTop ? 'text-primaryColor-600' : 'text-gray-500'}`}>
+                                            <p className={`text-[11px] leading-tight ${isActive || isTop ? 'text-primaryColor-600' : 'text-gray-500'}`}>
                                                 佔 {sharePct.toFixed(1)}%
                                             </p>
                                         </div>
+                                        {isActive && (
+                                            <span className="absolute top-1.5 right-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-primaryColor-600 text-white font-medium">
+                                                篩選中
+                                            </span>
+                                        )}
                                     </div>
                                 );
                             })}
@@ -3228,7 +3250,13 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                 
                 {sortedExpenses.length === 0 ? (
                   <p className="text-gray-500 italic p-4 bg-white rounded-xl shadow-inner">
-                    {searchKeyword.trim() ? `找不到任何符合「${searchKeyword}」的支出記錄。` : '目前沒有任何支出記錄。'}
+                    {filterPayer && searchKeyword.trim()
+                      ? `找不到任何付款人為「${filterPayer}」且符合「${searchKeyword}」的支出記錄。`
+                      : filterPayer
+                        ? `「${filterPayer}」目前沒有任何支出記錄。`
+                        : searchKeyword.trim()
+                          ? `找不到任何符合「${searchKeyword}」的支出記錄。`
+                          : '目前沒有任何支出記錄。'}
                   </p>
                 ) : (
                   <div className="space-y-4">
