@@ -579,7 +579,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                 setModalError(null);
             };
 
-            const compressImageToDataUrl = (file) => new Promise((resolve, reject) => {
+            const compressImage = (file) => new Promise((resolve, reject) => {
                 const imageUrl = URL.createObjectURL(file);
                 const image = new Image();
                 image.onload = () => {
@@ -613,7 +613,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                                 const dataUrl = reader.result;
                                 if (typeof dataUrl === 'string' && dataUrl.length <= 850000) {
                                     URL.revokeObjectURL(imageUrl);
-                                    resolve(dataUrl);
+                                    resolve({ dataUrl, blob, width, height });
                                     return;
                                 }
                                 if (targetIndex < targets.length - 1) {
@@ -722,12 +722,18 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                             }
                         }
                         setUploadStatus('正在壓縮圖片...');
-                        const imageDataUrl = await compressImageToDataUrl(imageFile);
+                        const { blob } = await compressImage(imageFile);
+                        setUploadStatus('正在上傳圖片到 Firebase Storage...');
+                        // ✨ 改用 Firebase Storage 儲存圖片，路徑：groups/{groupId}/expense_images/{expenseId}.jpg
+                        const imagePath = `groups/${collectionId}/expense_images/${docRef.id}.jpg`;
+                        const storageRef = firebase.storage().ref(imagePath);
+                        const uploadResult = await storageRef.put(blob, { contentType: 'image/jpeg' });
+                        const imageUrl = await uploadResult.ref.getDownloadURL();
                         imageFields = {
-                            imageUrl: '',
-                            imagePath: '',
+                            imageUrl,
+                            imagePath,
                             imageName: imageFile.name,
-                            imageDataUrl,
+                            imageDataUrl: '',
                         };
                         setUploadStatus('');
                     }

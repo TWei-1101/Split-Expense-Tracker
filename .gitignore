@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# 部署腳本（agent-only，用絕對路徑跑，不進版控）
+scripts/deploy-*.sh
