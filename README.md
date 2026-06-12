@@ -1,16 +1,61 @@
-# React + Vite
+# 分帳記帳簿 (Split-Expense-Tracker)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+輕鬆記錄團體支出、公平分配費用的分帳小工具。
 
-Currently, two official plugins are available:
+- Vite production：<https://expense.771101.xyz/>
+- CDN fallback：<https://expense.twei-ha.com/>
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## 技術棧
 
-## React Compiler
+- **前端框架**：React 19
+- **建置工具**：Vite 7
+- **後端 / 資料庫**：Firebase Firestore + Firebase Auth
+- **樣式**：Tailwind CSS + PostCSS
+- **圖示**：lucide-react
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## 開發
 
-## Expanding the ESLint configuration
+```bash
+npm install        # 安裝依賴
+npm run dev        # 啟動開發伺服器（http://localhost:5173）
+npm run build      # 產出 production build（dist/）
+npm run preview    # 本機預覽 build 結果
+npm run lint       # 跑 ESLint
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## 專案結構
+
+```
+.
+├── index.html          # Vite HTML entry
+├── src/
+│   ├── App.jsx         # thin re-export
+│   ├── App.real.jsx    # 完整分帳 App
+│   ├── main.jsx        # React 入口
+│   └── index.css
+├── public/             # 靜態資源
+├── package.json
+├── vite.config.js
+└── eslint.config.js
+```
+
+## 部署
+
+- Cloudflare Pages project：`split-expense-tracker`
+- Production branch：`docs/readme-rewrite`
+- Vite 線上網址：<https://expense.771101.xyz/>
+- CDN fallback：<https://expense.twei-ha.com/>
+- Firebase 專案：`splite-expense-tracker`
+
+## 狀態
+
+| 版本 | 狀態 | 部署 |
+|---|---|---|
+| Vite 版（`src/`） | 線上正式版 | ✅ 已部署 |
+| CDN 版 | fallback | ✅ 已保留 |
+
+Vite 版已移植 CDN 版完整邏輯，Firestore path 與 Firebase Auth model 沿用同一份資料模型。
+
+## 授權
+
+私人專案，未公開授權。
