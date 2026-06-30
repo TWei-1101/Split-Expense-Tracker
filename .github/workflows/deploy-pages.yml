@@ -35,10 +35,12 @@ jobs:
         run: npm run build
 
       - name: Deploy (main → prod, other → preview)
+        env:
+          CF_ACCOUNT_ID: db273682e79e3ece0509cac24fae67e1
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CF_TOKEN }}
-          accountId: ${{ vars.CF_ACCOUNT }}
+          accountId: ${{ env.CF_ACCOUNT_ID }}
           command: >-
             pages deploy dist
             --project-name ${{ github.ref_name == 'main' && 'split-expense-tracker' || 'split-expense-tracker-test' }}
