@@ -11,25 +11,5 @@ service cloud.firestore {
     match /{document=**} {
       allow read, write: if request.auth != null;
     }
-
-    // Telegram Mini App binding codes (one-time, short-lived, owned by user)
-    match /tgBindCodes/{code} {
-      // Anyone signed in can create their own pending code.
-      allow create: if request.auth != null
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.status == 'pending';
-      // Owner can read the status of their code.
-      allow read: if request.auth != null
-        && (resource == null || resource.data.uid == request.auth.uid);
-      // Updates only via Cloud Function (admin SDK bypasses rules)
-      allow update, delete: if false;
-    }
-
-    // Telegram ↔ Expense binding records: server-managed only
-    match /tgAccounts/{tgId} {
-      allow read: if request.auth != null
-        && (resource == null || resource.data.uid == request.auth.uid);
-      allow write: if false;
-    }
   }
 }

@@ -3,7 +3,6 @@ import firebase from 'firebase/compat/app';
 import 'firebase/compat/auth';
 import 'firebase/compat/firestore';
 import 'firebase/compat/storage';
-import { telegramSignInFlow } from './TelegramWrapper.jsx';
 import { detectTelegramMode } from './lib/tg-mode.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
@@ -1510,13 +1509,6 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
               const usersCollectionPath = `artifacts/${appId}/users`;
               const usersRef = _db.collection(usersCollectionPath);
 
-              // TG Mini App bootstrap: bind + auth (runs in parallel with onAuthStateChanged)
-              if (detectTelegramMode()) {
-                telegramSignInFlow(_auth).then((r) => {
-                  if (!r.ok) console.warn('[tg-signin-flow]', r.error || r.stage, r);
-                });
-              }
-
               const unsubscribe = _auth.onAuthStateChanged(async (user) => {
                 try {
                   if (user) {
@@ -1608,21 +1600,8 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                     setCurrentCollectionShortCode(targetShortCode);
                     
                   } else {
-                    // User is signed out.
-                    // TG Mini App mode: skip anon sign-in — the tg bootstrap will
-                    // sign in via custom token (or surface the not-linked banner).
-                    if (detectTelegramMode()) {
-                      // Give TG flow ~3s to complete before falling back.
-                      await new Promise((r) => setTimeout(r, 3000));
-                      if (_auth.currentUser) return; // TG flow succeeded
-                      // TG flow didn't yield a user → either needLink or error.
-                      // Keep user signed-out so the app shows the unlinked banner
-                      // (rendered by TelegramWrapper) instead of an anon UI.
-                      setAuthReady(true);
-                      setUserId(null);
-                      return;
-                    }
-                    // Browser mode: sign in anonymously for guest view.
+                    // User is signed out. Sign in anonymously for guest view.
+                    // (TG Mini App 內跟瀏覽器一樣匿名看、登入用 email/password)
                     const anonUserCredential = await _auth.signInAnonymously();
                     const anonUser = anonUserCredential.user;
 
