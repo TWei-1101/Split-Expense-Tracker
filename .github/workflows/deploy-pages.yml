@@ -1,0 +1,49 @@
+name: Deploy to Cloudflare Pages
+
+on:
+  push:
+    branches:
+      - main       # → production (split-expense-tracker / expense.771101.xyz)
+      - dev        # → preview (split-expense-tracker-test / expense-test.771101.xyz)
+  workflow_dispatch:
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+    env:
+      CF_ACCOUNT: ${{ vars.CF_ACCOUNT }}
+      CF_TOKEN: ${{ secrets.CF_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install (include devDependencies so vite is present)
+        run: npm install --include=dev --no-audit --no-fund
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy (main → prod, other → preview)
+        env:
+          CF_ACCOUNT_ID: db273682e79e3ece0509cac24fae67e1
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_TOKEN }}
+          accountId: ${{ env.CF_ACCOUNT_ID }}
+          command: >-
+            pages deploy dist
+            --project-name ${{ github.ref_name == 'main' && 'split-expense-tracker' || 'split-expense-tracker-test' }}
+            --branch ${{ github.ref_name }}
+            --commit-dirty=true
+            --commit-message "${{ github.event.head_commit.message }} [${{ github.sha }}]"
