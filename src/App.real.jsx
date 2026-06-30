@@ -1,8 +1,34 @@
 import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
-import firebase from 'firebase/compat/app';
-import 'firebase/compat/auth';
-import 'firebase/compat/firestore';
-import 'firebase/compat/storage';
+import { initializeApp, getApp, getApps } from 'firebase/app';
+import {
+  getAuth,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signInAnonymously,
+  signOut,
+  updateProfile,
+} from 'firebase/auth';
+import {
+  getFirestore,
+  collection,
+  doc,
+  addDoc,
+  setDoc,
+  getDoc,
+  getDocs,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
+  query,
+  where,
+  limit,
+  writeBatch,
+  runTransaction,
+  serverTimestamp,
+  arrayUnion,
+  arrayRemove,
+} from 'firebase/firestore';
 import { detectTelegramMode } from './lib/tg-mode.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
@@ -19,8 +45,24 @@ const firebaseConfig = {
   measurementId: "G-FVS0WSGZD9",
 };
 
-// alias for serverTimestamp（CDN 程式碼裡大量使用）
-const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
+let _firebaseApp = null;
+function getFirebaseApp() {
+    if (!_firebaseApp) {
+        _firebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
+    }
+    return _firebaseApp;
+}
+
+let _storagePromise = null;
+async function _getStorage() {
+    if (!_storagePromise) {
+        _storagePromise = (async () => {
+            const { getStorage, ref: storageRef, uploadBytes, getDownloadURL, deleteObject } = await import('firebase/storage');
+            return { getStorage, storageRef, uploadBytes, getDownloadURL, deleteObject };
+        })();
+    }
+    return _storagePromise;
+}
 
         
         
@@ -240,7 +282,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
             if (!db || !uid || !displayName) return;
             const profileDocPath = `artifacts/${appId}/public_profiles/${uid}`;
             try {
-                await db.doc(profileDocPath).set({ 
+                await setDoc(doc(db, profileDocPath), {
                     displayName: displayName,
                     email: email,
                     uid: uid,
@@ -314,11 +356,11 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                     let finalDisplayName = nickname.trim();
 
                     if (isLogin) {
-                        userCredential = await auth.signInWithEmailAndPassword(email, password);
+                        userCredential = await signInWithEmailAndPassword(auth, email, password);
                         finalDisplayName = userCredential.user.displayName || email;
                     } else {
-                        userCredential = await auth.createUserWithEmailAndPassword(email, password);
-                        await userCredential.user.updateProfile({
+                        userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                        await updateProfile(userCredential.user, {
                             displayName: finalDisplayName
                         });
                     }
@@ -698,8 +740,8 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                 try {
                     const collectionPath = getGroupExpensesPath(collectionId);
                     const docRef = isEditing
-                        ? db.doc(`${collectionPath}/${expenseToEdit.id}`)
-                        : db.collection(collectionPath).doc();
+                        ? doc(db, `${collectionPath}/${expenseToEdit.id}`)
+                        : doc(collection(db, collectionPath));
 
                     let imageFields = {
                         imageUrl: newExpense.imageUrl || '',
@@ -711,7 +753,8 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                     if (removeExistingImage && (newExpense.imagePath || newExpense.imageUrl || newExpense.imageDataUrl)) {
                         if (newExpense.imagePath) {
                             try {
-                                await firebase.storage().ref(newExpense.imagePath).delete();
+                                const { getStorage, storageRef, deleteObject } = await _getStorage();
+                                await deleteObject(storageRef(getStorage(getFirebaseApp()), newExpense.imagePath));
                             } catch (imageDeleteError) {
                                 console.warn('Delete old expense image failed:', imageDeleteError);
                             }
@@ -722,7 +765,8 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                     if (imageFile) {
                         if (newExpense.imagePath) {
                             try {
-                                await firebase.storage().ref(newExpense.imagePath).delete();
+                                const { getStorage, storageRef, deleteObject } = await _getStorage();
+                                await deleteObject(storageRef(getStorage(getFirebaseApp()), newExpense.imagePath));
                             } catch (imageDeleteError) {
                                 console.warn('Delete replaced expense image failed:', imageDeleteError);
                             }
@@ -732,9 +776,10 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                         setUploadStatus('正在上傳圖片到 Firebase Storage...');
                         // ✨ 改用 Firebase Storage 儲存圖片，路徑：groups/{groupId}/expense_images/{expenseId}.jpg
                         const imagePath = `groups/${collectionId}/expense_images/${docRef.id}.jpg`;
-                        const storageRef = firebase.storage().ref(imagePath);
-                        const uploadResult = await storageRef.put(blob, { contentType: 'image/jpeg' });
-                        const imageUrl = await uploadResult.ref.getDownloadURL();
+                        const { getStorage, storageRef, uploadBytes, getDownloadURL } = await _getStorage();
+                        const sRef = storageRef(getStorage(getFirebaseApp()), imagePath);
+                        const uploadResult = await uploadBytes(sRef, blob, { contentType: 'image/jpeg' });
+                        const imageUrl = await getDownloadURL(uploadResult.ref);
                         imageFields = {
                             imageUrl,
                             imagePath,
@@ -761,9 +806,9 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                     };
 
                     if (isEditing) {
-                        await docRef.update(expenseToSave);
+                        await updateDoc(docRef, expenseToSave);
                     } else {
-                        await docRef.set(expenseToSave);
+                        await setDoc(docRef, expenseToSave);
                     }
 
                     onClose();
@@ -1446,11 +1491,11 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
 		    if (!_db || !uid) return null;
 
 		    const groupId = uid; // 先用 uid 當 groupId
-		    const groupRef = _db.doc(`artifacts/${appId}/groups/${groupId}`);
-		    const snap = await groupRef.get();
+		    const groupRef = doc(_db, `artifacts/${appId}/groups/${groupId}`);
+		    const snap = await getDoc(groupRef);
 
 		    if (!snap.exists) {
-			  await groupRef.set({
+			  await setDoc(groupRef, {
 			    owner: uid,
 			    members: [uid],
 			    createdAt: serverTimestamp(),
@@ -1499,17 +1544,17 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
             }
 
             try {
-              const app = firebase.initializeApp(firebaseConfig);
-              const _auth = app.auth();
-              const _db = app.firestore();
+              const app = getFirebaseApp();
+              const _auth = getAuth(app);
+              const _db = getFirestore(app);
 
               setDb(_db);
               setAuth(_auth);
 
               const usersCollectionPath = `artifacts/${appId}/users`;
-              const usersRef = _db.collection(usersCollectionPath);
+              const usersRef = collection(_db, usersCollectionPath);
 
-              const unsubscribe = _auth.onAuthStateChanged(async (user) => {
+              const unsubscribe = onAuthStateChanged(_auth, async (user) => {
                 try {
                   if (user) {
                     // Persistent user (email/password) or a converted anonymous user
@@ -1520,8 +1565,8 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                     // 1. 先幫登入者自己建立 / 補上短代碼
                     let myShortCode = null;
                     try {
-                      const myDocRef = usersRef.doc(user.uid);
-                      const mySnap = await myDocRef.get();
+                      const myDocRef = doc(usersRef, user.uid);
+                      const mySnap = await getDoc(myDocRef);
                       if (mySnap.exists) {
                         const data = mySnap.data() || {};
                         myShortCode = data.shortCode || null;
@@ -1530,7 +1575,8 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                       // NEW: 只有非匿名用戶才生成短代碼
                       if (!myShortCode && !isAnon) { 
                         myShortCode = generateShortCode();
-                        await myDocRef.set(
+                        await setDoc(
+                          myDocRef,
                           {
                             shortCode: myShortCode,
                             createdAt: serverTimestamp(),
@@ -1565,10 +1611,8 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                     if (shortCodeFromPath) {
                       try {
                         // 用短代碼查出擁有者的 userId
-                        const snap = await usersRef
-                          .where('shortCode', '==', shortCodeFromPath)
-                          .limit(1)
-                          .get();
+                        const q = query(usersRef, where('shortCode', '==', shortCodeFromPath), limit(1));
+                        const snap = await getDocs(q);
                         if (!snap.empty) {
                           const doc = snap.docs[0];
                           targetCollectionId = doc.id;
@@ -1602,7 +1646,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                   } else {
                     // User is signed out. Sign in anonymously for guest view.
                     // (TG Mini App 內跟瀏覽器一樣匿名看、登入用 email/password)
-                    const anonUserCredential = await _auth.signInAnonymously();
+                    const anonUserCredential = await signInAnonymously(_auth);
                     const anonUser = anonUserCredential.user;
 
                     setUserId(anonUser.uid);
@@ -1627,10 +1671,8 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
 
                     if (shortCodeFromPath) {
                         try {
-                            const snap = await usersRef
-                                .where('shortCode', '==', shortCodeFromPath)
-                                .limit(1)
-                                .get();
+                            const q = query(usersRef, where('shortCode', '==', shortCodeFromPath), limit(1));
+                            const snap = await getDocs(q);
                             if (!snap.empty) {
                                 const doc = snap.docs[0];
                                 targetCollectionId = doc.id;
@@ -1673,9 +1715,10 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
 		useEffect(() => {
 		  if (!db || !currentCollectionId) return;
 
-		  const groupDocRef = db.doc(`artifacts/${appId}/groups/${currentCollectionId}`);
+		  const groupDocRef = doc(db, `artifacts/${appId}/groups/${currentCollectionId}`);
 
-		  const unsub = groupDocRef.onSnapshot(
+		  const unsub = onSnapshot(
+			groupDocRef,
 			(snap) => {
 			  if (snap.exists) {
 				const data = snap.data();
@@ -1735,8 +1778,9 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
 			setIsLoading(true);
 			setError(null);
 
-			const groupRef = db.doc(`artifacts/${appId}/groups/${currentCollectionId}`);
-			await groupRef.set(
+			const groupRef = doc(db, `artifacts/${appId}/groups/${currentCollectionId}`);
+			await setDoc(
+			  groupRef,
 			  {
 				name: trimmed,
 			  },
@@ -1759,9 +1803,9 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
             if (!authReady || !db) return;
             
             const profilesCollectionPath = `artifacts/${appId}/public_profiles`;
-            const profilesRef = db.collection(profilesCollectionPath);
+            const profilesRef = collection(db, profilesCollectionPath);
 
-            const unsubscribeProfiles = profilesRef.onSnapshot((snapshot) => {
+            const unsubscribeProfiles = onSnapshot(profilesRef, (snapshot) => {
                 const profiles = {};
                 snapshot.forEach(docSnap => {
 					const data = docSnap.data() || {};
@@ -1810,7 +1854,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
 			  const onConfirm = async () => {
 				closeConfirmModal();
 				try {
-				  await auth.signOut();
+				  await signOut(auth);
 				  // Note: signOut will trigger onAuthStateChanged to run the anonymous login fallback
 				  setExpenses([]);
 				  setCustomMembers([]);
@@ -1841,9 +1885,9 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
             if (!authReady || !db || !currentCollectionId || !userId) return; 
 
             const expensesCollectionPath = getGroupExpensesPath(currentCollectionId);
-			const expensesRef = db.collection(expensesCollectionPath);
+			const expensesRef = collection(db, expensesCollectionPath);
 
-            const unsubscribeExpenses = expensesRef.onSnapshot((snapshot) => {
+            const unsubscribeExpenses = onSnapshot(expensesRef, (snapshot) => {
               const fetchedExpenses = snapshot.docs.map(docSnap => {
                 const data = docSnap.data();
                 const timestamp = data.timestamp ? data.timestamp.toDate() : null; 
@@ -1876,9 +1920,9 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
             });
 
             const membersDocPath = getGroupMembersDocPath(currentCollectionId);
-			const membersDocRef = db.doc(membersDocPath);
+			const membersDocRef = doc(db, membersDocPath);
 
-            const unsubscribeMembers = membersDocRef.onSnapshot((docSnap) => {
+            const unsubscribeMembers = onSnapshot(membersDocRef, (docSnap) => {
                 if (docSnap.exists) {
                     const data = docSnap.data();
                     const list = Array.isArray(data.list) ? data.list : [];
@@ -2027,10 +2071,11 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                 setError(null);
                 try {
                     const docPath = `${getGroupExpensesPath(currentCollectionId)}/${expenseId}`;
-                    await db.doc(docPath).delete();
+                    await deleteDoc(doc(db, docPath));
                     if (expense?.imagePath) {
                         try {
-                            await firebase.storage().ref(expense.imagePath).delete();
+                            const { getStorage, storageRef, deleteObject } = await _getStorage();
+                            await deleteObject(storageRef(getStorage(getFirebaseApp()), expense.imagePath));
                         } catch (imageDeleteError) {
                             console.warn('Delete expense image failed:', imageDeleteError);
                         }
@@ -2059,19 +2104,23 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                   setError(null);
                   try {
                       const expensesCollectionPath = getGroupExpensesPath(currentCollectionId);
-                      const snapshot = await db.collection(expensesCollectionPath).get();
+                      const snapshot = await getDocs(collection(db, expensesCollectionPath));
 
-                      const batch = db.batch();
+                      const batch = writeBatch(db);
                       const imagePaths = [];
-                      snapshot.docs.forEach(doc => {
-                          const data = doc.data() || {};
+                      snapshot.docs.forEach(docSnap => {
+                          const data = docSnap.data() || {};
                           if (data.imagePath) imagePaths.push(data.imagePath);
-                          batch.delete(doc.ref);
+                          batch.delete(docSnap.ref);
                       });
                       await batch.commit();
-                      await Promise.allSettled(
-                          imagePaths.map(path => firebase.storage().ref(path).delete())
-                      );
+                      if (imagePaths.length > 0) {
+                          const { getStorage, storageRef, deleteObject } = await _getStorage();
+                          const storage = getStorage(getFirebaseApp());
+                          await Promise.allSettled(
+                              imagePaths.map(path => deleteObject(storageRef(storage, path)))
+                          );
+                      }
                   } catch (e) {
                       console.error("Error clearing all documents: ", e);
                       setError(`清除所有資料失敗: ${e.message}`);
@@ -2096,7 +2145,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
             setError(null);
             try {
                 const docPath = getGroupMembersDocPath(currentCollectionId);
-                const membersDocRef = db.doc(docPath);
+                const membersDocRef = doc(db, docPath);
 
                 const sanitizedList = Array.from(new Set(
                     newMemberList.filter(name => name.trim() !== '' && name !== currentCollectionId)
@@ -2110,7 +2159,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                     }
                 });
 
-                await membersDocRef.set({ list: sanitizedList, defaultShares: currentShares }, { merge: false });
+                await setDoc(membersDocRef, { list: sanitizedList, defaultShares: currentShares }, { merge: false });
             } catch (e) {
                 console.error("Error saving members:", e);
                 setError(`儲存成員清單失敗: ${e.message}`);
@@ -2132,8 +2181,9 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
 
 				try {
 				  // 1) 用 email 找 public_profiles
-				  const profilesRef = db.collection(`artifacts/${appId}/public_profiles`);
-				  const snap = await profilesRef.where('email', '==', emailToInvite).limit(1).get();
+				  const profilesRef = collection(db, `artifacts/${appId}/public_profiles`);
+				  const q = query(profilesRef, where('email', '==', emailToInvite), limit(1));
+				  const snap = await getDocs(q);
 
 				  if (snap.empty) {
 					setModalMessage('❌ 找不到使用這個 Email 註冊的帳號，請對方先在這個系統登入一次。'); // 使用 Modal Message
@@ -2157,9 +2207,9 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
 				  }
 
 				  // 3) 把 uid 加進 group.members
-				  const groupRef = db.doc(`artifacts/${appId}/groups/${currentCollectionId}`);
-				  await groupRef.update({
-					members: firebase.firestore.FieldValue.arrayUnion(invitedUid),
+				  const groupRef = doc(db, `artifacts/${appId}/groups/${currentCollectionId}`);
+				  await updateDoc(groupRef, {
+					members: arrayUnion(invitedUid),
 				  });
 
 				  // 4) 把他也加入「分帳成員名單」（settings/members.list）
@@ -2221,9 +2271,9 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
 					setError(null);
 
 					// 1) 從 group.members 移除
-					const groupRef = db.doc(`artifacts/${appId}/groups/${currentCollectionId}`);
-					await groupRef.update({
-					  members: firebase.firestore.FieldValue.arrayRemove(memberUid),
+					const groupRef = doc(db, `artifacts/${appId}/groups/${currentCollectionId}`);
+					await updateDoc(groupRef, {
+					  members: arrayRemove(memberUid),
 					});
 
 					// 2) 從分帳成員列表移除
@@ -2288,7 +2338,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
             setError(null);
             try {
                 const docPath = getGroupMembersDocPath(currentCollectionId);
-                const membersDocRef = db.doc(docPath);
+                const membersDocRef = doc(db, docPath);
 
                 const sharesToSave = {};
                 members.forEach(name => {
@@ -2300,7 +2350,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                     }
                 });
                 
-                await membersDocRef.set({ list: customMembers, defaultShares: sharesToSave }, { merge: false });
+                await setDoc(membersDocRef, { list: customMembers, defaultShares: sharesToSave }, { merge: false });
                 setIsMemberModalOpen(false);
                 if (setModalMessage) setModalMessage(`✅ 預設份數已儲存！`);
             } catch (e) {
@@ -2325,8 +2375,8 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
 
 			  // ✅ 改成直接讀取 group doc，避免 state 還沒更新造成誤判
 			  try {
-				const groupRef = db.doc(`artifacts/${appId}/groups/${currentCollectionId}`);
-				const groupSnap = await groupRef.get();
+				const groupRef = doc(db, `artifacts/${appId}/groups/${currentCollectionId}`);
+				const groupSnap = await getDoc(groupRef);
 				const data = groupSnap.data() || {};
 				const membersFromDb = Array.isArray(data.members) ? data.members : [];
 				const ownerFromDb = data.owner || null;
@@ -2349,9 +2399,9 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
 				try {
 				  // --- 1) 更新 settings/members 文檔 (Transaction)
 				  const membersDocPath = getGroupMembersDocPath(currentCollectionId);
-				  const membersDocRef = db.doc(membersDocPath);
+				  const membersDocRef = doc(db, membersDocPath);
 
-				  await db.runTransaction(async (transaction) => {
+				  await runTransaction(db, async (transaction) => {
 					const docSnap = await transaction.get(membersDocRef);
 					const data = docSnap.data() || {};
 					let list = Array.isArray(data.list) ? data.list : [];
@@ -2383,9 +2433,9 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
 
 				  // --- 2) 批量更新 expenses (Batch)
 				  const expensesCollectionPath = getGroupExpensesPath(currentCollectionId);
-				  const expensesSnapshot = await db.collection(expensesCollectionPath).get();
+				  const expensesSnapshot = await getDocs(collection(db, expensesCollectionPath));
 
-				  let batch = db.batch();
+				  let batch = writeBatch(db);
 				  let updateCount = 0;
 				  let batchOpCount = 0;
 
@@ -2417,7 +2467,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
 
 					  if (batchOpCount >= 400) {
 						await batch.commit();
-						batch = db.batch();
+						batch = writeBatch(db);
 						batchOpCount = 0;
 					  }
 					}
@@ -2480,7 +2530,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                       const collectionPath = getGroupExpensesPath(currentCollectionId);
                       
                       // 使用新欄位格式：originalAmount / currency / amountInTWD
-                      await db.collection(collectionPath).add({
+                      await addDoc(collection(db, collectionPath), {
                           description: `[結清] ${getDisplayName(debtorId)} 歸還給 ${getDisplayName(creditorId)} 欠款`,
                           originalAmount: roundedAmount,
                           currency: DEFAULT_CURRENCY,
@@ -2680,9 +2730,9 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
 				  setError(null);
 
 				  const usersCollectionPath = `artifacts/${appId}/users`;
-				  const usersRef = db.collection(usersCollectionPath);
-				  const myDocRef = usersRef.doc(userId);
-				  const mySnap = await myDocRef.get();
+				  const usersRef = collection(db, usersCollectionPath);
+				  const myDocRef = doc(usersRef, userId);
+				  const mySnap = await getDoc(myDocRef);
 
 				  let myShortCode = null;
 
@@ -2694,7 +2744,8 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
 				  // 如果還沒有 shortCode，就幫自己產生一個
 				  if (!myShortCode) {
 					myShortCode = generateShortCode();
-					await myDocRef.set(
+					await setDoc(
+					  myDocRef,
 					  {
 						shortCode: myShortCode,
 						createdAt: serverTimestamp(),
