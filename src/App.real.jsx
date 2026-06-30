@@ -3,6 +3,7 @@ import firebase from 'firebase/compat/app';
 import 'firebase/compat/auth';
 import 'firebase/compat/firestore';
 import 'firebase/compat/storage';
+import { detectTelegramMode } from './lib/tg-mode.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
@@ -1600,6 +1601,7 @@ const serverTimestamp = firebase.firestore.FieldValue.serverTimestamp;
                     
                   } else {
                     // User is signed out. Sign in anonymously for guest view.
+                    // (TG Mini App 內跟瀏覽器一樣匿名看、登入用 email/password)
                     const anonUserCredential = await _auth.signInAnonymously();
                     const anonUser = anonUserCredential.user;
 

@@ -25,3 +25,7 @@ dist-ssr
 
 # 部署腳本（agent-only，用絕對路徑跑，不進版控）
 scripts/deploy-*.sh
+
+# Cloudflare Pages deployment staging area (regenerated on deploy)
+_deploy/
+.wrangler/
