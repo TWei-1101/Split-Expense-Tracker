@@ -1,33 +1,27 @@
 // TgLinkPanel - floating UI for browser-side Telegram linking.
 //
-// Shows only when:
-//   - In browser (NOT in TG mode)
-//   - User is signed in
-//   - No TG link exists yet for this user
-//
-// Flow:
+// Flow (server-mediated, no Firestore rules needed):
 //   1. User clicks the floating pill.
-//   2. App generates a random code and writes it to firestore (rules-gated by auth).
+//   2. POST /api/tg-create-bind-code (Authorization: Bearer <Firebase idToken>)
+//      returns { code, deepLink, expiresAt }.
 //   3. Modal shows the code + a deep link to open @TWeiHABot?startapp=bind_<code>.
-//   4. User taps the deep link → TG opens bot + Mini App with start_param=bind_<code>.
+//   4. User taps the deep link → TG opens bot + Mini App with
+//      start_param=bind_<code>.
 //   5. Mini App (TelegramWrapper) automatically calls /api/tg-bind on mount.
-//   6. User returns to browser; status shows "已連結".
+//   6. Browser polls GET /api/tg-check-bind-code?code=<code> until status='linked'.
 
 import { useEffect, useState, useCallback } from 'react';
 import firebase from 'firebase/compat/app';
 import 'firebase/compat/firestore';
 import 'firebase/compat/auth';
-import { detectTelegramMode, telegramClose } from './lib/tg-mode';
+import { detectTelegramMode } from './lib/tg-mode';
 
 const TG_BOT_USERNAME = 'TWeiHABot';
 
-function genCode(len = 8) {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/I/1
-  let s = '';
-  const buf = new Uint8Array(len);
-  crypto.getRandomValues(buf);
-  for (let i = 0; i < len; i++) s += chars[buf[i] % chars.length];
-  return s;
+async function getIdToken(forceRefresh = false) {
+  const user = firebase.auth().currentUser;
+  if (!user) return null;
+  return user.getIdToken(forceRefresh);
 }
 
 export default function TgLinkPanel() {
@@ -35,60 +29,77 @@ export default function TgLinkPanel() {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState('idle'); // idle | creating | waiting | linked | error
   const [code, setCode] = useState('');
+  const [deepLink, setDeepLink] = useState('');
   const [error, setError] = useState('');
+  const [authState, setAuthState] = useState('unknown'); // unknown | anonymous | signed-in
 
   useEffect(() => {
     setTgMode(!!detectTelegramMode());
+
+    const unsub = firebase.auth().onAuthStateChanged((u) => {
+      if (!u) setAuthState('signed-out');
+      else if (u.isAnonymous) setAuthState('anonymous');
+      else setAuthState('signed-in');
+    });
+    return () => unsub();
   }, []);
 
   const startBindFlow = useCallback(async () => {
     setError('');
     setStep('creating');
-
-    const _auth = firebase.auth();
-    const user = _auth?.currentUser;
-    if (!user) {
-      setError('請先登入 Expense 帳號（瀏覽器模式）');
-      setStep('error');
-      return;
-    }
-
-    const newCode = genCode(8);
     try {
-      const db = firebase.firestore();
-      const path = `tgBindCodes/${newCode}`;
-      await db.doc(path).set({
-        code: newCode,
-        uid: user.uid,
-        status: 'pending',
-        createdAt: new Date().toISOString(),
-        expiresAt: Date.now() + 10 * 60 * 1000,
+      const user = firebase.auth().currentUser;
+      if (!user || user.isAnonymous) {
+        setError('請先登入 Expense 帳號（瀏覽器模式）');
+        setStep('error');
+        return;
+      }
+      const idToken = await getIdToken();
+      if (!idToken) {
+        setError('無法取得登入身份 token，請重新登入');
+        setStep('error');
+        return;
+      }
+      const r = await fetch('/api/tg-create-bind-code', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({}),
       });
-      setCode(newCode);
+      const data = await r.json();
+      if (!data.ok) throw new Error(data.error || 'unknown');
+      setCode(data.code);
+      setDeepLink(data.deepLink);
       setStep('waiting');
     } catch (e) {
-      console.error('[bind] failed to create code:', e);
+      console.error('[bind] failed:', e);
       setError('建立連結碼失敗：' + (e?.message || String(e)));
       setStep('error');
     }
   }, []);
 
-  // Poll binding status when in 'waiting' step
+  // Poll when in 'waiting' step
   useEffect(() => {
-    if (step !== 'waiting' || !code) return;
+    if (step !== 'waiting' || !code) return undefined;
     let cancelled = false;
     let timer = null;
     const poll = async () => {
       if (cancelled) return;
       try {
-        const database = firebase.firestore();
-        const snap = await database.doc(`tgBindCodes/${code}`).get();
-        if (snap.exists && snap.data()?.status === 'linked') {
+        const idToken = await getIdToken();
+        if (!idToken) return;
+        const r = await fetch(`/api/tg-check-bind-code?code=${encodeURIComponent(code)}`, {
+          headers: { 'Authorization': `Bearer ${idToken}` },
+        });
+        const data = await r.json();
+        if (data.ok && data.status === 'linked') {
           setStep('linked');
           return;
         }
       } catch (e) {
-        // ignore polling errors
+        // ignore; will retry
       }
       timer = setTimeout(poll, 2000);
     };
@@ -99,7 +110,9 @@ export default function TgLinkPanel() {
     };
   }, [step, code]);
 
+  // Don't render the floating button at all if in TG or browser signed-out
   if (tgMode) return null;
+  if (authState === 'signed-out' || authState === 'anonymous') return null;
 
   return (
     <>
@@ -179,7 +192,7 @@ export default function TgLinkPanel() {
               </>
             )}
 
-            {(step === 'creating') && (
+            {step === 'creating' && (
               <p style={{ fontSize: 14, color: '#334155' }}>建立連結碼中…</p>
             )}
 
@@ -200,7 +213,7 @@ export default function TgLinkPanel() {
                   {code}
                 </div>
                 <a
-                  href={`https://t.me/${TG_BOT_USERNAME}?startapp=bind_${code}`}
+                  href={deepLink}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={() => setOpen(false)}
@@ -212,11 +225,11 @@ export default function TgLinkPanel() {
                     fontWeight: 600, fontSize: 15,
                   }}
                 >
-                  🛫 在 Telegram 開啟 @${TG_BOT_USERNAME}
+                  🛫 從 Telegram 開啟 @{TG_BOT_USERNAME}
                 </a>
                 <p style={{ fontSize: 12, color: '#64748b', marginTop: 10, textAlign: 'center' }}>
                   點上面按鈕後會自動打開 Telegram、並打開分帳記帳簿 Mini App。<br/>
-                  完成後回到這裡會自動顯示「已連結」。
+                  完成後回來這裡會自動顯示「已連結」。
                 </p>
               </>
             )}
@@ -227,10 +240,10 @@ export default function TgLinkPanel() {
                   ✅ 已成功連結 Telegram！
                 </p>
                 <p style={{ fontSize: 13, color: '#475569', lineHeight: 1.5 }}>
-                  之後從 @${TG_BOT_USERNAME} 打開分帳記帳簿，會自動登入你目前的 Expense 帳號。
+                  之後從 @{TG_BOT_USERNAME} 打開分帳記帳簿，會自動登入你目前的 Expense 帳號。
                 </p>
                 <button
-                  onClick={() => { setOpen(false); setStep('idle'); setCode(''); }}
+                  onClick={() => { setOpen(false); setStep('idle'); setCode(''); setDeepLink(''); }}
                   style={{
                     width: '100%', padding: '12px 16px',
                     background: '#10b981', color: 'white',
