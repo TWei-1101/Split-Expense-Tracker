@@ -3289,11 +3289,38 @@ async function _getStorage() {
                     const searchPerShare = searchGroupShares > 0 ? searchTotal / searchGroupShares : 0;
                     // 住宿關鍵字 → 「每晚每人」, 其他 → 「每天每人」
                     const isAccommodation = /住宿/.test(searchKeyword);
-                    // 住宿：每秒一起 expense 算一晚（用搜尋結果筆數）
-                    // 其他：依 independent 日期數（一天可能多餐）
-                    const dayCount = isAccommodation
-                        ? sortedExpenses.length
-                        : distinctDates.size;
+                    // 住宿：parse description 內 M/D 或 M/D-M/D 字串（例「札幌住宿9/17-9/20」= 4 晚）
+                    // 其他：依 independent 日期數
+                    let dayCount;
+                    if (isAccommodation) {
+                        const dayStrings = new Set();
+                        const dateRangeRegex = /(\d{1,2})\/(\d{1,2})(?:\s*[-至~]\s*(\d{1,2})\/(\d{1,2}))?/g;
+                        let pm;
+                        for (const exp of sortedExpenses) {
+                            const desc = (exp.description || '');
+                            dateRangeRegex.lastIndex = 0;
+                            while ((pm = dateRangeRegex.exec(desc)) !== null) {
+                                const sm = parseInt(pm[1], 10);
+                                const sd = parseInt(pm[2], 10);
+                                if (pm[3] && pm[4]) {
+                                    const em = parseInt(pm[3], 10);
+                                    const ed = parseInt(pm[4], 10);
+                                    if (sm === em && ed >= sd) {
+                                        for (let d = sd; d <= ed; d++) dayStrings.add(`${sm}/${d}`);
+                                    } else {
+                                        dayStrings.add(`${sm}/${sd}`);
+                                        if (em && ed) dayStrings.add(`${em}/${ed}`);
+                                    }
+                                } else {
+                                    dayStrings.add(`${sm}/${sd}`);
+                                }
+                            }
+                        }
+                        // fallback: 如果完全沒 parse 到日期字串、還是依筆數
+                        dayCount = dayStrings.size > 0 ? dayStrings.size : sortedExpenses.length;
+                    } else {
+                        dayCount = distinctDates.size;
+                    }
                     // 每晚/每人 = 每份 / 天數（每份已經除過 groupShares，這裡不再重複）
                     // 例：住宿 9 筆 groupShares=3 → 17336 / 9 = 1926
                     const searchPerDay = searchGroupShares > 0 && dayCount > 0
