@@ -3261,26 +3261,25 @@ async function _getStorage() {
                     </p>
                 )}
 
-                {/* ✨ NEW: 搜尋結果摘要 - 總金額 + 每份平均（用總份數當分母，不是人數） */}
+                {/* ✨ NEW: 搜尋結果摘要 - 總金額 + 每份平均（用組內成員份額加總當分母，每個成員只計一次） */}
                 {searchKeyword.trim() !== '' && sortedExpenses.length > 0 && (() => {
-                    let searchTotalShares = 0;
-                    const searchPerMemberTotals = {};
+                    // 收集每個 user 第一次出現的 share value（dedup：廷瑋=2、郁傑=1 → 3，不乘上 7 筆）
+                    const memberShareMap = new Map();
                     for (const exp of sortedExpenses) {
                         const shares = exp.shares || {};
-                        const totalShares = Object.values(shares).reduce((s, n) => s + n, 0);
-                        if (totalShares <= 0) continue;
-                        const amountTwd = exp.amountInTWD || 0;
-                        if (amountTwd <= 0) continue;
-                        searchTotalShares += totalShares;
                         for (const [uid, share] of Object.entries(shares)) {
-                            if (share <= 0) continue;
-                            searchPerMemberTotals[uid] = (searchPerMemberTotals[uid] || 0) + amountTwd * (share / totalShares);
+                            if (share > 0 && !memberShareMap.has(uid)) {
+                                memberShareMap.set(uid, share);
+                            }
                         }
                     }
+                    const memberShareValues = Array.from(memberShareMap.values());
+                    const searchMemberCount = memberShareMap.size;
+                    // 分母 = Σ(每位成員份額)，每人只算一次（不會乘上 expense 數量）
+                    const searchGroupShares = memberShareValues.reduce((s, n) => s + n, 0);
                     const searchTotal = sortedExpenses.reduce((s, e) => s + (e.amountInTWD || 0), 0);
-                    const searchMemberCount = Object.keys(searchPerMemberTotals).length;
-                    // 每份 = 總金額 / 總份數（不論實際人數，1 個人也可以有很多份）
-                    const searchPerShare = searchTotalShares > 0 ? searchTotal / searchTotalShares : 0;
+                    // 總金額 / 組內份額加總 = 每份平均（例如 52008 / 3 = 17336）
+                    const searchPerShare = searchGroupShares > 0 ? searchTotal / searchGroupShares : 0;
                     return (
                         <div className="mb-4 p-3 sm:p-4 bg-gradient-to-r from-primaryColor-50 via-white to-white border border-primaryColor-200 rounded-xl shadow-sm">
                             <div className="flex items-center mb-2">
@@ -3293,13 +3292,13 @@ async function _getStorage() {
                                 <p className="text-sm text-gray-700">
                                     總計 <span className="text-xl font-bold text-primaryColor-700 ml-1">TWD {searchTotal.toFixed(0)}</span>
                                 </p>
-                                {searchTotalShares > 0 ? (
+                                {searchGroupShares > 0 ? (
                                     <p className="text-sm text-gray-700">
                                         ・每份 <span className="text-lg font-bold text-primaryColor-600 ml-1">TWD {searchPerShare.toFixed(0)}</span>
-                                        <span className="text-xs text-gray-500 ml-1">（總 {searchTotalShares.toFixed(1)} 份{searchMemberCount > 1 ? ` / ${searchMemberCount} 人` : ''}）</span>
+                                        <span className="text-xs text-gray-500 ml-1">（成員份額加總 {searchGroupShares.toFixed(1)} 份 / {searchMemberCount} 人）</span>
                                     </p>
                                 ) : (
-                                    <p className="text-xs text-gray-500">・搜尋結果內無有效份數</p>
+                                    <p className="text-xs text-gray-500">・搜尋結果內無有效份額</p>
                                 )}
                             </div>
                         </div>
