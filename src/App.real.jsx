@@ -3261,8 +3261,9 @@ async function _getStorage() {
                     </p>
                 )}
 
-                {/* ✨ NEW: 搜尋結果摘要 - 總金額 + 每人分攤（與「每人花費金額」算法一致，但限定在搜尋結果內） */}
+                {/* ✨ NEW: 搜尋結果摘要 - 總金額 + 每份平均（用總份數當分母，不是人數） */}
                 {searchKeyword.trim() !== '' && sortedExpenses.length > 0 && (() => {
+                    let searchTotalShares = 0;
                     const searchPerMemberTotals = {};
                     for (const exp of sortedExpenses) {
                         const shares = exp.shares || {};
@@ -3270,6 +3271,7 @@ async function _getStorage() {
                         if (totalShares <= 0) continue;
                         const amountTwd = exp.amountInTWD || 0;
                         if (amountTwd <= 0) continue;
+                        searchTotalShares += totalShares;
                         for (const [uid, share] of Object.entries(shares)) {
                             if (share <= 0) continue;
                             searchPerMemberTotals[uid] = (searchPerMemberTotals[uid] || 0) + amountTwd * (share / totalShares);
@@ -3277,7 +3279,8 @@ async function _getStorage() {
                     }
                     const searchTotal = sortedExpenses.reduce((s, e) => s + (e.amountInTWD || 0), 0);
                     const searchMemberCount = Object.keys(searchPerMemberTotals).length;
-                    const searchPerPerson = searchMemberCount > 0 ? searchTotal / searchMemberCount : 0;
+                    // 每份 = 總金額 / 總份數（不論實際人數，1 個人也可以有很多份）
+                    const searchPerShare = searchTotalShares > 0 ? searchTotal / searchTotalShares : 0;
                     return (
                         <div className="mb-4 p-3 sm:p-4 bg-gradient-to-r from-primaryColor-50 via-white to-white border border-primaryColor-200 rounded-xl shadow-sm">
                             <div className="flex items-center mb-2">
@@ -3290,13 +3293,13 @@ async function _getStorage() {
                                 <p className="text-sm text-gray-700">
                                     總計 <span className="text-xl font-bold text-primaryColor-700 ml-1">TWD {searchTotal.toFixed(0)}</span>
                                 </p>
-                                {sortedExpenses.length > 1 ? (
+                                {searchTotalShares > 0 ? (
                                     <p className="text-sm text-gray-700">
-                                        ・每人 <span className="text-lg font-bold text-primaryColor-600 ml-1">TWD {searchPerPerson.toFixed(0)}</span>
-                                        <span className="text-xs text-gray-500 ml-1">（{searchMemberCount} 人平均）</span>
+                                        ・每份 <span className="text-lg font-bold text-primaryColor-600 ml-1">TWD {searchPerShare.toFixed(0)}</span>
+                                        <span className="text-xs text-gray-500 ml-1">（總 {searchTotalShares.toFixed(1)} 份{searchMemberCount > 1 ? ` / ${searchMemberCount} 人` : ''}）</span>
                                     </p>
                                 ) : (
-                                    <p className="text-xs text-gray-500">・單筆支出，無需分攤</p>
+                                    <p className="text-xs text-gray-500">・搜尋結果內無有效份數</p>
                                 )}
                             </div>
                         </div>
