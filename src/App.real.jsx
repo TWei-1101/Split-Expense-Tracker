@@ -3290,10 +3290,10 @@ async function _getStorage() {
                     // 住宿關鍵字 → 「每晚每人」, 其他 → 「每天每人」
                     const isAccommodation = /住宿/.test(searchKeyword);
                     const dayCount = distinctDates.size;
-                    // 每晚/每人 = 每份 / 組內份額加總 / 天數
-                    // 例：住宿 7 晚 groupShares=3 → 17336 / 3 / 7 = 825
+                    // 每晚/每人 = 每份 / 天數（每份已經除過 groupShares，這裡不再重複）
+                    // 例：住宿 7 晚 groupShares=3 → 17336 / 7 = 2477
                     const searchPerDay = searchGroupShares > 0 && dayCount > 0
-                        ? searchPerShare / searchGroupShares / dayCount
+                        ? searchPerShare / dayCount
                         : null;
                     return (
                         <div className="mb-4 p-3 sm:p-4 bg-gradient-to-r from-primaryColor-50 via-white to-white border border-primaryColor-200 rounded-xl shadow-sm">
@@ -3317,7 +3317,7 @@ async function _getStorage() {
                                             <p className="text-sm text-gray-700">
                                                 ・每{isAccommodation ? '晚' : '天'}每人{' '}
                                                 <span className="text-lg font-bold text-primaryColor-600 ml-1">TWD {searchPerDay.toFixed(0)}</span>
-                                                <span className="text-xs text-gray-500 ml-1">（÷ {searchGroupShares.toFixed(0)} ÷ {dayCount} {isAccommodation ? '晚' : '天'}）</span>
+                                                <span className="text-xs text-gray-500 ml-1">（÷ {dayCount} {isAccommodation ? '晚' : '天'}）</span>
                                             </p>
                                         )}
                                     </>
