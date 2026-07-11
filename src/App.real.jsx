@@ -3265,12 +3265,19 @@ async function _getStorage() {
                 {searchKeyword.trim() !== '' && sortedExpenses.length > 0 && (() => {
                     // 收集每個 user 第一次出現的 share value（dedup：廷瑋=2、郁傑=1 → 3，不乘上 7 筆）
                     const memberShareMap = new Map();
+                    // 收集搜尋結果內獨立日期（YYYY-MM-DD），用於「晚/天」單位
+                    const distinctDates = new Set();
                     for (const exp of sortedExpenses) {
                         const shares = exp.shares || {};
                         for (const [uid, share] of Object.entries(shares)) {
                             if (share > 0 && !memberShareMap.has(uid)) {
                                 memberShareMap.set(uid, share);
                             }
+                        }
+                        const ts = exp.timestamp;
+                        const date = ts instanceof Date ? ts : (ts && typeof ts.toDate === 'function' ? ts.toDate() : null);
+                        if (date) {
+                            distinctDates.add(date.toISOString().slice(0, 10));
                         }
                     }
                     const memberShareValues = Array.from(memberShareMap.values());
@@ -3280,6 +3287,14 @@ async function _getStorage() {
                     const searchTotal = sortedExpenses.reduce((s, e) => s + (e.amountInTWD || 0), 0);
                     // 總金額 / 組內份額加總 = 每份平均（例如 52008 / 3 = 17336）
                     const searchPerShare = searchGroupShares > 0 ? searchTotal / searchGroupShares : 0;
+                    // 住宿關鍵字 → 「每晚每人」, 其他 → 「每天每人」
+                    const isAccommodation = /住宿/.test(searchKeyword);
+                    const dayCount = distinctDates.size;
+                    // 每晚/每人 = 每份 / 組內份額加總 / 天數
+                    // 例：住宿 7 晚 groupShares=3 → 17336 / 3 / 7 = 825
+                    const searchPerDay = searchGroupShares > 0 && dayCount > 0
+                        ? searchPerShare / searchGroupShares / dayCount
+                        : null;
                     return (
                         <div className="mb-4 p-3 sm:p-4 bg-gradient-to-r from-primaryColor-50 via-white to-white border border-primaryColor-200 rounded-xl shadow-sm">
                             <div className="flex items-center mb-2">
@@ -3293,10 +3308,19 @@ async function _getStorage() {
                                     總計 <span className="text-xl font-bold text-primaryColor-700 ml-1">TWD {searchTotal.toFixed(0)}</span>
                                 </p>
                                 {searchGroupShares > 0 ? (
-                                    <p className="text-sm text-gray-700">
-                                        ・每份 <span className="text-lg font-bold text-primaryColor-600 ml-1">TWD {searchPerShare.toFixed(0)}</span>
-                                        <span className="text-xs text-gray-500 ml-1">（成員份額加總 {searchGroupShares.toFixed(1)} 份 / {searchMemberCount} 人）</span>
-                                    </p>
+                                    <>
+                                        <p className="text-sm text-gray-700">
+                                            ・每份 <span className="text-lg font-bold text-primaryColor-600 ml-1">TWD {searchPerShare.toFixed(0)}</span>
+                                            <span className="text-xs text-gray-500 ml-1">（成員份額加總 {searchGroupShares.toFixed(1)} 份 / {searchMemberCount} 人）</span>
+                                        </p>
+                                        {searchPerDay !== null && (
+                                            <p className="text-sm text-gray-700">
+                                                ・每{isAccommodation ? '晚' : '天'}每人{' '}
+                                                <span className="text-lg font-bold text-primaryColor-600 ml-1">TWD {searchPerDay.toFixed(0)}</span>
+                                                <span className="text-xs text-gray-500 ml-1">（÷ {searchGroupShares.toFixed(0)} ÷ {dayCount} {isAccommodation ? '晚' : '天'}）</span>
+                                            </p>
+                                        )}
+                                    </>
                                 ) : (
                                     <p className="text-xs text-gray-500">・搜尋結果內無有效份額</p>
                                 )}
