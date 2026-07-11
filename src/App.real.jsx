@@ -3289,9 +3289,13 @@ async function _getStorage() {
                     const searchPerShare = searchGroupShares > 0 ? searchTotal / searchGroupShares : 0;
                     // 住宿關鍵字 → 「每晚每人」, 其他 → 「每天每人」
                     const isAccommodation = /住宿/.test(searchKeyword);
-                    const dayCount = distinctDates.size;
+                    // 住宿：每秒一起 expense 算一晚（用搜尋結果筆數）
+                    // 其他：依 independent 日期數（一天可能多餐）
+                    const dayCount = isAccommodation
+                        ? sortedExpenses.length
+                        : distinctDates.size;
                     // 每晚/每人 = 每份 / 天數（每份已經除過 groupShares，這裡不再重複）
-                    // 例：住宿 7 晚 groupShares=3 → 17336 / 7 = 2477
+                    // 例：住宿 9 筆 groupShares=3 → 17336 / 9 = 1926
                     const searchPerDay = searchGroupShares > 0 && dayCount > 0
                         ? searchPerShare / dayCount
                         : null;
