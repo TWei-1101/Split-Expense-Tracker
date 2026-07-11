@@ -3341,14 +3341,11 @@ async function _getStorage() {
                                 {searchGroupShares > 0 ? (
                                     <>
                                         <p className="text-sm text-gray-700">
-                                            ・每份 <span className="text-lg font-bold text-primaryColor-600 ml-1">TWD {searchPerShare.toFixed(0)}</span>
-                                            <span className="text-xs text-gray-500 ml-1">（成員份額加總 {searchGroupShares.toFixed(1)} 份 / {searchMemberCount} 人）</span>
+                                            ・每人 <span className="text-lg font-bold text-primaryColor-600 ml-1">TWD {searchPerShare.toFixed(0)}</span>
                                         </p>
-                                        {searchPerDay !== null && (
+                                        {isAccommodation && searchPerDay !== null && (
                                             <p className="text-sm text-gray-700">
-                                                ・每{isAccommodation ? '晚' : '天'}每人{' '}
-                                                <span className="text-lg font-bold text-primaryColor-600 ml-1">TWD {searchPerDay.toFixed(0)}</span>
-                                                <span className="text-xs text-gray-500 ml-1">（÷ {dayCount} {isAccommodation ? '晚' : '天'}）</span>
+                                                ・每晚每人 <span className="text-lg font-bold text-primaryColor-600 ml-1">TWD {searchPerDay.toFixed(0)}</span>
                                             </p>
                                         )}
                                     </>
