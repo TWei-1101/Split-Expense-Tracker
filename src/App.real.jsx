@@ -3345,7 +3345,7 @@ async function _getStorage() {
                                         </p>
                                         {isAccommodation && searchPerDay !== null && (
                                             <p className="text-sm text-gray-700">
-                                                ・每晚每人 <span className="text-lg font-bold text-primaryColor-600 ml-1">TWD {searchPerDay.toFixed(0)}</span>
+                                                ・每晚平均 <span className="text-lg font-bold text-primaryColor-600 ml-1">TWD {searchPerDay.toFixed(0)}</span>
                                             </p>
                                         )}
                                     </>
