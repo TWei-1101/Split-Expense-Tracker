@@ -3202,24 +3202,21 @@ async function _getStorage() {
                 if (filterPayer === SELF_PAYER_KEY) {
                     return kwFiltered.filter(exp => exp.payerName === SELF_PAYER_KEY);
                 }
-                // Per-person filter: include expenses where user is the payer OR participated via shares
-
-                // (covers 各自付款 + any future multi-payer cases)
-
+                // Per-person filter: include expenses where user paid out-of-pocket OR
+                // it is a 各自付款 expense AND user has shares > 0.
+                // (其他 expense — payer 不是 user，但他有份 — 不應該帶出來；
+                //  user 只是「成本有分攤」，實際沒有先付)
                 return kwFiltered.filter(exp => {
-
+                    // Case 1: user is the payer
                     if (getPayerLabel(exp.payerName) === filterPayer) return true;
-
-                    const shares = exp.shares || {};
-
-                    for (const [uid, share] of Object.entries(shares)) {
-
-                        if ((share || 0) > 0 && getPayerLabel(uid) === filterPayer) return true;
-
+                    // Case 2: 各自付款 + user has shares > 0
+                    if (exp.payerName === SELF_PAYER_KEY) {
+                        const shares = exp.shares || {};
+                        for (const [uid, share] of Object.entries(shares)) {
+                            if ((share || 0) > 0 && getPayerLabel(uid) === filterPayer) return true;
+                        }
                     }
-
                     return false;
-
                 });
 
             }, [expenses, searchKeyword, filterPayer, getPayerLabel]); // ✨ 依賴 filterPayer + getPayerLabel
