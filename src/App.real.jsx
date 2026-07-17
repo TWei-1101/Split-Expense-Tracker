@@ -35,6 +35,7 @@ import { detectTelegramMode } from './lib/tg-mode.js';
 
 // --- Firebase 設定（從 CDN 版 hardcode，沿用同一份，避免 query 跑到 default-app-id）---
 const appId = 'YOUR_APP_ID';
+const SELF_PAYER_KEY = '__self__';
 const firebaseConfig = {
   apiKey: "AIzaSyB8l7Od781kGHyI9pXMLBXvzt7NuuIyq8c",
   authDomain: "splite-expense-tracker.firebaseapp.com",
@@ -730,7 +731,7 @@ async function _getStorage() {
                 }
                 if (!db || !currentUserId) return;
 
-                if (!newExpense.description.trim() || newExpense.originalAmount <= 0 || !newExpense.payerName) {
+                if (!newExpense.description.trim() || newExpense.originalAmount <= 0 || (newExpense.payerName !== SELF_PAYER_KEY && !newExpense.payerName)) {
                     setModalError('請輸入有效的品項、金額和付款人！');
                     return;
                 }
@@ -980,6 +981,7 @@ async function _getStorage() {
                             {getDisplayName(member)}
                           </option>
                         ))}
+                        <option value={SELF_PAYER_KEY}>各自付款</option>
                       </select>
                     </div>
 
@@ -1966,7 +1968,7 @@ async function _getStorage() {
 
 			  // ✅ NEW: 把支出資料實際用到的所有成員 key 也加進來（防止結餘被「刪名」影響）
 			  expenses.forEach(exp => {
-				if (exp?.payerName && !currentMembers.includes(exp.payerName)) {
+				if (exp?.payerName && exp.payerName !== SELF_PAYER_KEY && !currentMembers.includes(exp.payerName)) {
 				  currentMembers.push(exp.payerName);
 				}
 				const shareKeys = Object.keys(exp?.shares || {});
@@ -2020,6 +2022,10 @@ async function _getStorage() {
             
             return memberId;
           }, [userId, auth, currentCollectionId, userProfiles]);
+
+          const getPayerLabel = useCallback((payerName) => {
+            return payerName === SELF_PAYER_KEY ? '各自付款' : getDisplayName(payerName);
+          }, [getDisplayName]);
 
           const startAdd = useCallback(() => {
             if (isReadOnly) {
@@ -2566,6 +2572,8 @@ async function _getStorage() {
             const balances = members.reduce((acc, name) => ({ ...acc, [name]: 0 }), {});
 
             expenses.forEach(expense => {
+              if (expense.payerName === SELF_PAYER_KEY) return;
+
               const amount = expense.amountInTWD; 
               const { payerName, shares } = expense;
               const totalShares = Object.values(shares).reduce((sum, s) => sum + s, 0);
@@ -3070,6 +3078,7 @@ async function _getStorage() {
                     startEdit={startEdit} 
                     isLoading={isLoading} 
                     getDisplayName={getDisplayName} 
+                    getPayerLabel={getPayerLabel}
                     formatTimestamp={formatTimestamp}
                     isReadOnly={isReadOnly}
                     clearAllExpenses={clearAllExpenses}
@@ -3151,7 +3160,7 @@ async function _getStorage() {
         };
         
         // --- 獨立的列表和總結組件 ---
-        const ExpenseList = memo(({ expenses, deleteExpense, startEdit, isLoading, getDisplayName, formatTimestamp, isReadOnly, clearAllExpenses, searchKeyword, setSearchKeyword }) => { // ✨ 接受搜尋相關 props
+        const ExpenseList = memo(({ expenses, deleteExpense, startEdit, isLoading, getDisplayName, getPayerLabel, formatTimestamp, isReadOnly, clearAllExpenses, searchKeyword, setSearchKeyword }) => { // ✨ 接受搜尋相關 props
             const [previewImage, setPreviewImage] = useState(null);
             // 切換金額顯示狀態：用 expenseId 記錄目前要顯示 TWD 的卡片
             const [showTwdExpenseIds, setShowTwdExpenseIds] = useState(() => new Set());
@@ -3167,7 +3176,7 @@ async function _getStorage() {
                 });
             };
             // ✨ NEW: 點擊「每人花費」卡片 → 切換只顯示該付款人的支出
-            // null = 全部；否則存 displayName，過濾時比對 exp.payerName
+            // null = 全部；否則存 displayName 或 SELF_PAYER_KEY
             const [filterPayer, setFilterPayer] = useState(null);
             const togglePayerFilter = (displayName) => {
                 setFilterPayer(prev => (prev === displayName ? null : displayName));
@@ -3190,9 +3199,27 @@ async function _getStorage() {
                 // 注意：歷史資料的 exp.payerName 可能是 userId 或 name 兩種形式混雜
                 // 兩邊都用 getDisplayName normalize 後再比對，才不會誤過濾
                 if (!filterPayer) return kwFiltered;
-                return kwFiltered.filter(exp => getDisplayName(exp.payerName) === filterPayer);
+                if (filterPayer === SELF_PAYER_KEY) {
+                    return kwFiltered.filter(exp => exp.payerName === SELF_PAYER_KEY);
+                }
+                // Per-person filter: include expenses where user paid out-of-pocket OR
+                // it is a 各自付款 expense AND user has shares > 0.
+                // (其他 expense — payer 不是 user，但他有份 — 不應該帶出來；
+                //  user 只是「成本有分攤」，實際沒有先付)
+                return kwFiltered.filter(exp => {
+                    // Case 1: user is the payer
+                    if (getPayerLabel(exp.payerName) === filterPayer) return true;
+                    // Case 2: 各自付款 + user has shares > 0
+                    if (exp.payerName === SELF_PAYER_KEY) {
+                        const shares = exp.shares || {};
+                        for (const [uid, share] of Object.entries(shares)) {
+                            if ((share || 0) > 0 && getPayerLabel(uid) === filterPayer) return true;
+                        }
+                    }
+                    return false;
+                });
 
-            }, [expenses, searchKeyword, filterPayer, getDisplayName]); // ✨ 依賴 filterPayer + getDisplayName
+            }, [expenses, searchKeyword, filterPayer, getPayerLabel]); // ✨ 依賴 filterPayer + getPayerLabel
 
             // ✨ NEW: 計算每人分攤到的花費金額 (TWD)。不受 searchKeyword 影響。
             const memberSpending = useMemo(() => {
@@ -3216,6 +3243,14 @@ async function _getStorage() {
             // 1 人以上才標註「最高花費者」皇冠
             const topSpenderId = memberSpending.length > 1 ? memberSpending[0]?.userId : null;
             const totalSpending = memberSpending.reduce((s, m) => s + m.amount, 0);
+            const selfPaidSummary = useMemo(() => {
+                return expenses.reduce((summary, exp) => {
+                    if (exp.payerName !== SELF_PAYER_KEY) return summary;
+                    summary.count += 1;
+                    summary.amount += exp.amountInTWD || 0;
+                    return summary;
+                }, { count: 0, amount: 0 });
+            }, [expenses]);
 
             return (
               <div className="mt-8">
@@ -3358,7 +3393,7 @@ async function _getStorage() {
                 })()}
 
                 {/* ✨ NEW: 每人花費金額摘要 - 搜尋欄下方，與「結餘總結」計算一致 */}
-                {memberSpending.length > 0 && (
+                {(memberSpending.length > 0 || selfPaidSummary.count > 0) && (
                     <div className="mb-5 p-4 sm:p-5 bg-gradient-to-br from-white via-white to-primaryColor-50/60 rounded-2xl border border-gray-100 shadow-sm">
                         <div className="flex items-center justify-between mb-3 flex-wrap gap-y-1">
                             <h3 className="text-sm font-semibold text-gray-700 flex items-center">
@@ -3414,6 +3449,38 @@ async function _getStorage() {
                                     </div>
                                 );
                             })}
+                            {selfPaidSummary.count > 0 && (() => {
+                                const isActive = filterPayer === SELF_PAYER_KEY;
+                                return (
+                                    <div
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => togglePayerFilter(SELF_PAYER_KEY)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePayerFilter(SELF_PAYER_KEY); } }}
+                                        aria-pressed={isActive}
+                                        title={isActive ? '取消「各自付款」篩選' : '只顯示各自付款的支出'}
+                                        className={`relative flex items-center p-3 rounded-xl cursor-pointer transition-all duration-200 ${
+                                            isActive
+                                                ? 'bg-gradient-to-r from-gray-100 to-white border-2 border-gray-500 shadow-md ring-2 ring-gray-300'
+                                                : 'bg-gray-50 border border-gray-200 hover:bg-gray-100 hover:border-gray-300'
+                                        }`}
+                                    >
+                                        <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white flex-shrink-0 text-sm bg-gray-500">
+                                            各自
+                                        </div>
+                                        <div className="ml-3 min-w-0 flex-1">
+                                            <p className="text-sm font-medium text-gray-700">各自付款</p>
+                                            <p className="text-lg font-bold leading-tight text-gray-800">TWD {selfPaidSummary.amount.toFixed(0)}</p>
+                                            <p className="text-xs text-gray-500">{selfPaidSummary.count} 筆 · 不計入結算</p>
+                                        </div>
+                                        {isActive && (
+                                            <span className="absolute top-1.5 right-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-gray-600 text-white font-medium">
+                                                篩選中
+                                            </span>
+                                        )}
+                                    </div>
+                                );
+                            })()}
                         </div>
                     </div>
                 )}
@@ -3462,7 +3529,10 @@ async function _getStorage() {
                                   {displayAmount}
                               </p>
                               <p className="text-sm text-gray-600">
-                                <span className="font-medium text-primaryColor-700">付款人:</span> {getDisplayName(exp.payerName)}
+                                <span className="font-medium text-primaryColor-700">付款人:</span> {getPayerLabel(exp.payerName)}
+                                {exp.payerName === SELF_PAYER_KEY && (
+                                  <span className="ml-2 inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">不計入結算</span>
+                                )}
                               </p>
                               <p className="text-xs text-gray-500 mt-1">
                                 <span className="font-medium">分帳:</span> {sharesDetail || '無人分帳'} (總份數: {totalShares})
