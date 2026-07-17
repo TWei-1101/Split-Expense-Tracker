@@ -3202,7 +3202,25 @@ async function _getStorage() {
                 if (filterPayer === SELF_PAYER_KEY) {
                     return kwFiltered.filter(exp => exp.payerName === SELF_PAYER_KEY);
                 }
-                return kwFiltered.filter(exp => getPayerLabel(exp.payerName) === filterPayer);
+                // Per-person filter: include expenses where user is the payer OR participated via shares
+
+                // (covers 各自付款 + any future multi-payer cases)
+
+                return kwFiltered.filter(exp => {
+
+                    if (getPayerLabel(exp.payerName) === filterPayer) return true;
+
+                    const shares = exp.shares || {};
+
+                    for (const [uid, share] of Object.entries(shares)) {
+
+                        if ((share || 0) > 0 && getPayerLabel(uid) === filterPayer) return true;
+
+                    }
+
+                    return false;
+
+                });
 
             }, [expenses, searchKeyword, filterPayer, getPayerLabel]); // ✨ 依賴 filterPayer + getPayerLabel
 
