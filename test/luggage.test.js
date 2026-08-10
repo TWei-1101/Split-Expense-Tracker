@@ -56,3 +56,9 @@ test('支出列表會顯示已指派的行李箱名稱', async () => {
   assert.match(source, /luggageName = luggageById\.get\(getExpenseLuggageId\(exp\)\)/);
   assert.match(source, /🧳 \{luggageName\}/);
 });
+
+test('未指派任何行李箱時，隱藏行李箱商品入口', async () => {
+  const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  assert.ok(source.includes('expenses.some((expense) => getExpenseLuggageId(expense)) &&'));
+  assert.ok(source.includes('aria-label="查看行李箱商品"'));
+});

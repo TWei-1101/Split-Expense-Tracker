@@ -3676,7 +3676,7 @@ async function _getStorage() {
                     pendingTaxRefundInTWD={pendingTaxRefundInTWD}
                     memberCategorySpending={memberCategorySpending}
                 />
-                {luggage.length > 0 && <button type="button" onClick={() => setIsLuggageItemsModalOpen(true)} className="mt-6 flex w-full items-center justify-between rounded-xl bg-white p-5 text-left shadow-lg transition hover:bg-gray-50" aria-label="查看行李箱商品"><span className="text-lg font-bold text-gray-800">🧳 行李箱商品</span><span className="text-sm font-medium text-primaryColor-700">查看</span></button>}
+                {expenses.some((expense) => getExpenseLuggageId(expense)) && <button type="button" onClick={() => setIsLuggageItemsModalOpen(true)} className="mt-6 flex w-full items-center justify-between rounded-xl bg-white p-5 text-left shadow-lg transition hover:bg-gray-50" aria-label="查看行李箱商品"><span className="text-lg font-bold text-gray-800">🧳 行李箱商品</span><span className="text-sm font-medium text-primaryColor-700">查看</span></button>}
                 <ExpenseList 
                     expenses={expenses} 
 					luggage={luggage}
