@@ -32,6 +32,7 @@ import {
 import { detectTelegramMode } from './lib/tg-mode.js';
 import { createTaxRefund, getTaxRefundProfileByCountry, pendingTaxRefundTotalInTWD, TAX_REFUND_PROFILES } from './lib/tax-refund.js';
 import { buildGroupBookList, createNewGroupBook } from './lib/group-books.js';
+import { createTimedMessageController } from './lib/transient-message.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
@@ -1531,6 +1532,12 @@ async function _getStorage() {
 		  const [defaultCurrency, setDefaultCurrency] = useState(DEFAULT_CURRENCY);
 		  const [detectedCountry, setDetectedCountry] = useState(null);
 		  const [copyMessage, setCopyMessage] = useState('');
+		  const toastController = useMemo(
+			() => createTimedMessageController({ setMessage: setCopyMessage }),
+			[]
+		  );
+		  const setToastMessage = useCallback((message) => toastController.show(message), [toastController]);
+		  useEffect(() => () => toastController.clear(), [toastController]);
           
           const [currentCollectionId, setCurrentCollectionId] = useState(null); // 目前正在檢視的 groupId
 		  const [currentCollectionShortCode, setCurrentCollectionShortCode] = useState(null); // 分享用短代碼
@@ -1547,6 +1554,7 @@ async function _getStorage() {
 		  const [groupBooks, setGroupBooks] = useState([]);
 		  const [isGroupBooksLoading, setIsGroupBooksLoading] = useState(false);
 		  const [isCreatingGroupBook, setIsCreatingGroupBook] = useState(false);
+		  const [isGroupBookMenuOpen, setIsGroupBookMenuOpen] = useState(false);
 		  const [newGroupBookName, setNewGroupBookName] = useState('');
           
           // ✨ NEW: 搜尋關鍵字狀態
@@ -1973,14 +1981,14 @@ async function _getStorage() {
 		    setGroupMembers([]);
 		    setCurrentCollectionId(groupRef.id);
 		    setCurrentCollectionShortCode(null);
-		    setCopyMessage(`已建立「${groupBook.name}」`);
+		    setToastMessage(`已建立「${groupBook.name}」`);
 		  } catch (createError) {
 		    console.error('建立新帳本失敗：', createError);
 		    setError(`建立新帳本失敗：${createError.message}`);
 		  } finally {
 		    setIsLoading(false);
 		  }
-		}, [db, userId, isGuest, isLoading, newGroupBookName, setError, setIsLoading]);
+		}, [db, userId, isGuest, isLoading, newGroupBookName, setError, setIsLoading, setToastMessage]);
 
           // --- 2. 獲取所有公共暱稱 ---
           useEffect(() => {
@@ -2170,16 +2178,7 @@ async function _getStorage() {
             }, {});
           }, [members, defaultSharesConfig]);
 
-          // --- UI 輔助 ---
-          // NEW: 通用 Toast 訊息設定函式 (包含定時清除)
-          const setToastMessage = useCallback((message) => {
-            setCopyMessage(message); 
-            if (message) {
-                // 設定 4 秒後自動清除
-                setTimeout(() => setCopyMessage(''), 4000); 
-            }
-          }, []); 
-
+		  // --- UI 輔助 ---
           const getDisplayName = useCallback((memberId) => {
             if (userProfiles[memberId]) {
                 return userProfiles[memberId];
@@ -3017,7 +3016,80 @@ async function _getStorage() {
 					{/* 左邊：標題與匯率資訊 */}
 					<div className="flex flex-col gap-2 flex-1 min-w-0">
 					  <div className="flex items-center gap-3">
-						<Pencil className="w-10 h-10 text-primaryColor-700" />
+						<div className="relative">
+						  {!isGuest ? (
+							<button
+							  type="button"
+							  onClick={() => {
+								setToastMessage('');
+								setIsCreatingGroupBook(false);
+								setNewGroupBookName('');
+								setIsGroupBookMenuOpen((open) => !open);
+							  }}
+							  aria-label="選擇或新增帳本"
+							  aria-expanded={isGroupBookMenuOpen}
+							  aria-controls="group-book-menu"
+							  title="選擇或新增帳本"
+							  className="rounded-lg p-1 text-primaryColor-700 hover:bg-primaryColor-50 focus:outline-none focus:ring-2 focus:ring-primaryColor-300"
+							>
+							  <Pencil className="h-10 w-10" />
+							</button>
+						  ) : (
+							<Pencil className="w-10 h-10 text-primaryColor-700" aria-hidden="true" />
+						  )}
+
+						  {isGroupBookMenuOpen && !isGuest && (
+							<div id="group-book-menu" className="absolute left-0 top-full z-40 mt-2 w-72 rounded-xl border border-primaryColor-100 bg-white p-3 shadow-xl">
+							  <label htmlFor="group-book-switcher" className="text-sm font-semibold text-gray-700">選擇帳本</label>
+							  <select
+								id="group-book-switcher"
+								value={currentCollectionId || ''}
+								onChange={(event) => {
+								  switchGroupBook(event.target.value);
+								  setToastMessage('');
+								  setIsGroupBookMenuOpen(false);
+								}}
+								disabled={isGroupBooksLoading || isLoading}
+								className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-800 focus:border-primaryColor-500 focus:outline-none focus:ring-2 focus:ring-primaryColor-200 disabled:cursor-not-allowed disabled:bg-gray-100"
+							  >
+								{isGroupBooksLoading && <option value={currentCollectionId || ''}>載入帳本中…</option>}
+								{groupBooks.map((book) => (
+								  <option key={book.id} value={book.id}>
+									{book.name}（{book.role === 'owner' ? '擁有者' : '受邀'}）
+								  </option>
+								))}
+							  </select>
+							  <button
+								type="button"
+								onClick={() => setIsCreatingGroupBook((open) => !open)}
+								className="mt-3 min-h-11 w-full rounded-lg border border-primaryColor-300 bg-white px-3 py-1.5 text-sm font-semibold text-primaryColor-700 hover:bg-primaryColor-50 focus:outline-none focus:ring-2 focus:ring-primaryColor-300"
+							  >
+								新增帳本
+							  </button>
+
+							  {isCreatingGroupBook && (
+								<form onSubmit={createGroupBook} className="mt-3 flex flex-col gap-2 border-t border-primaryColor-100 pt-3">
+								  <label htmlFor="new-group-book-name" className="text-sm font-semibold text-primaryColor-800">新帳本名稱</label>
+								  <input
+									id="new-group-book-name"
+									name="newGroupBookName"
+									type="text"
+									value={newGroupBookName}
+									onChange={(event) => setNewGroupBookName(event.target.value)}
+									placeholder="例如：2026 日本旅行"
+									maxLength={40}
+									autoFocus
+									className="min-h-11 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:border-primaryColor-500 focus:outline-none focus:ring-2 focus:ring-primaryColor-200"
+								  />
+								  <div className="flex gap-2">
+									<button type="submit" disabled={isLoading || !newGroupBookName.trim()} className="min-h-11 flex-1 rounded-lg bg-primaryColor-600 px-3 text-sm font-semibold text-white hover:bg-primaryColor-700 disabled:cursor-not-allowed disabled:bg-gray-400">建立</button>
+									<button type="button" onClick={() => { setIsCreatingGroupBook(false); setNewGroupBookName(''); }} className="min-h-11 rounded-lg px-3 text-sm font-semibold text-gray-600 hover:bg-gray-100">取消</button>
+								  </div>
+								</form>
+							  )}
+							</div>
+						  )}
+						</div>
 
 						{isEditingGroupName && !isReadOnly ? (
 						  <div className="flex flex-col sm:flex-row sm:items-center gap-2 flex-1">
@@ -3084,55 +3156,6 @@ async function _getStorage() {
 						  </div>
 						)}
 						  </div>
-
-						  {!isGuest && (
-							<div className="flex flex-wrap items-center gap-2">
-							  <label htmlFor="group-book-switcher" className="text-xs font-semibold text-gray-500">帳本</label>
-							  <select
-								id="group-book-switcher"
-								value={currentCollectionId || ''}
-								onChange={(event) => switchGroupBook(event.target.value)}
-								disabled={isGroupBooksLoading || isLoading}
-								className="min-w-0 max-w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-800 focus:border-primaryColor-500 focus:outline-none focus:ring-2 focus:ring-primaryColor-200 disabled:cursor-not-allowed disabled:bg-gray-100"
-							  >
-								{isGroupBooksLoading && <option value={currentCollectionId || ''}>載入帳本中…</option>}
-								{!isGroupBooksLoading && groupBooks.length === 0 && <option value={currentCollectionId || ''}>目前帳本</option>}
-								{groupBooks.map((book) => (
-								  <option key={book.id} value={book.id}>
-									{book.name}（{book.role === 'owner' ? '擁有者' : '受邀'}）
-								  </option>
-								))}
-							  </select>
-							  <button
-								type="button"
-								onClick={() => setIsCreatingGroupBook((open) => !open)}
-								className="min-h-11 rounded-lg border border-primaryColor-300 bg-white px-3 py-1.5 text-sm font-semibold text-primaryColor-700 hover:bg-primaryColor-50 focus:outline-none focus:ring-2 focus:ring-primaryColor-300"
-							  >
-								新增帳本
-							  </button>
-							</div>
-						  )}
-
-						  {isCreatingGroupBook && !isGuest && (
-							<form onSubmit={createGroupBook} className="mt-1 flex w-full flex-col gap-2 rounded-lg border border-primaryColor-100 bg-primaryColor-50 p-3 sm:flex-row sm:items-center">
-							  <label htmlFor="new-group-book-name" className="text-sm font-semibold text-primaryColor-800">新帳本名稱</label>
-							  <input
-								id="new-group-book-name"
-								name="newGroupBookName"
-								type="text"
-								value={newGroupBookName}
-								onChange={(event) => setNewGroupBookName(event.target.value)}
-								placeholder="例如：2026 日本旅行"
-								maxLength={40}
-								autoFocus
-								className="min-h-11 min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:border-primaryColor-500 focus:outline-none focus:ring-2 focus:ring-primaryColor-200"
-							  />
-							  <div className="flex gap-2">
-								<button type="submit" disabled={isLoading || !newGroupBookName.trim()} className="min-h-11 rounded-lg bg-primaryColor-600 px-3 text-sm font-semibold text-white hover:bg-primaryColor-700 disabled:cursor-not-allowed disabled:bg-gray-400">建立</button>
-								<button type="button" onClick={() => { setIsCreatingGroupBook(false); setNewGroupBookName(''); }} className="min-h-11 rounded-lg px-3 text-sm font-semibold text-gray-600 hover:bg-white">取消</button>
-							  </div>
-							</form>
-						  )}
 
 						  {lastExchangeUpdate && (
 						<p className="text-xs text-gray-500">
