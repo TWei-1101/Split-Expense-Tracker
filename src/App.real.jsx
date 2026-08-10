@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import {
-  onAuthStateChanged,
   signInAnonymously,
   signOut,
 } from 'firebase/auth';
@@ -11,7 +10,6 @@ import {
   getDoc,
   getDocs,
   updateDoc,
-  onSnapshot,
   query,
   where,
   limit,
@@ -31,6 +29,8 @@ import ExpenseModal from './features/expenses/ExpenseModal.jsx';
 import MemberManagementModal from './features/members/MemberManagementModal.jsx';
 import AuthModal from './features/auth/AuthModal.jsx';
 import useExchangeRates from './hooks/useExchangeRates.js';
+import useAuth from './hooks/useAuth.js';
+import useGroup from './hooks/useGroup.js';
 import GroupNameEditor from './features/groups/GroupNameEditor.jsx';
 import {
   deleteExpense as deleteExpenseRecord,
@@ -189,13 +189,9 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
          */
         const App = () => {
           // --- 應用程式狀態 ---
-          const [db, setDb] = useState(null);
-          const [auth, setAuth] = useState(null);
           const [userId, setUserId] = useState(null);
-          const [authReady, setAuthReady] = useState(false);
           const [isGuest, setIsGuest] = useState(false); // NEW: 追蹤是否為匿名訪客
           const [isAuthModalOpen, setIsAuthModalOpen] = useState(false); // NEW: 控制 AuthModal 顯示
-          const [userProfiles, setUserProfiles] = useState({});
 		  const {
 			lastExchangeUpdate,
 			liveExchangeRates,
@@ -213,23 +209,14 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
           
           const [currentCollectionId, setCurrentCollectionId] = useState(null); // 目前正在檢視的 groupId
 		  const [currentCollectionShortCode, setCurrentCollectionShortCode] = useState(null); // 分享用短代碼
-		  const [groupOwner, setGroupOwner] = useState(null);                   // 群組擁有者 uid
-		  const [groupMembers, setGroupMembers] = useState([]);                 // 群組成員 uid 清單
 
-		  // MODIFIED: 訪客模式 (isGuest) 或不在群組成員清單中都視為唯讀
-		  const isReadOnly = isGuest || !groupMembers.includes(userId); 
-		
 		  const [inviteEmail, setInviteEmail] = useState(''); // 用來輸入要邀請的 email
-		  const [groupName, setGroupName] = useState('分帳記帳簿');     // 顯示在上方標題的名稱
 		  const [isEditingGroupName, setIsEditingGroupName] = useState(false); 
 		  const [groupNameInput, setGroupNameInput] = useState('分帳記帳簿'); // 編輯時使用
           
           // ✨ NEW: 搜尋關鍵字狀態
           const [searchKeyword, setSearchKeyword] = useState('');
 
-          const [expenses, setExpenses] = useState([]);
-          const [customMembers, setCustomMembers] = useState([]); 
-          const [defaultSharesConfig, setDefaultSharesConfig] = useState({}); 
           const [members, setMembers] = useState([]); 
           
 		  const ensureDefaultGroup = useCallback(async (_db, uid) => {
@@ -281,17 +268,11 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
 		}, [error]);
 		
           // --- 1. Firebase 初始化與驗證（支援 /g/短代碼） ---
-          useEffect(() => {
-            try {
-              const { auth: _auth, db: _db } = getFirebaseServices();
-
-              setDb(_db);
-              setAuth(_auth);
-
+          const { auth, authReady, db } = useAuth({
+            getFirebaseServices,
+            onUser: async (user, { auth: _auth, db: _db }) => {
               const usersCollectionPath = `artifacts/${appId}/users`;
               const usersRef = collection(_db, usersCollectionPath);
-
-              const unsubscribe = onAuthStateChanged(_auth, async (user) => {
                 try {
                   if (user) {
                     // Persistent user (email/password) or a converted anonymous user
@@ -436,60 +417,43 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
                     setUserId(null);
                     setIsGuest(false);
                     setError(`認證失敗，應用程式無法運作: ${e.message}`);
-                } finally {
-                  setAuthReady(true);
                 }
-              });
+            },
+            onInitializationError: (e) => {
+              console.error('Firebase initialization/auth error:', e);
+              setUserId(null);
+              setIsGuest(false);
+              setError(`認證失敗，應用程式無法運作: ${e.message}`);
+            },
+          });
 
-              return () => unsubscribe();
-            } catch (e) {
-              setError(`Firebase initialization failed: ${e.message}`);
-              setAuthReady(true);
-            }
-          }, []);
+          const {
+            customMembers,
+            defaultSharesConfig,
+            expenses,
+            groupMembers,
+            groupName,
+            groupOwner,
+            setCustomMembers,
+            setDefaultSharesConfig,
+            setExpenses,
+            setGroupName,
+            userProfiles,
+          } = useGroup({
+            appId,
+            authReady,
+            currentCollectionId,
+            db,
+            defaultCurrency: DEFAULT_CURRENCY,
+            defaultExchangeRates: DEFAULT_EXCHANGE_RATES,
+            mapExpenseSnapshot,
+            onError: setError,
+            onGroupName: setGroupNameInput,
+            userId,
+          });
 
-		// --- 監聽目前 group 的 owner / members ---
-		useEffect(() => {
-		  if (!db || !currentCollectionId) return;
-
-		  const groupDocRef = doc(db, `artifacts/${appId}/groups/${currentCollectionId}`);
-
-		  const unsub = onSnapshot(
-			groupDocRef,
-			(snap) => {
-			  if (snap.exists) {
-				const data = snap.data();
-				const owner = data.owner || null;
-				const members = Array.isArray(data.members) ? data.members : [];
-
-				// owner 也確保在 members 裡（避免 owner 不見）
-				const mergedMembers = members.includes(owner)
-				  ? members
-				  : [...members, owner].filter(Boolean);
-				  
-				const nameFromDb = data.name || '分帳記帳簿';
-
-				setGroupOwner(owner);
-				setGroupMembers(mergedMembers);
-				setGroupName(nameFromDb);
-				setGroupNameInput(nameFromDb);
-			  } else {
-				console.warn("Group doc not found:", currentCollectionId);
-				setGroupOwner(null);
-				setGroupMembers([]);
-				setGroupName('分帳記帳簿');
-				setGroupNameInput('分帳記帳簿');
-			  }
-			},
-			(err) => {
-			  console.error("Error listening group doc:", err);
-			  setGroupOwner(null);
-			  setGroupMembers([]);
-			}
-		  );
-
-		  return () => unsub();
-		}, [db, currentCollectionId]);
+		  // MODIFIED: 訪客模式 (isGuest) 或不在群組成員清單中都視為唯讀
+		  const isReadOnly = isGuest || !groupMembers.includes(userId);
 
 		// 開始編輯群組名稱（只有成員可以編）
 		const startEditGroupName = () => {
@@ -534,31 +498,6 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
 			setIsLoading(false);
 		  }
 		};
-
-          // --- 2. 獲取所有公共暱稱 ---
-          useEffect(() => {
-            if (!authReady || !db) return;
-            
-            const profilesCollectionPath = `artifacts/${appId}/public_profiles`;
-            const profilesRef = collection(db, profilesCollectionPath);
-
-            const unsubscribeProfiles = onSnapshot(profilesRef, (snapshot) => {
-                const profiles = {};
-                snapshot.forEach(docSnap => {
-					const data = docSnap.data() || {};
-					const uid = data.uid || docSnap.id;           // ✅ doc.id 就是 uid
-					const displayName = data.displayName || data.email; // ✅ 沒暱稱就退回 email
-					if (uid && displayName) {
-					  profiles[uid] = displayName;
-					}
-                });
-                setUserProfiles(profiles);
-            }, (err) => {
-                console.error("Error listening to user profiles:", err);
-            });
-
-            return () => unsubscribeProfiles();
-          }, [authReady, db]);
 
 			// 登出（改用 confirm modal，而不是 window.confirm）
           // --- Modal 開關 ---
@@ -607,54 +546,6 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
 			  setDefaultSharesConfig,
 			  setError
 			]);
-
-          // --- 4. 數據獲取 (Firestore 監聽) ---
-          useEffect(() => {
-            // FIX: 只要不是完全未就緒，就允許載入 (即使是訪客模式，也需要 userId 和 currentCollectionId)
-            if (!authReady || !db || !currentCollectionId || !userId) return; 
-
-			const expensesCollectionPath = getGroupExpensesPath(appId, currentCollectionId);
-			const expensesRef = collection(db, expensesCollectionPath);
-
-            const unsubscribeExpenses = onSnapshot(expensesRef, (snapshot) => {
-              const fetchedExpenses = snapshot.docs.map((docSnap) =>
-                mapExpenseSnapshot(docSnap, DEFAULT_CURRENCY, DEFAULT_EXCHANGE_RATES)
-              );
-              setExpenses(fetchedExpenses);
-            }, (err) => {
-              console.error(`Error listening to expenses in collection ${currentCollectionId}:`, err);
-              if (err.code === 'permission-denied') {
-                  setError(`權限不足：無法讀取此分享連結對應的紀錄簿（ID: ${currentCollectionId}）。請洽擁有者確認權限。`);
-              } else {
-                  setError(`資料同步失敗: ${err.message}`);
-              }
-              setExpenses([]);
-            });
-
-            const membersDocPath = getGroupMembersDocPath(currentCollectionId);
-			const membersDocRef = doc(db, membersDocPath);
-
-            const unsubscribeMembers = onSnapshot(membersDocRef, (docSnap) => {
-                if (docSnap.exists) {
-                    const data = docSnap.data();
-                    const list = Array.isArray(data.list) ? data.list : [];
-                    const shares = data.defaultShares || {};
-                    
-                    setCustomMembers(list);
-                    setDefaultSharesConfig(shares); 
-                } else {
-                    setCustomMembers([]);
-                    setDefaultSharesConfig({}); 
-                }
-            }, (err) => {
-                console.error("Error listening to members settings:", err);
-            });
-
-            return () => {
-              unsubscribeExpenses();
-              unsubscribeMembers();
-            };
-          }, [authReady, db, currentCollectionId, userId]); // FIX: Add userId dependency
 
           // --- 5. 衍生成員清單 ---
 			useEffect(() => {
