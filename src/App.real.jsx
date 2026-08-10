@@ -36,6 +36,7 @@ import {
   canDeleteGroupBook,
   createGroupDeletionConfirmationSteps,
   createGroupDeletionPlan,
+  deleteGroupBookDataThenCleanup,
 } from './lib/group-deletion.js';
 import { createTimedMessageController } from './lib/transient-message.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
@@ -2007,69 +2008,78 @@ async function _getStorage() {
 		    setIsLoading(true);
 		    setError(null);
 		    try {
-		      const groupRef = doc(db, `artifacts/${appId}/groups/${currentCollectionId}`);
-		      const groupSnap = await getDoc(groupRef);
-		      if (!groupSnap.exists() || groupSnap.data()?.owner !== userId) {
-		        throw new Error('帳本不存在，或您已不再是擁有者。');
-		      }
+		      await deleteGroupBookDataThenCleanup({
+		        deleteFirestoreData: async () => {
+		          const groupRef = doc(db, `artifacts/${appId}/groups/${currentCollectionId}`);
+		          const groupSnap = await getDoc(groupRef);
+		          if (!groupSnap.exists() || groupSnap.data()?.owner !== userId) {
+		            throw new Error('帳本不存在，或您已不再是擁有者。');
+		          }
 
-		      const imagePaths = new Set();
-		      const unmanagedImagePaths = new Set();
-		      const expensesPath = getGroupExpensesPath(currentCollectionId);
-		      // Firestore batch 上限為 500；每次最多刪 400 筆並重新查詢，直到目標帳本清空。
-		      while (true) {
-		        const expenseSnapshot = await getDocs(query(collection(db, expensesPath), limit(400)));
-		        if (expenseSnapshot.empty) break;
-		        const deletionPlan = createGroupDeletionPlan({
-		          appId,
-		          groupId: currentCollectionId,
-		          expenses: expenseSnapshot.docs.map((expenseDoc) => ({ id: expenseDoc.id, ...expenseDoc.data() })),
-		        });
-		        deletionPlan.safeImagePaths.forEach((path) => imagePaths.add(path));
-		        deletionPlan.unmanagedImagePaths.forEach((path) => unmanagedImagePaths.add(path));
-		        const batch = writeBatch(db);
-		        expenseSnapshot.docs.forEach((expenseDoc) => batch.delete(expenseDoc.ref));
-		        await batch.commit();
-		      }
+		          const imagePaths = new Set();
+		          const unmanagedImagePaths = new Set();
+		          const expensesPath = getGroupExpensesPath(currentCollectionId);
+		          // Firestore batch 上限為 500；每次最多刪 400 筆並重新查詢，直到目標帳本清空。
+		          while (true) {
+		            const expenseSnapshot = await getDocs(query(collection(db, expensesPath), limit(400)));
+		            if (expenseSnapshot.empty) break;
+		            const deletionPlan = createGroupDeletionPlan({
+		              appId,
+		              groupId: currentCollectionId,
+		              expenses: expenseSnapshot.docs.map((expenseDoc) => ({ id: expenseDoc.id, ...expenseDoc.data() })),
+		            });
+		            deletionPlan.safeImagePaths.forEach((path) => imagePaths.add(path));
+		            deletionPlan.unmanagedImagePaths.forEach((path) => unmanagedImagePaths.add(path));
+		            const batch = writeBatch(db);
+		            expenseSnapshot.docs.forEach((expenseDoc) => batch.delete(expenseDoc.ref));
+		            await batch.commit();
+		          }
 
-		      const finalBatch = writeBatch(db);
-		      finalBatch.delete(doc(db, getGroupMembersDocPath(currentCollectionId)));
-		      finalBatch.delete(groupRef);
-		      await finalBatch.commit();
-
-		      let deletedImages = 0;
-		      let undeletedImages = unmanagedImagePaths.size;
-		      if (imagePaths.size) {
-		        try {
+		          const finalBatch = writeBatch(db);
+		          finalBatch.delete(doc(db, getGroupMembersDocPath(currentCollectionId)));
+		          finalBatch.delete(groupRef);
+		          await finalBatch.commit();
+		          return {
+		            safeImagePaths: [...imagePaths],
+		            unmanagedImageCount: unmanagedImagePaths.size,
+		          };
+		        },
+		        chooseNextBook: async () => {
+		          const remainingBooks = groupBooks.filter((book) => book.id !== currentCollectionId);
+		          if (remainingBooks.length) return { remainingBooks, nextBook: remainingBooks[0] };
+		          const nextGroupId = await ensureDefaultGroup(db, userId);
+		          const nextBook = { id: nextGroupId, name: '分帳記帳簿', role: 'owner' };
+		          return { remainingBooks: [nextBook], nextBook };
+		        },
+		        applyUiTransition: ({ remainingBooks, nextBook }) => {
+		          setGroupBooks(remainingBooks);
+		          setGroupOwner(null);
+		          setGroupMembers([]);
+		          setCurrentCollectionId(nextBook.id);
+		          setCurrentCollectionShortCode(null);
+		          setIsGroupBookMenuOpen(false);
+		          setToastMessage('帳本已刪除。');
+		        },
+		        deleteImages: async (imagePaths) => {
 		          const { getStorage, storageRef, deleteObject } = await _getStorage();
 		          const storage = getStorage(getFirebaseApp());
 		          const imageResults = await Promise.allSettled(
-		            [...imagePaths].map((path) => deleteObject(storageRef(storage, path)))
+		            imagePaths.map((path) => deleteObject(storageRef(storage, path)))
 		          );
-		          deletedImages = imageResults.filter((result) => result.status === 'fulfilled').length;
-		          undeletedImages += imageResults.length - deletedImages;
-		        } catch (storageError) {
+		          return {
+		            deleted: imageResults.filter((result) => result.status === 'fulfilled').length,
+		            failed: imageResults.filter((result) => result.status === 'rejected').length,
+		          };
+		        },
+		        onBackgroundCleanupStart: () => setToastMessage('帳本已刪除；收據圖片正在背景清理。'),
+		        onBackgroundCleanupDone: ({ deleted, failed }) => {
+		          setToastMessage(`帳本已刪除。收據圖片：已刪除 ${deleted}，未刪除 ${failed}。`);
+		        },
+		        onBackgroundCleanupError: (storageError) => {
 		          console.warn('刪除帳本收據圖片失敗：', storageError);
-		          undeletedImages += imagePaths.size;
-		        }
-		      }
-
-		      const remainingBooks = groupBooks.filter((book) => book.id !== currentCollectionId);
-		      let nextGroupId = remainingBooks[0]?.id || null;
-		      if (!nextGroupId) {
-		        nextGroupId = await ensureDefaultGroup(db, userId);
-		        remainingBooks.push({ id: nextGroupId, name: '分帳記帳簿', role: 'owner' });
-		      }
-		      setGroupBooks(remainingBooks);
-		      setGroupOwner(null);
-		      setGroupMembers([]);
-		      setCurrentCollectionId(nextGroupId);
-		      setCurrentCollectionShortCode(null);
-		      setIsGroupBookMenuOpen(false);
-		      const imageSummary = imagePaths.size || unmanagedImagePaths.size
-		        ? `收據圖片：已刪除 ${deletedImages}，未刪除 ${undeletedImages}。`
-		        : '';
-		      setToastMessage(`帳本已刪除。${imageSummary}`);
+		          setToastMessage('帳本已刪除，但部分收據圖片未刪除。');
+		        },
+		      });
 		    } catch (deleteError) {
 		      console.error('刪除帳本失敗：', deleteError);
 		      setError(`刪除帳本失敗：${deleteError.message}`);

@@ -37,3 +37,30 @@ export function createGroupDeletionConfirmationSteps(groupName) {
     },
   ];
 }
+
+// Firestore data removal is the irreversible foreground operation. Storage cleanup
+// may be slow, so it deliberately runs after the UI has moved to a safe next book.
+export async function deleteGroupBookDataThenCleanup({
+  deleteFirestoreData,
+  chooseNextBook,
+  applyUiTransition,
+  deleteImages,
+  onBackgroundCleanupStart = () => {},
+  onBackgroundCleanupDone = () => {},
+  onBackgroundCleanupError = () => {},
+}) {
+  const deletionResult = await deleteFirestoreData();
+  const nextBook = await chooseNextBook();
+  applyUiTransition(nextBook);
+
+  const imagePaths = deletionResult.safeImagePaths || [];
+  if (imagePaths.length) {
+    onBackgroundCleanupStart(imagePaths);
+    Promise.resolve()
+      .then(() => deleteImages(imagePaths))
+      .then(onBackgroundCleanupDone)
+      .catch(onBackgroundCleanupError);
+  }
+
+  return { ...deletionResult, nextBook };
+}
