@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import {
   createLuggageItem,
   normalizeLuggageList,
@@ -48,4 +49,10 @@ test('退稅商品能按行李箱分組並統計未指定', () => {
   assert.equal(groups.unassigned.length, 1);
   assert.equal(groups.byLuggage[0].expenses.length, 1);
   assert.equal(groups.byLuggage[0].regularExpenses.length, 1);
+});
+
+test('支出列表會顯示已指派的行李箱名稱', async () => {
+  const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  assert.match(source, /luggageName = luggageById\.get\(getExpenseLuggageId\(exp\)\)/);
+  assert.match(source, /🧳 \{luggageName\}/);
 });

@@ -3679,6 +3679,7 @@ async function _getStorage() {
                 {luggage.length > 0 && <button type="button" onClick={() => setIsLuggageItemsModalOpen(true)} className="mt-6 flex w-full items-center justify-between rounded-xl bg-white p-5 text-left shadow-lg transition hover:bg-gray-50" aria-label="查看行李箱商品"><span className="text-lg font-bold text-gray-800">🧳 行李箱商品</span><span className="text-sm font-medium text-primaryColor-700">查看</span></button>}
                 <ExpenseList 
                     expenses={expenses} 
+					luggage={luggage}
                     deleteExpense={deleteExpense} 
                     startEdit={startEdit} 
                     isLoading={isLoading} 
@@ -3800,7 +3801,7 @@ async function _getStorage() {
         };
         
         // --- 獨立的列表和總結組件 ---
-        const ExpenseList = memo(({ expenses, deleteExpense, startEdit, isLoading, getDisplayName, getPayerLabel, formatTimestamp, isReadOnly, clearAllExpenses, searchKeyword, setSearchKeyword }) => { // ✨ 接受搜尋相關 props
+        const ExpenseList = memo(({ expenses, luggage, deleteExpense, startEdit, isLoading, getDisplayName, getPayerLabel, formatTimestamp, isReadOnly, clearAllExpenses, searchKeyword, setSearchKeyword }) => { // ✨ 接受搜尋相關 props
             const [previewImage, setPreviewImage] = useState(null);
             // 切換金額顯示狀態：用 expenseId 記錄目前要顯示 TWD 的卡片
             const [showTwdExpenseIds, setShowTwdExpenseIds] = useState(() => new Set());
@@ -3818,6 +3819,7 @@ async function _getStorage() {
             // ✨ NEW: 點擊「每人花費」卡片 → 切換只顯示該付款人的支出
             // null = 全部；否則存 displayName 或 SELF_PAYER_KEY
             const [filterPayer, setFilterPayer] = useState(null);
+            const luggageById = useMemo(() => new Map(normalizeLuggageList(luggage).map((item) => [item.id, item.name])), [luggage]);
             const togglePayerFilter = (displayName) => {
                 setFilterPayer(prev => (prev === displayName ? null : displayName));
             };
@@ -4144,6 +4146,7 @@ async function _getStorage() {
                         .map(([name, share]) => `${getDisplayName(name)} (${share}份)`)
                         .join(', ');
                       const expenseImageSrc = exp.imageUrl || exp.imageDataUrl || '';
+                      const luggageName = luggageById.get(getExpenseLuggageId(exp));
 
                       const isTwd = exp.currency === DEFAULT_CURRENCY;
                       const isShowingTwd = showTwdExpenseIds.has(exp.id);
@@ -4174,6 +4177,7 @@ async function _getStorage() {
                                   <span className="ml-2 inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">不計入結算</span>
                                 )}
                               </p>
+                              {luggageName && <p className="mt-1 text-xs text-gray-600"><span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-800">🧳 {luggageName}</span></p>}
                               {exp.taxRefund?.eligible && (
                                 <p className="mt-1 text-xs text-primaryColor-700">
                                   <span className={`inline-flex items-center rounded-full px-2 py-0.5 font-medium ${exp.taxRefund.status === 'received' ? 'bg-green-100 text-green-700' : 'bg-primaryColor-50 text-primaryColor-700'}`}>
