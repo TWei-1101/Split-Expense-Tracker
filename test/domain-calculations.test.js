@@ -48,3 +48,12 @@ test('ConfirmationModal is separated as a reusable UI component', () => {
   assert.match(componentSource, /confirmColor === 'green'/);
   assert.match(componentSource, /onClick=\{onConfirm\}/);
 });
+
+test('MemberManagementModal is separated from the application orchestrator', () => {
+  const appSource = readFileSync(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  const componentSource = readFileSync(new URL('../src/features/members/MemberManagementModal.jsx', import.meta.url), 'utf8');
+
+  assert.match(appSource, /import MemberManagementModal from '.\/features\/members\/MemberManagementModal\.jsx'/);
+  assert.match(componentSource, /管理分帳成員與預設份數/);
+  assert.match(componentSource, /migrateMemberID\(oldName, newId, setModalMessage\)/);
+});
