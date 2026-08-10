@@ -44,6 +44,13 @@ import {
   deleteGroupBookDataThenCleanup,
 } from './lib/group-deletion.js';
 import { createTimedMessageController } from './lib/transient-message.js';
+import {
+  EXPENSE_CATEGORIES,
+  EXPENSE_CATEGORY_OPTIONS,
+  inferExpenseCategory,
+  normalizeExpenseCategory,
+  calculateMemberCategorySpending,
+} from './lib/expense-categories.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
@@ -498,8 +505,10 @@ async function _getStorage() {
                 imagePath: '',
                 imageName: '',
                 imageDataUrl: '',
+                category: EXPENSE_CATEGORIES.OTHER,
                 taxRefund: { eligible: false, status: 'pending' },
             });
+            const [categoryWasManuallySelected, setCategoryWasManuallySelected] = useState(false);
             const [imageFile, setImageFile] = useState(null);
             const [imagePreviewUrl, setImagePreviewUrl] = useState('');
             const [removeExistingImage, setRemoveExistingImage] = useState(false);
@@ -541,8 +550,10 @@ async function _getStorage() {
                             imagePath: expenseToEdit.imagePath || '',
                             imageName: expenseToEdit.imageName || '',
                             imageDataUrl: expenseToEdit.imageDataUrl || '',
+                            category: normalizeExpenseCategory(expenseToEdit.category),
                             taxRefund: expenseToEdit.taxRefund || { eligible: false, status: 'pending' },
                         });
+                        setCategoryWasManuallySelected(true);
                         setImagePreviewUrl(expenseToEdit.imageUrl || expenseToEdit.imageDataUrl || '');
 					} else {
 					  // 決定預設的付款人：
@@ -587,8 +598,10 @@ async function _getStorage() {
                         imagePath: '',
                         imageName: '',
                         imageDataUrl: '',
+                        category: EXPENSE_CATEGORIES.OTHER,
                         taxRefund: { eligible: false, status: 'pending' },
 					  });
+                      setCategoryWasManuallySelected(false);
                       setImagePreviewUrl('');
 					}
 
@@ -609,10 +622,16 @@ async function _getStorage() {
 
             const handleInputChange = (e) => {
                 const { name, value } = e.target;
-                setNewExpense(prev => ({
-                    ...prev,
-                    [name]: name === 'originalAmount' ? (value === '' ? '' : parseFloat(value) || '') : value,
-                }));
+                setNewExpense(prev => {
+                    const nextExpense = {
+                        ...prev,
+                        [name]: name === 'originalAmount' ? (value === '' ? '' : parseFloat(value) || '') : value,
+                    };
+                    if (name === 'description' && !isEditing && !categoryWasManuallySelected) {
+                        nextExpense.category = inferExpenseCategory(value);
+                    }
+                    return nextExpense;
+                });
             };
 
             const handleCurrencyChange = (e) => {
@@ -826,6 +845,7 @@ async function _getStorage() {
                         currency: newExpense.currency,
                         exchangeRate: currentExchangeRate,
                         amountInTWD: amountInTWD,
+                        category: normalizeExpenseCategory(newExpense.category),
                         taxRefund: taxRefundPreview || { eligible: false, status: 'pending' },
                         payerName: newExpense.payerName,
                         shares: Object.entries(newExpense.shares).reduce((acc, [name, share]) => {
@@ -959,6 +979,24 @@ async function _getStorage() {
                            </p>
                         )}
                       </div>
+                    </div>
+
+                    <div>
+                      <label htmlFor="expense-category" className="block text-sm font-medium text-gray-700">支出分類</label>
+                      <select
+                        id="expense-category"
+                        name="category"
+                        value={newExpense.category}
+                        onChange={(e) => {
+                          setCategoryWasManuallySelected(true);
+                          setNewExpense(prev => ({ ...prev, category: normalizeExpenseCategory(e.target.value) }));
+                        }}
+                        className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500 bg-white"
+                        disabled={isReadOnly}
+                      >
+                        {EXPENSE_CATEGORY_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </select>
+                      {!isEditing && !categoryWasManuallySelected && <p className="mt-1 text-xs text-gray-500">會依品項自動帶入，可手動調整。</p>}
                     </div>
 
                     <div className="pt-4 border-t border-gray-100">
@@ -2919,6 +2957,11 @@ async function _getStorage() {
             [expenses],
           );
 
+          const memberCategorySpending = useMemo(
+            () => calculateMemberCategorySpending({ members, expenses }),
+            [members, expenses],
+          );
+
           const calculateSettlements = useMemo(() => {
             const balances = calculateBalances;
             const settlements = [];
@@ -3480,6 +3523,7 @@ async function _getStorage() {
                     isReadOnly={isReadOnly}
                     settleMemberDebt={settleMemberDebt}
                     pendingTaxRefundInTWD={pendingTaxRefundInTWD}
+                    memberCategorySpending={memberCategorySpending}
                 />
                 <ExpenseList 
                     expenses={expenses} 
@@ -4024,7 +4068,7 @@ async function _getStorage() {
             );
         });
 
-        const BalanceSummary = memo(({ settlements, balances, members, getDisplayName, isReadOnly, settleMemberDebt, pendingTaxRefundInTWD }) => {
+        const BalanceSummary = memo(({ settlements, balances, members, getDisplayName, isReadOnly, settleMemberDebt, pendingTaxRefundInTWD, memberCategorySpending }) => {
             const debtorBalances = useMemo(() => {
                 return members.filter(member => Math.round(balances[member] || 0) < 0)
                                .map(member => ({
@@ -4047,6 +4091,29 @@ async function _getStorage() {
                     <p className="mt-1 text-2xl font-extrabold text-primaryColor-700">TWD {pendingTaxRefundInTWD.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</p>
                   </div>
                 )}
+
+                <div className="mb-6 overflow-x-auto rounded-xl border border-gray-100">
+                  <table className="w-full min-w-[620px] text-sm">
+                    <caption className="caption-top px-1 pb-3 text-left text-lg font-bold text-gray-800">各成員分類支出</caption>
+                    <thead className="bg-gray-50 text-gray-600">
+                      <tr>
+                        <th className="px-3 py-3 text-left font-semibold">成員</th>
+                        {EXPENSE_CATEGORY_OPTIONS.map(option => <th key={option.value} className="px-3 py-3 text-right font-semibold">{option.label}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {members.map(member => {
+                        const totals = memberCategorySpending?.[member] || {};
+                        return (
+                          <tr key={member} className="text-gray-700">
+                            <td className="px-3 py-3 font-medium whitespace-nowrap">{getDisplayName(member)}</td>
+                            {EXPENSE_CATEGORY_OPTIONS.map(option => <td key={option.value} className="px-3 py-3 text-right whitespace-nowrap">TWD {Math.round(totals[option.value] || 0).toLocaleString('zh-TW')}</td>)}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
 
                 {settlements.length === 0 ? (
                     <p className="text-lg font-medium text-green-600 p-3 bg-green-50 rounded-lg">🎉 所有帳目已結清！</p>
