@@ -51,6 +51,7 @@ import {
   normalizeExpenseCategory,
   calculateMemberCategorySpending,
 } from './lib/expense-categories.js';
+import { expenseTimestampToDate, findDuplicateExpenses } from './lib/duplicate-expenses.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
@@ -494,7 +495,7 @@ async function _getStorage() {
 		/**
          * 支出 Modal (核心邏輯獨立)
          */
-        const ExpenseModal = memo(({ db, currentUserId, members, getInitialShares, state, onClose, getDisplayName, isReadOnly, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel}) => {
+        const ExpenseModal = memo(({ db, currentUserId, members, expenses, getInitialShares, state, onClose, getDisplayName, isReadOnly, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel}) => {
             const [newExpense, setNewExpense] = useState({
                 description: '',
                 originalAmount: '',
@@ -515,6 +516,7 @@ async function _getStorage() {
             const [isLoadingModal, setIsLoadingModal] = useState(false);
             const [modalError, setModalError] = useState(null);
             const [uploadStatus, setUploadStatus] = useState('');
+            const [duplicateCandidates, setDuplicateCandidates] = useState([]);
 
             const isEditing = state.isEditing;
             const expenseToEdit = state.editingExpense;
@@ -609,6 +611,7 @@ async function _getStorage() {
                     setRemoveExistingImage(false);
                     setModalError(null);
                     setUploadStatus('');
+                    setDuplicateCandidates([]);
                 }
             }, [state.isOpen, isEditing, expenseToEdit, members, currentUserId, getInitialShares, currentUserLabel, getDisplayName, defaultCurrency]);
 
@@ -773,7 +776,7 @@ async function _getStorage() {
                 }));
             };
 
-            const saveExpense = async () => {
+            const saveExpense = async (skipDuplicateCheck = false) => {
                 if (isReadOnly) {
                     setModalError('您正在瀏覽共享紀錄簿，無法進行修改。請切換回您的私有紀錄簿。');
                     return;
@@ -783,6 +786,22 @@ async function _getStorage() {
                 if (!newExpense.description.trim() || newExpense.originalAmount <= 0 || (newExpense.payerName !== SELF_PAYER_KEY && !newExpense.payerName)) {
                     setModalError('請輸入有效的品項、金額和付款人！');
                     return;
+                }
+
+                if (!skipDuplicateCheck) {
+                    const matches = findDuplicateExpenses({
+                        expense: {
+                            ...newExpense,
+                            id: isEditing ? expenseToEdit?.id : undefined,
+                            timestamp: isEditing ? expenseToEdit?.timestamp : new Date(),
+                        },
+                        expenses,
+                        excludeExpenseId: isEditing ? expenseToEdit?.id : undefined,
+                    });
+                    if (matches.length > 0) {
+                        setDuplicateCandidates(matches);
+                        return;
+                    }
                 }
 
                 setIsLoadingModal(true);
@@ -1188,8 +1207,31 @@ async function _getStorage() {
 						  </>
 						)}
 					  </button>
-					</div>
+				  </div>
                 </div>
+                {duplicateCandidates.length > 0 && (
+                  <div className="fixed inset-0 z-[60] flex items-center justify-center bg-gray-900/75 p-4">
+                    <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
+                      <h4 className="text-lg font-bold text-gray-800">可能重複的支出</h4>
+                      <p className="mt-2 text-sm text-gray-600">找到相同品項、金額、幣別與付款人的近期支出。確認後仍可儲存這筆新資料。</p>
+                      <ul className="mt-4 max-h-56 space-y-2 overflow-y-auto">
+                        {duplicateCandidates.map(candidate => {
+                          const date = expenseTimestampToDate(candidate.timestamp);
+                          return (
+                            <li key={candidate.id} className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-gray-700">
+                              <p className="font-semibold">{candidate.description}</p>
+                              <p>{date ? date.toLocaleDateString('zh-TW') : '日期不明'} · {candidate.payerName === SELF_PAYER_KEY ? '各自付款' : getDisplayName(candidate.payerName)} · {candidate.currency} {Number(candidate.originalAmount).toLocaleString()}</p>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                      <div className="mt-6 flex justify-end gap-3">
+                        <button type="button" onClick={() => setDuplicateCandidates([])} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">取消／返回修改</button>
+                        <button type="button" onClick={() => { setDuplicateCandidates([]); saveExpense(true); }} className="rounded-lg bg-primaryColor-600 px-4 py-2 text-sm font-semibold text-white hover:bg-primaryColor-700">仍要儲存</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             );
         });
@@ -3546,6 +3588,7 @@ async function _getStorage() {
                     db={db}
                     currentUserId={userId}
                     members={members}
+                    expenses={expenses}
                     getInitialShares={getInitialShares}
                     state={expenseModalState}
                     onClose={closeExpenseModal}
