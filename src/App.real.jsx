@@ -55,7 +55,7 @@ import { expenseTimestampToDate, findDuplicateExpenses } from './lib/duplicate-e
 import {
   buildLuggageDeletionPlan,
   createLuggageItem,
-  getLuggageId,
+  getExpenseLuggageId,
   groupTaxRefundExpensesByLuggage,
   normalizeLuggageList,
 } from './lib/luggage.js';
@@ -517,6 +517,7 @@ async function _getStorage() {
                 imageName: '',
                 imageDataUrl: '',
                 category: EXPENSE_CATEGORIES.OTHER,
+                luggageId: '',
                 taxRefund: { eligible: false, status: 'pending' },
             });
             const [categoryWasManuallySelected, setCategoryWasManuallySelected] = useState(false);
@@ -563,6 +564,7 @@ async function _getStorage() {
                             imageName: expenseToEdit.imageName || '',
                             imageDataUrl: expenseToEdit.imageDataUrl || '',
                             category: normalizeExpenseCategory(expenseToEdit.category),
+                            luggageId: getExpenseLuggageId(expenseToEdit),
                             taxRefund: expenseToEdit.taxRefund || { eligible: false, status: 'pending' },
                         });
                         setCategoryWasManuallySelected(true);
@@ -611,6 +613,7 @@ async function _getStorage() {
                         imageName: '',
                         imageDataUrl: '',
                         category: EXPENSE_CATEGORIES.OTHER,
+                        luggageId: '',
                         taxRefund: { eligible: false, status: 'pending' },
 					  });
                       setCategoryWasManuallySelected(false);
@@ -653,7 +656,7 @@ async function _getStorage() {
                     ...prev,
                     currency: selectedCurrency,
                     taxRefund: prev.taxRefund?.eligible
-                      ? { ...createTaxRefund({ currency: selectedCurrency, originalAmount: prev.originalAmount, exchangeRate: liveExchangeRates[selectedCurrency] || DEFAULT_EXCHANGE_RATES[selectedCurrency] || 1 }), status: prev.taxRefund.status, luggageId: getLuggageId(prev.taxRefund) }
+                      ? { ...createTaxRefund({ currency: selectedCurrency, originalAmount: prev.originalAmount, exchangeRate: liveExchangeRates[selectedCurrency] || DEFAULT_EXCHANGE_RATES[selectedCurrency] || 1 }), status: prev.taxRefund.status }
                       : prev.taxRefund,
                  }));
                  // ✨ NEW: 幣別記憶儲存邏輯
@@ -667,7 +670,7 @@ async function _getStorage() {
                   exchangeRate: currentExchangeRate,
                   country: newExpense.taxRefund.country,
                   status: newExpense.taxRefund.status,
-                }), luggageId: getLuggageId(newExpense.taxRefund) }
+                }) }
               : null;
 
             const handleImageChange = (e) => {
@@ -876,6 +879,7 @@ async function _getStorage() {
                         exchangeRate: currentExchangeRate,
                         amountInTWD: amountInTWD,
                         category: normalizeExpenseCategory(newExpense.category),
+                        luggageId: String(newExpense.luggageId || '').trim(),
                         taxRefund: taxRefundPreview || { eligible: false, status: 'pending' },
                         payerName: newExpense.payerName,
                         shares: Object.entries(newExpense.shares).reduce((acc, [name, share]) => {
@@ -1029,6 +1033,20 @@ async function _getStorage() {
                       {!isEditing && !categoryWasManuallySelected && <p className="mt-1 text-xs text-gray-500">會依品項自動帶入，可手動調整。</p>}
                     </div>
 
+                    <div>
+                      <label htmlFor="expense-luggage" className="block text-sm font-medium text-gray-700">放入行李箱</label>
+                      <select
+                        id="expense-luggage"
+                        value={newExpense.luggageId || ''}
+                        onChange={(e) => setNewExpense((prev) => ({ ...prev, luggageId: e.target.value }))}
+                        className="mt-1 block w-full border border-gray-300 rounded-lg bg-white p-3 text-sm"
+                        disabled={isReadOnly}
+                      >
+                        <option value="">未指定</option>
+                        {normalizeLuggageList(luggage).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                      </select>
+                    </div>
+
                     <div className="pt-4 border-t border-gray-100">
                       <label className="flex items-center gap-3 cursor-pointer">
                         <input
@@ -1037,7 +1055,7 @@ async function _getStorage() {
                           onChange={(e) => setNewExpense((prev) => ({
                             ...prev,
                             taxRefund: e.target.checked
-                              ? { ...createTaxRefund({ currency: prev.currency, originalAmount: prev.originalAmount, exchangeRate: currentExchangeRate }), luggageId: getLuggageId(prev.taxRefund) }
+                              ? createTaxRefund({ currency: prev.currency, originalAmount: prev.originalAmount, exchangeRate: currentExchangeRate })
                               : { eligible: false, status: 'pending' },
                           }))}
                           className="h-4 w-4 rounded border-gray-300 text-primaryColor-600 focus:ring-primaryColor-500"
@@ -1056,7 +1074,7 @@ async function _getStorage() {
                                 const profile = getTaxRefundProfileByCountry(e.target.value);
                                 setNewExpense((prev) => ({
                                   ...prev,
-                                  taxRefund: { ...createTaxRefund({ currency: prev.currency, originalAmount: prev.originalAmount, exchangeRate: currentExchangeRate, country: profile?.country, status: prev.taxRefund.status }), luggageId: getLuggageId(prev.taxRefund) },
+                                  taxRefund: createTaxRefund({ currency: prev.currency, originalAmount: prev.originalAmount, exchangeRate: currentExchangeRate, country: profile?.country, status: prev.taxRefund.status }),
                                 }));
                               }}
                               className="mt-1 block w-full border border-gray-300 rounded-lg bg-white p-2 text-sm"
@@ -1084,19 +1102,6 @@ async function _getStorage() {
                                 <option value="received">已收到</option>
                               </select>
                             </div>
-                          </div>
-                          <div>
-                            <label htmlFor="tax-refund-luggage" className="block text-sm font-medium text-gray-700">放入行李箱</label>
-                            <select
-                              id="tax-refund-luggage"
-                              value={getLuggageId(newExpense.taxRefund)}
-                              onChange={(e) => setNewExpense((prev) => ({ ...prev, taxRefund: { ...prev.taxRefund, luggageId: e.target.value } }))}
-                              className="mt-1 block w-full border border-gray-300 rounded-lg bg-white p-2 text-sm"
-                              disabled={isReadOnly}
-                            >
-                              <option value="">未指定</option>
-                              {normalizeLuggageList(luggage).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                            </select>
                           </div>
                           <p className="text-xs text-gray-500">退款歸付款人，不影響分帳或結算。</p>
                         </div>
@@ -1697,6 +1702,7 @@ async function _getStorage() {
           const [expenses, setExpenses] = useState([]);
           const [luggage, setLuggage] = useState([]);
           const [isLuggageModalOpen, setIsLuggageModalOpen] = useState(false);
+          const [isLuggageItemsModalOpen, setIsLuggageItemsModalOpen] = useState(false);
           const [newLuggageName, setNewLuggageName] = useState('');
           const [newLuggageOwnerId, setNewLuggageOwnerId] = useState('');
           const [editingLuggageId, setEditingLuggageId] = useState('');
@@ -2272,14 +2278,14 @@ async function _getStorage() {
             const plan = buildLuggageDeletionPlan({ luggageId: item.id, expenses });
             openConfirmModal(
               '刪除行李箱',
-              `確定刪除「${item.name}」嗎？${plan.affectedCount ? `將解除 ${plan.affectedCount} 筆退稅商品的行李箱指派，支出不會刪除。` : '目前沒有商品指派至此行李箱。'}`,
+              `確定刪除「${item.name}」嗎？${plan.affectedCount ? `將解除 ${plan.affectedCount} 筆商品的行李箱指派，支出不會刪除。` : '目前沒有商品指派至此行李箱。'}`,
               async () => {
                 closeConfirmModal();
                 setIsLoading(true); setError(null);
                 try {
                   for (const expenseBatch of plan.batches) {
                     const batch = writeBatch(db);
-                    expenseBatch.forEach((expense) => batch.update(doc(db, `${getGroupExpensesPath(currentCollectionId)}/${expense.id}`), { taxRefund: { ...expense.taxRefund, luggageId: '' } }));
+                    expenseBatch.forEach((expense) => batch.update(doc(db, `${getGroupExpensesPath(currentCollectionId)}/${expense.id}`), { luggageId: '', taxRefund: { ...expense.taxRefund, luggageId: '' } }));
                     await batch.commit();
                   }
                   await setDoc(doc(db, getGroupLuggageDocPath(currentCollectionId)), { list: luggage.filter((entry) => entry.id !== item.id) }, { merge: true });
@@ -3670,20 +3676,7 @@ async function _getStorage() {
                     pendingTaxRefundInTWD={pendingTaxRefundInTWD}
                     memberCategorySpending={memberCategorySpending}
                 />
-                {(() => {
-                  const grouped = groupTaxRefundExpensesByLuggage({ expenses, luggage });
-                  const assignedGroups = grouped.byLuggage.filter((item) => item.expenses.length);
-                  if (!grouped.unassigned.length && !assignedGroups.length) return null;
-                  return (
-                    <section className="mt-6 rounded-xl bg-white p-5 shadow-lg" aria-label="退稅商品行李箱">
-                      <h2 className="text-lg font-bold text-gray-800">🧳 退稅商品行李箱</h2>
-                      {grouped.unassigned.length > 0 && <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">有 {grouped.unassigned.length} 筆可退稅商品尚未指定行李箱</p>}
-                      <div className="mt-3 space-y-2 text-sm">
-                        {assignedGroups.map((item) => <div key={item.id} className="rounded-lg border border-gray-100 p-3"><p className="font-semibold text-gray-700">{item.name}（{item.expenses.length} 筆）</p><p className="mt-1 text-gray-500 truncate">{item.expenses.map((expense) => expense.description).join('、')}</p></div>)}
-                      </div>
-                    </section>
-                  );
-                })()}
+                {luggage.length > 0 && <button type="button" onClick={() => setIsLuggageItemsModalOpen(true)} className="mt-6 flex w-full items-center justify-between rounded-xl bg-white p-5 text-left shadow-lg transition hover:bg-gray-50" aria-label="查看行李箱商品"><span className="text-lg font-bold text-gray-800">🧳 行李箱商品</span><span className="text-sm font-medium text-primaryColor-700">查看</span></button>}
                 <ExpenseList 
                     expenses={expenses} 
                     deleteExpense={deleteExpense} 
@@ -3754,13 +3747,27 @@ async function _getStorage() {
                           <select id="new-luggage-owner" name="newLuggageOwnerId" value={newLuggageOwnerId} onChange={(e) => setNewLuggageOwnerId(e.target.value)} className="mt-2 w-full rounded-lg border border-gray-300 bg-white p-2 text-sm" disabled={isLoading}><option value="">持有人（可不選）</option>{members.map((member) => <option key={member} value={member}>{getDisplayName(member)}</option>)}</select>
                           <button type="submit" disabled={isLoading} className="mt-2 rounded-lg bg-primaryColor-600 px-4 py-2 text-sm font-semibold text-white disabled:bg-gray-400">新增</button>
                         </form>
-                        {luggage.length === 0 ? <p className="text-sm text-gray-500">尚未建立行李箱。建立後可在可退稅支出中指派。</p> : luggage.map((item) => <div key={item.id} className="rounded-lg border border-gray-200 p-3">
+                        {luggage.length === 0 ? <p className="text-sm text-gray-500">尚未建立行李箱。建立後可在任何支出中指派。</p> : luggage.map((item) => <div key={item.id} className="rounded-lg border border-gray-200 p-3">
                           {editingLuggageId === item.id ? <div className="flex gap-2"><input aria-label={`修改 ${item.name} 的名稱`} name="editingLuggageName" value={editingLuggageName} onChange={(e) => setEditingLuggageName(e.target.value)} className="min-w-0 flex-1 rounded border border-gray-300 p-2" /><button onClick={() => renameLuggage(item)} className="rounded bg-primaryColor-600 px-3 text-sm font-semibold text-white">儲存</button><button onClick={() => setEditingLuggageId('')} className="px-2 text-sm">取消</button></div> : <div className="flex items-center justify-between gap-2"><div><p className="font-semibold text-gray-800">{item.name}</p>{item.ownerId && <p className="text-xs text-gray-500">持有人：{getDisplayName(item.ownerId)}</p>}</div><div className="flex gap-2"><button onClick={() => { setEditingLuggageId(item.id); setEditingLuggageName(item.name); }} className="text-sm text-primaryColor-700">改名</button><button onClick={() => requestDeleteLuggage(item)} className="text-sm text-red-600">刪除</button></div></div>}
                         </div>)}
                       </div>
                     </div>
                   </div>
                 )}
+
+                {isLuggageItemsModalOpen && (() => {
+                  const grouped = groupTaxRefundExpensesByLuggage({ expenses, luggage });
+                  const renderExpenses = (items) => items.length ? <ul className="mt-2 space-y-1 text-sm text-gray-600">{items.map((expense) => <li key={expense.id} className="rounded bg-gray-50 px-2 py-1">{expense.description}</li>)}</ul> : <p className="mt-2 text-sm text-gray-400">無</p>;
+                  return <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-gray-900 bg-opacity-75 p-4">
+                    <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white shadow-2xl">
+                      <div className="flex items-center justify-between border-b p-5"><h2 className="text-xl font-bold text-gray-800">🧳 行李箱商品</h2><button onClick={() => setIsLuggageItemsModalOpen(false)} className="rounded-full p-2 text-gray-500 hover:bg-gray-100" aria-label="關閉行李箱商品">✕</button></div>
+                      <div className="space-y-4 p-5">
+                        {grouped.byLuggage.map((item) => <section key={item.id} className="rounded-lg border border-gray-200 p-3"><h3 className="font-semibold text-gray-800">{item.name}</h3><div className="mt-3"><p className="text-sm font-semibold text-primaryColor-700">可退稅商品（{item.expenses.length}）</p>{renderExpenses(item.expenses)}</div><div className="mt-3 border-t pt-3"><p className="text-sm font-semibold text-gray-700">一般商品（{(item.regularExpenses || []).length}）</p>{renderExpenses(item.regularExpenses || [])}</div></section>)}
+                        {(grouped.unassigned.length > 0 || grouped.unassignedRegular.length > 0) && <section className="rounded-lg border border-amber-200 bg-amber-50 p-3"><h3 className="font-semibold text-amber-900">未指定行李箱</h3><div className="mt-3"><p className="text-sm font-semibold text-amber-800">可退稅商品（{grouped.unassigned.length}）</p>{renderExpenses(grouped.unassigned)}</div><div className="mt-3 border-t border-amber-200 pt-3"><p className="text-sm font-semibold text-amber-800">一般商品（{grouped.unassignedRegular.length}）</p>{renderExpenses(grouped.unassignedRegular)}</div></section>}
+                      </div>
+                    </div>
+                  </div>;
+                })()}
                 
                 {/* 統一的確認提示 Modal */}
                 <ConfirmationModal 

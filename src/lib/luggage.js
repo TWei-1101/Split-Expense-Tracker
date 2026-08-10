@@ -22,8 +22,15 @@ export function getLuggageId(taxRefund) {
   return taxRefund?.eligible ? String(taxRefund.luggageId || '').trim() : '';
 }
 
+// New expenses store their luggage independently of tax-refund eligibility.  The
+// nested value is kept as a read-only fallback for records created before this
+// field existed.
+export function getExpenseLuggageId(expense) {
+  return String(expense?.luggageId || '').trim() || getLuggageId(expense?.taxRefund);
+}
+
 export function buildLuggageDeletionPlan({ luggageId, expenses = [], batchSize = 400 }) {
-  const affected = expenses.filter((expense) => getLuggageId(expense.taxRefund) === luggageId);
+  const affected = expenses.filter((expense) => getExpenseLuggageId(expense) === luggageId);
   const batches = [];
   for (let index = 0; index < affected.length; index += batchSize) batches.push(affected.slice(index, index + batchSize));
   return { affected, affectedCount: affected.length, batches };
@@ -33,9 +40,18 @@ export function groupTaxRefundExpensesByLuggage({ expenses = [], luggage = [] })
   const normalized = normalizeLuggageList(luggage);
   const byId = new Map(normalized.map((item) => [item.id, { ...item, expenses: [] }]));
   const unassigned = [];
-  expenses.filter((expense) => expense?.taxRefund?.eligible).forEach((expense) => {
-    const bucket = byId.get(getLuggageId(expense.taxRefund));
-    if (bucket) bucket.expenses.push(expense); else unassigned.push(expense);
+  const unassignedRegular = [];
+  expenses.forEach((expense) => {
+    const isTaxRefund = Boolean(expense?.taxRefund?.eligible);
+    const bucket = byId.get(getExpenseLuggageId(expense));
+    if (bucket) {
+      if (isTaxRefund) bucket.expenses.push(expense);
+      else (bucket.regularExpenses ||= []).push(expense);
+    } else if (isTaxRefund) {
+      unassigned.push(expense);
+    } else if (getExpenseLuggageId(expense)) {
+      unassignedRegular.push(expense);
+    }
   });
-  return { byLuggage: [...byId.values()], unassigned };
+  return { byLuggage: [...byId.values()], unassigned, unassignedRegular };
 }
