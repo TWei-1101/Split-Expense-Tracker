@@ -3,7 +3,6 @@ export const TAX_REFUND_PROFILES = [
   { country: 'KR', label: '韓國', currency: 'KRW', rate: 0.10, autoCurrency: true },
   { country: 'TH', label: '泰國', currency: 'THB', rate: 0.07, autoCurrency: true },
   { country: 'AU', label: '澳洲', currency: 'AUD', rate: 0.10, autoCurrency: true },
-  { country: 'TW', label: '台灣', currency: 'TWD', rate: 0.05, autoCurrency: true },
   { country: 'NO', label: '挪威', currency: 'NOK', rate: 0.25, autoCurrency: true },
   { country: 'SG', label: '新加坡', currency: 'SGD', rate: 0.09, autoCurrency: true },
   { country: 'FR', label: '法國', currency: 'EUR', rate: 0.20 },

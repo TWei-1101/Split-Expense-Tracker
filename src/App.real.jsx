@@ -3718,11 +3718,12 @@ async function _getStorage() {
                   <Users className="w-7 h-7 mr-3 text-primaryColor-500" />
                   結餘總結 
                 </h2>
-                <div className="mb-4 rounded-xl border border-primaryColor-100 bg-primaryColor-50 p-4">
-                  <p className="text-sm font-medium text-primaryColor-700">待收退稅總額</p>
-                  <p className="mt-1 text-2xl font-extrabold text-primaryColor-700">TWD {(pendingTaxRefundInTWD || 0).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</p>
-                  <p className="mt-1 text-xs text-gray-500">僅統計待收項目，按各筆支出儲存時的匯率換算；不影響分帳結算。</p>
-                </div>
+                {pendingTaxRefundInTWD > 0 && (
+                  <div className="mb-4 rounded-xl border border-primaryColor-100 bg-primaryColor-50 p-4">
+                    <p className="text-sm font-medium text-primaryColor-700">待收退稅預估總額</p>
+                    <p className="mt-1 text-2xl font-extrabold text-primaryColor-700">TWD {pendingTaxRefundInTWD.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</p>
+                  </div>
+                )}
 
                 {settlements.length === 0 ? (
                     <p className="text-lg font-medium text-green-600 p-3 bg-green-50 rounded-lg">🎉 所有帳目已結清！</p>
