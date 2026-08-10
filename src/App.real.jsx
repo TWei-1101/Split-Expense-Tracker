@@ -1213,7 +1213,7 @@ async function _getStorage() {
                   <div className="fixed inset-0 z-[60] flex items-center justify-center bg-gray-900/75 p-4">
                     <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
                       <h4 className="text-lg font-bold text-gray-800">可能重複的支出</h4>
-                      <p className="mt-2 text-sm text-gray-600">找到相同品項、金額、幣別與付款人的近期支出。確認後仍可儲存這筆新資料。</p>
+                      <p className="mt-2 text-sm text-gray-600">找到相同分類、金額、幣別與付款人的支出。確認後仍可儲存這筆新資料。</p>
                       <ul className="mt-4 max-h-56 space-y-2 overflow-y-auto">
                         {duplicateCandidates.map(candidate => {
                           const date = expenseTimestampToDate(candidate.timestamp);

@@ -8,45 +8,44 @@ const candidate = {
   originalAmount: '100',
   currency: 'TWD',
   payerName: 'alice',
+  category: 'food',
   timestamp: '2026-08-10T12:00:00.000Z',
 };
 
-test('同金額、幣別、付款人與正規化品項在前後七日內才是可能重複', () => {
+test('同金額、幣別、付款人與分類即使日期或品項不同仍是可能重複', () => {
   const matches = findDuplicateExpenses({
     expense: candidate,
     expenses: [
-      { id: 'match-before', ...candidate, description: 'lunch at cafe', timestamp: '2026-08-03T12:00:00.000Z' },
-      { id: 'match-after', ...candidate, timestamp: new Date('2026-08-17T12:00:00.000Z') },
-      { id: 'outside-range', ...candidate, timestamp: '2026-08-17T12:00:00.001Z' },
+      { id: 'old-match', ...candidate, description: '早餐', timestamp: '2020-01-01T12:00:00.000Z' },
+      { id: 'future-match', ...candidate, description: '晚餐', timestamp: new Date('2030-12-31T12:00:00.000Z') },
     ],
   });
-  assert.deepEqual(matches.map(item => item.id), ['match-before', 'match-after']);
+  assert.deepEqual(matches.map(item => item.id), ['old-match', 'future-match']);
 });
 
-test('不同付款人、幣別、金額、品項與無法解析日期都不命中', () => {
+test('不同付款人、幣別、金額或分類不命中', () => {
   const matches = findDuplicateExpenses({
     expense: candidate,
     expenses: [
       { id: 'payer', ...candidate, payerName: 'bob' },
       { id: 'currency', ...candidate, currency: 'JPY' },
       { id: 'amount', ...candidate, originalAmount: 101 },
-      { id: 'description', ...candidate, description: 'Dinner at Cafe' },
-      { id: 'bad-date', ...candidate, timestamp: 'not-a-date' },
+      { id: 'category', ...candidate, category: 'transport' },
     ],
   });
   assert.equal(matches.length, 0);
 });
 
-test('編輯時排除自身，且支援 Firestore timestamp、Date 與日期字串', () => {
+test('舊資料缺少分類時視為其他，編輯時排除自身', () => {
   const matches = findDuplicateExpenses({
-    expense: { ...candidate, id: 'self', timestamp: { toDate: () => new Date('2026-08-10T12:00:00.000Z') } },
+    expense: { ...candidate, id: 'self', category: 'other', timestamp: { toDate: () => new Date('2026-08-10T12:00:00.000Z') } },
     expenses: [
       { id: 'self', ...candidate, timestamp: new Date('2026-08-10T12:00:00.000Z') },
-      { id: 'string-date', ...candidate, timestamp: '2026-08-11' },
+      { id: 'legacy-other', ...candidate, category: undefined, timestamp: 'not-a-date' },
     ],
     excludeExpenseId: 'self',
   });
-  assert.deepEqual(matches.map(item => item.id), ['string-date']);
+  assert.deepEqual(matches.map(item => item.id), ['legacy-other']);
 });
 
 test('重複提醒只在提交時顯示，取消不寫入，確認後允許單次儲存', () => {

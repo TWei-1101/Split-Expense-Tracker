@@ -1,4 +1,4 @@
-const DUPLICATE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+import { normalizeExpenseCategory } from './expense-categories.js';
 
 export function normalizeExpenseDescription(description) {
   return String(description || '')
@@ -21,20 +21,18 @@ export function expenseTimestampToDate(timestamp) {
 }
 
 export function findDuplicateExpenses({ expense, expenses = [], excludeExpenseId } = {}) {
-  const targetDate = expenseTimestampToDate(expense?.timestamp) || new Date();
   const targetAmount = Number(expense?.originalAmount);
-  const targetDescription = normalizeExpenseDescription(expense?.description);
+  const targetCategory = normalizeExpenseCategory(expense?.category);
 
-  if (!targetDescription || !Number.isFinite(targetAmount)) return [];
+  if (!Number.isFinite(targetAmount)) return [];
 
   return expenses.filter(existing => {
     if (!existing || existing.id === excludeExpenseId) return false;
     if (Number(existing.originalAmount) !== targetAmount
       || existing.currency !== expense.currency
       || existing.payerName !== expense.payerName
-      || normalizeExpenseDescription(existing.description) !== targetDescription) return false;
+      || normalizeExpenseCategory(existing.category) !== targetCategory) return false;
 
-    const existingDate = expenseTimestampToDate(existing.timestamp);
-    return existingDate && Math.abs(existingDate.getTime() - targetDate.getTime()) <= DUPLICATE_WINDOW_MS;
+    return true;
   });
 }
