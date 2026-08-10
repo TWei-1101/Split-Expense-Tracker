@@ -797,6 +797,7 @@ async function _getStorage() {
                         },
                         expenses,
                         excludeExpenseId: isEditing ? expenseToEdit?.id : undefined,
+                        payerIdentityOptions: { members, getDisplayName },
                     });
                     if (matches.length > 0) {
                         setDuplicateCandidates(matches);

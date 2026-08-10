@@ -48,6 +48,30 @@ test('舊資料缺少分類時視為其他，編輯時排除自身', () => {
   assert.deepEqual(matches.map(item => item.id), ['legacy-other']);
 });
 
+test('目前使用者的 UID 與唯一對應的舊顯示名稱視為同一付款人', () => {
+  const matches = findDuplicateExpenses({
+    expense: { ...candidate, payerName: 'uid-twei' },
+    expenses: [{ id: 'legacy-self', ...candidate, payerName: '廷瑋' }],
+    payerIdentityOptions: {
+      members: ['uid-twei', 'uid-alice'],
+      getDisplayName: id => ({ 'uid-twei': '廷瑋', 'uid-alice': 'Alice' })[id],
+    },
+  });
+  assert.deepEqual(matches.map(item => item.id), ['legacy-self']);
+});
+
+test('同名成員的舊顯示名稱保持嚴格比對，不能誤判為目前使用者', () => {
+  const matches = findDuplicateExpenses({
+    expense: { ...candidate, payerName: 'uid-twei' },
+    expenses: [{ id: 'ambiguous-legacy', ...candidate, payerName: '廷瑋' }],
+    payerIdentityOptions: {
+      members: ['uid-twei', 'uid-other'],
+      getDisplayName: () => '廷瑋',
+    },
+  });
+  assert.equal(matches.length, 0);
+});
+
 test('重複提醒只在提交時顯示，取消不寫入，確認後允許單次儲存', () => {
   const appSource = readFileSync(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
   assert.match(appSource, /findDuplicateExpenses\(/);
