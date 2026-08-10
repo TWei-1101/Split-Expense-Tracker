@@ -35,6 +35,8 @@ import ConfirmationModal from './features/common/ConfirmationModal.jsx';
 import ExpenseModal from './features/expenses/ExpenseModal.jsx';
 import MemberManagementModal from './features/members/MemberManagementModal.jsx';
 import AuthModal from './features/auth/AuthModal.jsx';
+import useExchangeRates from './hooks/useExchangeRates.js';
+import GroupNameEditor from './features/groups/GroupNameEditor.jsx';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
@@ -146,92 +148,6 @@ async function _getStorage() {
         const CURRENCIES = Object.keys(HARDCODED_DEFAULT_RATES); // 幣別列表仍使用硬編碼的 Key
         const DEFAULT_CURRENCY = 'TWD';
 
-        // --- 匯率獲取函式：每 4 小時更新一次 + 可顯示更新時間 ---
-		const fetchExchangeRates = async () => {
-			const CACHE_KEY = "exchangeRatesCache";
-			const CACHE_TIME_KEY = "exchangeRatesCacheTime";
-			const FOUR_HOURS = 4 * 60 * 60 * 1000;
-
-			// 1. 從 localStorage 讀取臨時快取
-			try {
-				const cachedRates = localStorage.getItem(CACHE_KEY);
-				const cachedTime = localStorage.getItem(CACHE_TIME_KEY);
-
-				if (cachedRates && cachedTime) {
-					const lastUpdate = parseInt(cachedTime, 10);
-					const now = Date.now();
-
-					// 少於 4 小時 → 使用臨時快取
-					if (now - lastUpdate < FOUR_HOURS) {
-						console.log("📦 使用臨時快取匯率（4 小時內）");
-
-						return {
-							rates: JSON.parse(cachedRates),
-							lastUpdate
-						};
-					}
-				}
-			} catch (err) {
-				console.warn("⚠ 讀取臨時匯率快取失敗，將重新抓取。", err);
-			}
-
-			// 2. 超過 4 小時 → 抓取新資料
-			const API_URL = "https://open.er-api.com/v6/latest/TWD";
-
-			try {
-				const res = await fetch(API_URL);
-				if (!res.ok) throw new Error("API 回應錯誤");
-
-				const data = await res.json();
-				if (!data || data.result !== "success") throw new Error("無效匯率資料");
-
-				const processedRates = { [DEFAULT_CURRENCY]: 1.0 };
-
-				CURRENCIES.forEach(code => {
-					if (code === DEFAULT_CURRENCY) return;
-
-					const rateTWDToCode = data.rates[code]; // 1 TWD = x {code}
-					if (typeof rateTWDToCode === "number" && rateTWDToCode > 0) {
-						processedRates[code] = 1 / rateTWDToCode; // 1 {code} = ? TWD
-					} else {
-                        // 如果 API 沒給，使用硬編碼預設值
-						processedRates[code] = HARDCODED_DEFAULT_RATES[code];
-					}
-				});
-
-				const now = Date.now();
-
-				// 3. 寫入 Cache
-				try {
-					localStorage.setItem(CACHE_KEY, JSON.stringify(processedRates));
-					localStorage.setItem(CACHE_TIME_KEY, now.toString());
-                    // ✨ NEW: 寫入永久備用快取
-                    localStorage.setItem(PERMANENT_RATES_CACHE_KEY, JSON.stringify(processedRates));
-                    // 更新全域 DEFAULT_EXCHANGE_RATES 變數
-                    DEFAULT_EXCHANGE_RATES = processedRates;
-				} catch (err) {
-					console.warn("⚠️ 無法寫入快取（可能是無痕模式）", err);
-				}
-
-				console.log("🌐 已抓取最新匯率", processedRates);
-
-				return {
-					rates: processedRates,
-					lastUpdate: now
-				};
-
-			} catch (err) {
-				console.error("❌ 抓取匯率失敗，使用預設匯率", err);
-				const fallbackTime = Date.now();
-
-				return {
-					// 使用持久化或硬編碼的 DEFAULT_EXCHANGE_RATES
-					rates: DEFAULT_EXCHANGE_RATES, 
-					lastUpdate: fallbackTime
-				};
-			}
-		};
-
         // --- 分享連結用的短代碼產生器 ---
         const generateShortCode = (length = 6) => {
             const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 避免 O/0、I/1 等混淆
@@ -309,8 +225,17 @@ async function _getStorage() {
           const [isGuest, setIsGuest] = useState(false); // NEW: 追蹤是否為匿名訪客
           const [isAuthModalOpen, setIsAuthModalOpen] = useState(false); // NEW: 控制 AuthModal 顯示
           const [userProfiles, setUserProfiles] = useState({});
-		  const [lastExchangeUpdate, setLastExchangeUpdate] = useState(null);
-          const [liveExchangeRates, setLiveExchangeRates] = useState(DEFAULT_EXCHANGE_RATES);
+		  const {
+			lastExchangeUpdate,
+			liveExchangeRates,
+			converterSourceCurrency,
+			setConverterSourceCurrency,
+			converterTargetCurrency,
+			setConverterTargetCurrency,
+			converterAmount,
+			setConverterAmount,
+			convertedAmount,
+		  } = useExchangeRates();
 		  const [defaultCurrency, setDefaultCurrency] = useState(DEFAULT_CURRENCY);
 		  const [detectedCountry, setDetectedCountry] = useState(null);
 		  const [copyMessage, setCopyMessage] = useState('');
@@ -330,22 +255,6 @@ async function _getStorage() {
           
           // ✨ NEW: 搜尋關鍵字狀態
           const [searchKeyword, setSearchKeyword] = useState('');
-
-          // ✨ MODIFIED: 匯率換算器狀態 (Source and Target)
-          const initialConverterSourceCurrency = localStorage.getItem('lastConverterSourceCurrency') || DEFAULT_CURRENCY;
-          // 左邊幣值 (Source): 讀取 localStorage 或預設 TWD
-          const [converterSourceCurrency, setConverterSourceCurrency] = useState(initialConverterSourceCurrency); 
-          // 右邊幣值 (Target): 預設 TWD，不讀取 localStorage
-          const [converterTargetCurrency, setConverterTargetCurrency] = useState(DEFAULT_CURRENCY); 
-          const [converterAmount, setConverterAmount] = useState('');
-
-          // --- 0. 匯率換算器來源幣別持久化 ---
-          // 只有 Source Currency (左邊) 需要記錄
-          useEffect(() => {
-              if (converterSourceCurrency) {
-                  localStorage.setItem('lastConverterSourceCurrency', converterSourceCurrency);
-              }
-          }, [converterSourceCurrency]);
 
           const [expenses, setExpenses] = useState([]);
           const [customMembers, setCustomMembers] = useState([]); 
@@ -687,14 +596,6 @@ async function _getStorage() {
 
             return () => unsubscribeProfiles();
           }, [authReady, db]);
-
-          // --- 3. 獲取實時匯率 ---
-          useEffect(() => {
-			fetchExchangeRates().then(result => {
-				setLiveExchangeRates(result.rates);
-				setLastExchangeUpdate(result.lastUpdate);
-			});
-		  }, []);
 
 			// 登出（改用 confirm modal，而不是 window.confirm）
           // --- Modal 開關 ---
@@ -1458,34 +1359,6 @@ async function _getStorage() {
             });
           };
 
-		  // --- 計算換算結果 ---
-          const convertedAmount = useMemo(() => {
-              const amount = parseFloat(converterAmount) || 0;
-              if (amount <= 0) return 0;
-              
-              // ✨ FIXED: Step 1: Convert source amount to TWD
-              // 使用 liveExchangeRates，如果沒有，則使用 DEFAULT_EXCHANGE_RATES (包含硬編碼 4.5)，再沒有才用 1.0
-              const rateToTWD = liveExchangeRates[converterSourceCurrency] 
-                                || DEFAULT_EXCHANGE_RATES[converterSourceCurrency] // 新增備用
-                                || 1.0; 
-              const amountInTWD = amount * rateToTWD;
-
-              // ✨ FIXED: Step 2: Convert TWD to target currency
-              const rateToTarget = liveExchangeRates[converterTargetCurrency] 
-                                   || DEFAULT_EXCHANGE_RATES[converterTargetCurrency] // 新增備用
-                                   || 1.0; 
-              
-              if (rateToTarget === 0) return 0; // Avoid division by zero
-              
-              // 1 Target Currency = X TWD (rateToTarget)
-              // 1 TWD = 1 / rateToTarget Target Currency
-              const targetAmount = amountInTWD / rateToTarget;
-              
-              // 換算結果四捨五入到小數點後兩位 (為了精準度，不像分帳只取整數)
-              return parseFloat(targetAmount.toFixed(2));
-
-          }, [converterAmount, converterSourceCurrency, converterTargetCurrency, liveExchangeRates]);
-
 			// --- 渲染 ---
 			const currentUserLabel = userId ? getDisplayName(userId) : '';
 			const isViewingOwn = currentCollectionId === userId && !isGuest; // MODIFIED: 訪客模式不算 viewing own
@@ -1629,70 +1502,17 @@ async function _getStorage() {
 					  <div className="flex items-center gap-3">
 						<Pencil className="w-10 h-10 text-primaryColor-700" />
 
-						{isEditingGroupName && !isReadOnly ? (
-						  <div className="flex flex-col sm:flex-row sm:items-center gap-2 flex-1">
-							<input
-							  type="text"
-							  value={groupNameInput}
-							  onChange={(e) => setGroupNameInput(e.target.value)}
-							  onKeyDown={(e) => {
-								if (e.key === 'Enter') {
-								  e.preventDefault();
-								  saveGroupName();
-								} else if (e.key === 'Escape') {
-								  e.preventDefault();
-								  cancelEditGroupName();
-								}
-							  }}
-							  className="w-full border-b border-primaryColor-500 bg-transparent text-2xl sm:text-3xl font-extrabold text-primaryColor-700 focus:outline-none focus:border-primaryColor-700"
-							  autoFocus
-							  maxLength={40}
-							  placeholder="輸入這本分帳記帳簿名稱"
-							/>
-
-							{/* 按鈕在手機時會換到下一行 */}
-							<div className="flex gap-2 justify-end sm:justify-start">
-							  <button
-								type="button"
-								onClick={saveGroupName}
-								disabled={isLoading || !groupNameInput.trim()}
-								className={
-								  "px-3 py-1 rounded-lg text-sm font-semibold text-white shadow-md " +
-								  ((isLoading || !groupNameInput.trim())
-									? "bg-gray-400 cursor-not-allowed"
-									: "bg-primaryColor-600 hover:bg-primaryColor-700")
-								}
-							  >
-								儲存
-							  </button>
-							  <button
-								type="button"
-								onClick={cancelEditGroupName}
-								className="px-3 py-1 rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-100"
-							  >
-								取消
-							  </button>
-							</div>
-						  </div>
-						) : (
-						  // 原本的顯示模式保持不變
-						  <div className="flex flex-col">
-							<h1
-							  className={
-								"text-3xl sm:text-4xl font-extrabold text-primaryColor-700 " +
-								(isReadOnly ? "" : "cursor-text hover:underline decoration-dotted")
-							  }
-							  onClick={() => {
-								if (!isReadOnly) {
-								  startEditGroupName();
-								}
-							  }}
-							  title={isReadOnly ? "" : "點擊以修改這本分帳記帳簿名稱"}
-							>
-							  {groupName || '分帳記帳簿'}
-							</h1>
-						  </div>
-						)}
+						<GroupNameEditor
+						  isEditing={isEditingGroupName}
+						  isReadOnly={isReadOnly}
+						  groupName={groupName}
+						  groupNameInput={groupNameInput}
+						  isLoading={isLoading}
+						  onGroupNameInputChange={setGroupNameInput}
+						  onSave={saveGroupName}
+						  onCancel={cancelEditGroupName}
+						  onStartEdit={startEditGroupName}
+						/>
 					  </div>
 
 					  {lastExchangeUpdate && (

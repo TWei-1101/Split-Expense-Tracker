@@ -66,3 +66,21 @@ test('AuthModal is separated from the application orchestrator', () => {
   assert.match(componentSource, /signInWithEmailAndPassword/);
   assert.match(componentSource, /createUserWithEmailAndPassword/);
 });
+
+test('group name editor is separated from Firestore orchestration', () => {
+  const appSource = readFileSync(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  const componentSource = readFileSync(new URL('../src/features/groups/GroupNameEditor.jsx', import.meta.url), 'utf8');
+
+  assert.match(appSource, /import GroupNameEditor from '.\/features\/groups\/GroupNameEditor\.jsx'/);
+  assert.match(componentSource, /placeholder="輸入這本分帳記帳簿名稱"/);
+  assert.match(componentSource, /event\.key === 'Escape'/);
+});
+
+test('exchange rate state is owned by a dedicated hook', () => {
+  const appSource = readFileSync(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  const hookSource = readFileSync(new URL('../src/hooks/useExchangeRates.js', import.meta.url), 'utf8');
+
+  assert.match(appSource, /import useExchangeRates from '.\/hooks\/useExchangeRates\.js'/);
+  assert.match(appSource, /} = useExchangeRates\(\)/);
+  assert.match(hookSource, /export default function useExchangeRates/);
+});
