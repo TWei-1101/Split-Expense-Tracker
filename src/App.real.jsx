@@ -10,12 +10,10 @@ import {
   getFirestore,
   collection,
   doc,
-  addDoc,
   setDoc,
   getDoc,
   getDocs,
   updateDoc,
-  deleteDoc,
   onSnapshot,
   query,
   where,
@@ -37,6 +35,13 @@ import MemberManagementModal from './features/members/MemberManagementModal.jsx'
 import AuthModal from './features/auth/AuthModal.jsx';
 import useExchangeRates from './hooks/useExchangeRates.js';
 import GroupNameEditor from './features/groups/GroupNameEditor.jsx';
+import {
+  deleteExpense as deleteExpenseRecord,
+  createExpense,
+  getGroupExpensesPath,
+  listExpenses,
+  mapExpenseSnapshot,
+} from './services/expenseRepository.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
@@ -76,9 +81,6 @@ async function _getStorage() {
         // 注意：GEMINI_API_KEY 已在頂層的純 JS 區塊中定義，可以直接訪問
         // serverTimestamp 已在外層 import / alias 過，這裡不重複宣告
         
-		const getGroupExpensesPath = (groupId) =>
-		  `artifacts/${appId}/groups/${groupId}/expenses`;
-
 		const getGroupMembersDocPath = (groupId) =>
 		  `artifacts/${appId}/groups/${groupId}/settings/members`;
 
@@ -650,30 +652,13 @@ async function _getStorage() {
             // FIX: 只要不是完全未就緒，就允許載入 (即使是訪客模式，也需要 userId 和 currentCollectionId)
             if (!authReady || !db || !currentCollectionId || !userId) return; 
 
-            const expensesCollectionPath = getGroupExpensesPath(currentCollectionId);
+			const expensesCollectionPath = getGroupExpensesPath(appId, currentCollectionId);
 			const expensesRef = collection(db, expensesCollectionPath);
 
             const unsubscribeExpenses = onSnapshot(expensesRef, (snapshot) => {
-              const fetchedExpenses = snapshot.docs.map(docSnap => {
-                const data = docSnap.data();
-                const timestamp = data.timestamp ? data.timestamp.toDate() : null; 
-                
-                const originalAmount = data.originalAmount !== undefined ? data.originalAmount : data.amount;
-                const currency = data.currency || DEFAULT_CURRENCY;
-                const exchangeRate = data.exchangeRate || (DEFAULT_EXCHANGE_RATES[currency] || 1.0);
-                const amountInTWD = data.amountInTWD !== undefined ? data.amountInTWD : originalAmount * exchangeRate;
-
-                return {
-                  id: docSnap.id, 
-                  ...data,
-                  originalAmount: typeof originalAmount === 'number' ? originalAmount : parseFloat(originalAmount || 0),
-                  currency: currency,
-                  exchangeRate: exchangeRate,
-                  amountInTWD: typeof amountInTWD === 'number' ? amountInTWD : parseFloat(amountInTWD || 0),
-                  shares: data.shares || {},
-                  timestamp: timestamp,
-                };
-              });
+              const fetchedExpenses = snapshot.docs.map((docSnap) =>
+                mapExpenseSnapshot(docSnap, DEFAULT_CURRENCY, DEFAULT_EXCHANGE_RATES)
+              );
               setExpenses(fetchedExpenses);
             }, (err) => {
               console.error(`Error listening to expenses in collection ${currentCollectionId}:`, err);
@@ -840,8 +825,7 @@ async function _getStorage() {
                 setIsLoading(true);
                 setError(null);
                 try {
-                    const docPath = `${getGroupExpensesPath(currentCollectionId)}/${expenseId}`;
-                    await deleteDoc(doc(db, docPath));
+                    await deleteExpenseRecord(db, appId, currentCollectionId, expenseId);
                     if (expense?.imagePath) {
                         try {
                             const { getStorage, storageRef, deleteObject } = await _getStorage();
@@ -873,8 +857,7 @@ async function _getStorage() {
                   setIsLoading(true);
                   setError(null);
                   try {
-                      const expensesCollectionPath = getGroupExpensesPath(currentCollectionId);
-                      const snapshot = await getDocs(collection(db, expensesCollectionPath));
+                      const snapshot = await listExpenses(db, appId, currentCollectionId);
 
                       const batch = writeBatch(db);
                       const imagePaths = [];
@@ -1202,7 +1185,7 @@ async function _getStorage() {
 				  });
 
 				  // --- 2) 批量更新 expenses (Batch)
-				  const expensesCollectionPath = getGroupExpensesPath(currentCollectionId);
+				  const expensesCollectionPath = getGroupExpensesPath(appId, currentCollectionId);
 				  const expensesSnapshot = await getDocs(collection(db, expensesCollectionPath));
 
 				  let batch = writeBatch(db);
@@ -1297,10 +1280,8 @@ async function _getStorage() {
                   setIsLoading(true);
                   setError(null);
                   try {
-                      const collectionPath = getGroupExpensesPath(currentCollectionId);
-                      
                       // 使用新欄位格式：originalAmount / currency / amountInTWD
-                      await addDoc(collection(db, collectionPath), {
+                      await createExpense(db, appId, currentCollectionId, {
                           description: `[結清] ${getDisplayName(debtorId)} 歸還給 ${getDisplayName(creditorId)} 欠款`,
                           originalAmount: roundedAmount,
                           currency: DEFAULT_CURRENCY,
@@ -1725,7 +1706,6 @@ async function _getStorage() {
                     currencies={CURRENCIES}
                     lastExpenseCurrencyKey={LAST_EXPENSE_CURRENCY_KEY}
                     selfPayerKey={SELF_PAYER_KEY}
-                    getGroupExpensesPath={getGroupExpensesPath}
                     getStorageModule={_getStorage}
                     getFirebaseApp={getFirebaseApp}
                     appId={appId}

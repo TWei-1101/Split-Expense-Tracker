@@ -1,8 +1,9 @@
 import React, { memo, useEffect, useMemo, useState } from 'react';
-import { collection, doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { serverTimestamp } from 'firebase/firestore';
 import { createTaxRefund, getTaxRefundProfileByCountry, TAX_REFUND_PROFILES } from '../../lib/tax-refund.js';
+import { createExpense, getExpenseDocRef, updateExpense } from '../../services/expenseRepository.js';
 
-        const ExpenseModal = memo(({ db, currentUserId, members, getInitialShares, state, onClose, getDisplayName, isReadOnly, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel, fallbackExchangeRates, currencies, lastExpenseCurrencyKey, selfPayerKey, getGroupExpensesPath, getStorageModule, getFirebaseApp, appId, icons }) => {
+        const ExpenseModal = memo(({ db, currentUserId, members, getInitialShares, state, onClose, getDisplayName, isReadOnly, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel, fallbackExchangeRates, currencies, lastExpenseCurrencyKey, selfPayerKey, getStorageModule, getFirebaseApp, appId, icons }) => {
             const [newExpense, setNewExpense] = useState({
                 description: '',
                 originalAmount: '',
@@ -284,10 +285,7 @@ import { createTaxRefund, getTaxRefundProfileByCountry, TAX_REFUND_PROFILES } fr
                 setIsLoadingModal(true);
                 setModalError(null);
                 try {
-                    const collectionPath = getGroupExpensesPath(collectionId);
-                    const docRef = isEditing
-                        ? doc(db, `${collectionPath}/${expenseToEdit.id}`)
-                        : doc(collection(db, collectionPath));
+                    const docRef = getExpenseDocRef(db, appId, collectionId, isEditing ? expenseToEdit.id : undefined);
 
                     let imageFields = {
                         imageUrl: newExpense.imageUrl || '',
@@ -353,9 +351,9 @@ import { createTaxRefund, getTaxRefundProfileByCountry, TAX_REFUND_PROFILES } fr
                     };
 
                     if (isEditing) {
-                        await updateDoc(docRef, expenseToSave);
+                        await updateExpense(db, appId, collectionId, expenseToEdit.id, expenseToSave);
                     } else {
-                        await setDoc(docRef, expenseToSave);
+                        await createExpense(db, appId, collectionId, expenseToSave, docRef.id);
                     }
 
                     onClose();
