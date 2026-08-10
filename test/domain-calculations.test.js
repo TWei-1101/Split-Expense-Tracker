@@ -57,3 +57,12 @@ test('MemberManagementModal is separated from the application orchestrator', () 
   assert.match(componentSource, /管理分帳成員與預設份數/);
   assert.match(componentSource, /migrateMemberID\(oldName, newId, setModalMessage\)/);
 });
+
+test('AuthModal is separated from the application orchestrator', () => {
+  const appSource = readFileSync(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  const componentSource = readFileSync(new URL('../src/features/auth/AuthModal.jsx', import.meta.url), 'utf8');
+
+  assert.match(appSource, /import AuthModal from '.\/features\/auth\/AuthModal\.jsx'/);
+  assert.match(componentSource, /signInWithEmailAndPassword/);
+  assert.match(componentSource, /createUserWithEmailAndPassword/);
+});

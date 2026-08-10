@@ -3,11 +3,8 @@ import { initializeApp, getApp, getApps } from 'firebase/app';
 import {
   getAuth,
   onAuthStateChanged,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
   signInAnonymously,
   signOut,
-  updateProfile,
 } from 'firebase/auth';
 import {
   getFirestore,
@@ -37,6 +34,7 @@ import BalanceSummary from './features/settlements/BalanceSummary.jsx';
 import ConfirmationModal from './features/common/ConfirmationModal.jsx';
 import ExpenseModal from './features/expenses/ExpenseModal.jsx';
 import MemberManagementModal from './features/members/MemberManagementModal.jsx';
+import AuthModal from './features/auth/AuthModal.jsx';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
@@ -298,146 +296,6 @@ async function _getStorage() {
                 console.error("Error creating/updating public profile:", e);
             }
         };
-        
-        /**
-         * 認證模態視窗
-         */
-        const AuthModal = memo(({ auth, db, setToastMessage, isOpen, onClose }) => { // MODIFIED: 接受控制屬性
-            if (!isOpen) return null; // NEW: 檢查是否開啟
-            
-            const [email, setEmail] = useState('');
-            const [password, setPassword] = useState('');
-            const [nickname, setNickname] = useState('');
-            const [isLogin, setIsLogin] = useState(true);
-            const [isLoading, setIsLoading] = useState(false);
-
-            const handleSubmit = async (e) => {
-                e.preventDefault();
-                setIsLoading(true);
-
-                if (!email || !password || (!isLogin && !nickname)) {
-                    setToastMessage('❌ 請輸入所有必填欄位。'); 
-                    setIsLoading(false);
-                    return;
-                }
-
-                try {
-                    let userCredential;
-                    let finalDisplayName = nickname.trim();
-
-                    if (isLogin) {
-                        userCredential = await signInWithEmailAndPassword(auth, email, password);
-                        finalDisplayName = userCredential.user.displayName || email;
-                    } else {
-                        userCredential = await createUserWithEmailAndPassword(auth, email, password);
-                        await updateProfile(userCredential.user, {
-                            displayName: finalDisplayName
-                        });
-                    }
-                    
-                    if (db) {
-                        await createOrUpdatePublicProfile(db, userCredential.user.uid, finalDisplayName, email);
-                    }
-                    
-                    setToastMessage(`✅ 登入成功！歡迎 ${finalDisplayName}。`);
-                    onClose(); // MODIFIED: 成功後關閉 Modal
-
-                } catch (e) {
-                    console.error("Auth error:", e.code, e.message);
-                    let displayError = e.message;
-                    if (e.code === 'auth/email-already-in-use') {
-                        displayError = '該電子郵件已被註冊，請直接登入或使用不同郵件。';
-                    } else if (e.code === 'auth/invalid-email') {
-                        displayError = '無效的電子郵件格式。';
-                    } else if (e.code === 'auth/wrong-password' || e.code === 'auth/user-not-found') {
-                        displayError = '電子郵件或密碼錯誤。';
-                    } else if (e.code === 'auth/weak-password') {
-                        displayError = '密碼強度不足，請使用至少 6 個字元。';
-                    }
-                    setToastMessage(`❌ 登入/註冊失敗: ${displayError}`); 
-
-                } finally {
-                    setIsLoading(false);
-                }
-            };
-
-            return (
-                <div className="fixed inset-0 bg-gray-900 bg-opacity-95 flex items-center justify-center p-4 z-50 force-gpu">
-                    <div className="bg-white rounded-xl w-full max-w-md shadow-2xl p-6 sm:p-8 force-gpu relative">
-                        <button onClick={onClose} className="absolute top-4 right-4 p-1 rounded-full hover:bg-gray-100 text-gray-600 transition hover:scale-110 transform">
-                            <X className="w-6 h-6" />
-                        </button>
-                        <h3 className="text-3xl font-bold text-primaryColor-600 text-center mb-6">
-                            {isLogin ? '登入紀錄簿' : '註冊新帳號'}
-                        </h3>
-                        {/* 移除原本的錯誤訊息顯示區塊 */}
-
-                        <form onSubmit={handleSubmit} className="space-y-4">
-                            {!isLogin && (
-                                <div>
-                                    <label htmlFor="nickname" className="block text-sm font-medium text-gray-700">暱稱 (顯示名稱)</label>
-                                    <input
-                                        type="text"
-                                        id="nickname"
-                                        value={nickname}
-                                        onChange={(e) => setNickname(e.target.value)}
-                                        placeholder="請輸入您的暱稱"
-                                        className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500"
-                                        disabled={isLoading}
-                                        required={!isLogin}
-                                    />
-                                </div>
-                            )}
-
-                            <div>
-                                <label htmlFor="email" className="block text-sm font-medium text-gray-700">電子郵件</label>
-                                <input
-                                    type="email"
-                                    id="email"
-                                    value={email}
-                                    onChange={(e) => setEmail(e.target.value)}
-                                    placeholder="your.email@example.com"
-                                    className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500"
-                                    disabled={isLoading}
-                                />
-                            </div>
-                            <div>
-                                <label htmlFor="password" className="block text-sm font-medium text-gray-700">密碼 (至少 6 位)</label>
-                                <input
-                                    type="password"
-                                    id="password"
-                                    value={password}
-                                    onChange={(e) => setPassword(e.target.value)}
-                                    placeholder="******"
-                                    className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500"
-                                    disabled={isLoading}
-                                    minLength="6"
-                                />
-                            </div>
-                            <button
-                                type="submit"
-                                disabled={isLoading}
-                                className={
-                                    "w-full flex items-center justify-center px-4 py-3 rounded-full text-white font-semibold transition duration-300 shadow-lg " +
-                                    (isLoading ? "bg-gray-400 cursor-not-allowed" : "bg-primaryColor-600 hover:bg-primaryColor-700")
-                                }
-                            >
-                                {isLoading ? '處理中...' : (isLogin ? '登入' : '註冊')}
-                            </button>
-                        </form>
-
-                        <div className="mt-6 text-center">
-                            <button
-                                onClick={() => { setIsLogin(prev => !prev); setToastMessage(null); setNickname(''); }}
-                                className="text-primaryColor-600 hover:text-primaryColor-800 font-medium text-sm"
-                            >
-                                {isLogin ? '還沒有帳號？點此註冊' : '已經有帳號了？點此登入'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            );
-        });
         
         /**
          * 主要的 App 元件
@@ -2091,10 +1949,15 @@ async function _getStorage() {
                 {isGuest && (
                     <AuthModal 
                        auth={auth} 
-                       db={db} 
                        setToastMessage={setToastMessage} 
                        isOpen={isAuthModalOpen} 
                        onClose={() => setIsAuthModalOpen(false)} 
+                       onAuthenticated={async (authenticatedUser, displayName, email) => {
+                         if (db) {
+                           await createOrUpdatePublicProfile(db, authenticatedUser.uid, displayName, email);
+                         }
+                       }}
+                       closeIcon={<X className="w-6 h-6" />}
                      />
                  )}
 
