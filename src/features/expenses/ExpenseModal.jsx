@@ -1,6 +1,6 @@
 import React, { memo, useEffect, useMemo, useState } from 'react';
 import { serverTimestamp } from 'firebase/firestore';
-import { createTaxRefund, getTaxRefundProfileByCountry, TAX_REFUND_PROFILES } from '../../lib/tax-refund.js';
+import { createTaxRefund, getTaxRefundProfileByCountry, TAX_REFUND_PROFILES } from '../tax-refunds/taxRefund.js';
 import { createExpense, getExpenseDocRef, updateExpense } from '../../services/expenseRepository.js';
 
         const ExpenseModal = memo(({ db, currentUserId, members, getInitialShares, state, onClose, getDisplayName, isReadOnly, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel, fallbackExchangeRates, currencies, lastExpenseCurrencyKey, selfPayerKey, getStorageModule, getFirebaseApp, appId, icons }) => {
