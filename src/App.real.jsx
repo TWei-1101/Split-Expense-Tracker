@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   signInAnonymously,
   signOut,
@@ -19,7 +19,6 @@ import {
   arrayUnion,
   arrayRemove,
 } from 'firebase/firestore';
-import { detectTelegramMode } from './lib/tg-mode.js';
 import { pendingTaxRefundTotalInTWD } from './features/tax-refunds/taxRefund.js';
 import { calculateBalances, SELF_PAYER_KEY } from './domain/calculateBalances.js';
 import { calculateSettlements } from './domain/calculateSettlements.js';
@@ -54,11 +53,6 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
 		const getGroupMembersDocPath = (groupId) =>
 		  `artifacts/${appId}/groups/${groupId}/settings/members`;
 
-		const getExpenseImagePath = (groupId, expenseId, fileName) => {
-		  const safeName = (fileName || 'receipt').replace(/[^\w.\-]+/g, '_').slice(-80);
-		  return `artifacts/${appId}/groups/${groupId}/expense-images/${expenseId}-${Date.now()}-${safeName}`;
-		};
-		
         // --- 匯率設定 (預設值作為備用) ---
         const PERMANENT_RATES_CACHE_KEY = "permanentExchangeRates";
         // ✨ NEW: 定義記憶最後一次使用幣別的 Key
@@ -204,8 +198,7 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
 			setConverterAmount,
 			convertedAmount,
 		  } = useExchangeRates();
-		  const [defaultCurrency, setDefaultCurrency] = useState(DEFAULT_CURRENCY);
-		  const [detectedCountry, setDetectedCountry] = useState(null);
+		  const defaultCurrency = DEFAULT_CURRENCY;
 		  const [copyMessage, setCopyMessage] = useState('');
           
           const [currentCollectionId, setCurrentCollectionId] = useState(null); // 目前正在檢視的 groupId
