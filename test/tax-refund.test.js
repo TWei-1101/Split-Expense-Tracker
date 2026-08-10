@@ -32,15 +32,15 @@ test('待收退稅總額只加總 pending，並使用每筆保存的匯率', () 
 });
 
 test('expense modal exposes the tax-refund controls', () => {
-  const modalSource = readFileSync(new URL('../src/features/expenses/ExpenseModal.jsx', import.meta.url), 'utf8');
-  assert.match(modalSource, /此筆可退稅/);
-  assert.match(modalSource, /退稅國家／地區/);
-  assert.match(modalSource, /退稅狀態/);
+  const appSource = readFileSync(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  assert.match(appSource, /此筆可退稅/);
+  assert.match(appSource, /退稅國家／地區/);
+  assert.match(appSource, /退稅狀態/);
 });
 
 test('結餘總結僅在有待收退稅預估金額時顯示摘要', () => {
-  const summarySource = readFileSync(new URL('../src/features/settlements/BalanceSummary.jsx', import.meta.url), 'utf8');
-  assert.match(summarySource, /pendingTaxRefundInTWD > 0/);
-  assert.match(summarySource, /待收退稅預估總額/);
-  assert.doesNotMatch(summarySource, /僅統計待收項目，按各筆支出儲存時的匯率換算；不影響分帳結算。/);
+  const appSource = readFileSync(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  assert.match(appSource, /pendingTaxRefundInTWD > 0/);
+  assert.match(appSource, /待收退稅預估總額/);
+  assert.doesNotMatch(appSource, /僅統計待收項目，按各筆支出儲存時的匯率換算；不影響分帳結算。/);
 });

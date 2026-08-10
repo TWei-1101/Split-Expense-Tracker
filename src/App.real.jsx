@@ -1,15 +1,25 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
+import { initializeApp, getApp, getApps } from 'firebase/app';
 import {
+  getAuth,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
   signInAnonymously,
   signOut,
+  updateProfile,
 } from 'firebase/auth';
 import {
+  getFirestore,
   collection,
   doc,
+  addDoc,
   setDoc,
   getDoc,
   getDocs,
   updateDoc,
+  deleteDoc,
+  onSnapshot,
   query,
   where,
   limit,
@@ -19,40 +29,59 @@ import {
   arrayUnion,
   arrayRemove,
 } from 'firebase/firestore';
-import { pendingTaxRefundTotalInTWD } from './features/tax-refunds/taxRefund.js';
-import { calculateBalances, SELF_PAYER_KEY } from './domain/calculateBalances.js';
-import { calculateSettlements } from './domain/calculateSettlements.js';
-import BalanceSummary from './features/settlements/BalanceSummary.jsx';
-import ConfirmationModal from './features/common/ConfirmationModal.jsx';
-import ExpenseModal from './features/expenses/ExpenseModal.jsx';
-import ExpenseList from './features/expenses/ExpenseList.jsx';
-import MemberManagementModal from './features/members/MemberManagementModal.jsx';
-import AuthModal from './features/auth/AuthModal.jsx';
-import useExchangeRates from './hooks/useExchangeRates.js';
-import useAuth from './hooks/useAuth.js';
-import useGroup from './hooks/useGroup.js';
-import GroupNameEditor from './features/groups/GroupNameEditor.jsx';
-import {
-  deleteExpense as deleteExpenseRecord,
-  createExpense,
-  getGroupExpensesPath,
-  listExpenses,
-  mapExpenseSnapshot,
-} from './services/expenseRepository.js';
-import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './services/firebase.js';
+import { detectTelegramMode } from './lib/tg-mode.js';
+import { createTaxRefund, getTaxRefundProfileByCountry, pendingTaxRefundTotalInTWD, TAX_REFUND_PROFILES } from './lib/tax-refund.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
 // --- Firebase 設定（從 CDN 版 hardcode，沿用同一份，避免 query 跑到 default-app-id）---
+const appId = 'YOUR_APP_ID';
+const SELF_PAYER_KEY = '__self__';
+const firebaseConfig = {
+  apiKey: "AIzaSyB8l7Od781kGHyI9pXMLBXvzt7NuuIyq8c",
+  authDomain: "splite-expense-tracker.firebaseapp.com",
+  projectId: "splite-expense-tracker",
+  storageBucket: "splite-expense-tracker.firebasestorage.app",
+  messagingSenderId: "425612895494",
+  appId: "1:425612895494:web:b5889f1d83cafb41d7ea87",
+  measurementId: "G-FVS0WSGZD9",
+};
+
+let _firebaseApp = null;
+function getFirebaseApp() {
+    if (!_firebaseApp) {
+        _firebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
+    }
+    return _firebaseApp;
+}
+
+let _storagePromise = null;
+async function _getStorage() {
+    if (!_storagePromise) {
+        _storagePromise = (async () => {
+            const { getStorage, ref: storageRef, uploadBytes, getDownloadURL, deleteObject } = await import('firebase/storage');
+            return { getStorage, storageRef, uploadBytes, getDownloadURL, deleteObject };
+        })();
+    }
+    return _storagePromise;
+}
 
         
         
         // 注意：GEMINI_API_KEY 已在頂層的純 JS 區塊中定義，可以直接訪問
         // serverTimestamp 已在外層 import / alias 過，這裡不重複宣告
         
+		const getGroupExpensesPath = (groupId) =>
+		  `artifacts/${appId}/groups/${groupId}/expenses`;
+
 		const getGroupMembersDocPath = (groupId) =>
 		  `artifacts/${appId}/groups/${groupId}/settings/members`;
 
+		const getExpenseImagePath = (groupId, expenseId, fileName) => {
+		  const safeName = (fileName || 'receipt').replace(/[^\w.\-]+/g, '_').slice(-80);
+		  return `artifacts/${appId}/groups/${groupId}/expense-images/${expenseId}-${Date.now()}-${safeName}`;
+		};
+		
         // --- 匯率設定 (預設值作為備用) ---
         const PERMANENT_RATES_CACHE_KEY = "permanentExchangeRates";
         // ✨ NEW: 定義記憶最後一次使用幣別的 Key
@@ -113,6 +142,92 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
 		
         const CURRENCIES = Object.keys(HARDCODED_DEFAULT_RATES); // 幣別列表仍使用硬編碼的 Key
         const DEFAULT_CURRENCY = 'TWD';
+
+        // --- 匯率獲取函式：每 4 小時更新一次 + 可顯示更新時間 ---
+		const fetchExchangeRates = async () => {
+			const CACHE_KEY = "exchangeRatesCache";
+			const CACHE_TIME_KEY = "exchangeRatesCacheTime";
+			const FOUR_HOURS = 4 * 60 * 60 * 1000;
+
+			// 1. 從 localStorage 讀取臨時快取
+			try {
+				const cachedRates = localStorage.getItem(CACHE_KEY);
+				const cachedTime = localStorage.getItem(CACHE_TIME_KEY);
+
+				if (cachedRates && cachedTime) {
+					const lastUpdate = parseInt(cachedTime, 10);
+					const now = Date.now();
+
+					// 少於 4 小時 → 使用臨時快取
+					if (now - lastUpdate < FOUR_HOURS) {
+						console.log("📦 使用臨時快取匯率（4 小時內）");
+
+						return {
+							rates: JSON.parse(cachedRates),
+							lastUpdate
+						};
+					}
+				}
+			} catch (err) {
+				console.warn("⚠ 讀取臨時匯率快取失敗，將重新抓取。", err);
+			}
+
+			// 2. 超過 4 小時 → 抓取新資料
+			const API_URL = "https://open.er-api.com/v6/latest/TWD";
+
+			try {
+				const res = await fetch(API_URL);
+				if (!res.ok) throw new Error("API 回應錯誤");
+
+				const data = await res.json();
+				if (!data || data.result !== "success") throw new Error("無效匯率資料");
+
+				const processedRates = { [DEFAULT_CURRENCY]: 1.0 };
+
+				CURRENCIES.forEach(code => {
+					if (code === DEFAULT_CURRENCY) return;
+
+					const rateTWDToCode = data.rates[code]; // 1 TWD = x {code}
+					if (typeof rateTWDToCode === "number" && rateTWDToCode > 0) {
+						processedRates[code] = 1 / rateTWDToCode; // 1 {code} = ? TWD
+					} else {
+                        // 如果 API 沒給，使用硬編碼預設值
+						processedRates[code] = HARDCODED_DEFAULT_RATES[code];
+					}
+				});
+
+				const now = Date.now();
+
+				// 3. 寫入 Cache
+				try {
+					localStorage.setItem(CACHE_KEY, JSON.stringify(processedRates));
+					localStorage.setItem(CACHE_TIME_KEY, now.toString());
+                    // ✨ NEW: 寫入永久備用快取
+                    localStorage.setItem(PERMANENT_RATES_CACHE_KEY, JSON.stringify(processedRates));
+                    // 更新全域 DEFAULT_EXCHANGE_RATES 變數
+                    DEFAULT_EXCHANGE_RATES = processedRates;
+				} catch (err) {
+					console.warn("⚠️ 無法寫入快取（可能是無痕模式）", err);
+				}
+
+				console.log("🌐 已抓取最新匯率", processedRates);
+
+				return {
+					rates: processedRates,
+					lastUpdate: now
+				};
+
+			} catch (err) {
+				console.error("❌ 抓取匯率失敗，使用預設匯率", err);
+				const fallbackTime = Date.now();
+
+				return {
+					// 使用持久化或硬編碼的 DEFAULT_EXCHANGE_RATES
+					rates: DEFAULT_EXCHANGE_RATES, 
+					lastUpdate: fallbackTime
+				};
+			}
+		};
 
         // --- 分享連結用的短代碼產生器 ---
         const generateShortCode = (length = 6) => {
@@ -180,37 +295,1277 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
         };
         
         /**
+         * 通用確認提示 Modal
+         */
+        const ConfirmationModal = memo(({ isOpen, onClose, onConfirm, title, message, confirmText, confirmColor = 'red' }) => {
+            if (!isOpen) return null;
+
+            const colorClass =
+                confirmColor === 'green'
+                    ? 'bg-green-600 hover:bg-green-700'
+                    : 'bg-red-600 hover:bg-red-700';
+
+            return (
+                <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-[9999] transition-opacity force-gpu">
+                    <div className="bg-white rounded-xl w-full max-w-sm shadow-2xl transform transition-transform duration-300 scale-100 force-gpu">
+                        <div className="p-6">
+                            <h3 className="text-xl font-bold text-gray-800 mb-4">{title}</h3>
+                            <p className="text-gray-600 mb-6">{message}</p>
+                            <div className="flex justify-end space-x-3">
+                                <button
+                                    onClick={onClose}
+                                    className="px-4 py-2 rounded-full text-gray-700 bg-gray-200 hover:bg-gray-300 transition font-semibold"
+                                >
+                                    取消
+                                </button>
+                                <button
+                                    onClick={onConfirm}
+                                    className={`px-4 py-2 rounded-full text-white font-semibold transition duration-150 shadow-md ${colorClass}`}
+                                >
+                                    {confirmText}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        });
+
+        /**
+         * 認證模態視窗
+         */
+        const AuthModal = memo(({ auth, db, setToastMessage, isOpen, onClose }) => { // MODIFIED: 接受控制屬性
+            if (!isOpen) return null; // NEW: 檢查是否開啟
+            
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [nickname, setNickname] = useState('');
+            const [isLogin, setIsLogin] = useState(true);
+            const [isLoading, setIsLoading] = useState(false);
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setIsLoading(true);
+
+                if (!email || !password || (!isLogin && !nickname)) {
+                    setToastMessage('❌ 請輸入所有必填欄位。'); 
+                    setIsLoading(false);
+                    return;
+                }
+
+                try {
+                    let userCredential;
+                    let finalDisplayName = nickname.trim();
+
+                    if (isLogin) {
+                        userCredential = await signInWithEmailAndPassword(auth, email, password);
+                        finalDisplayName = userCredential.user.displayName || email;
+                    } else {
+                        userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                        await updateProfile(userCredential.user, {
+                            displayName: finalDisplayName
+                        });
+                    }
+                    
+                    if (db) {
+                        await createOrUpdatePublicProfile(db, userCredential.user.uid, finalDisplayName, email);
+                    }
+                    
+                    setToastMessage(`✅ 登入成功！歡迎 ${finalDisplayName}。`);
+                    onClose(); // MODIFIED: 成功後關閉 Modal
+
+                } catch (e) {
+                    console.error("Auth error:", e.code, e.message);
+                    let displayError = e.message;
+                    if (e.code === 'auth/email-already-in-use') {
+                        displayError = '該電子郵件已被註冊，請直接登入或使用不同郵件。';
+                    } else if (e.code === 'auth/invalid-email') {
+                        displayError = '無效的電子郵件格式。';
+                    } else if (e.code === 'auth/wrong-password' || e.code === 'auth/user-not-found') {
+                        displayError = '電子郵件或密碼錯誤。';
+                    } else if (e.code === 'auth/weak-password') {
+                        displayError = '密碼強度不足，請使用至少 6 個字元。';
+                    }
+                    setToastMessage(`❌ 登入/註冊失敗: ${displayError}`); 
+
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-gray-900 bg-opacity-95 flex items-center justify-center p-4 z-50 force-gpu">
+                    <div className="bg-white rounded-xl w-full max-w-md shadow-2xl p-6 sm:p-8 force-gpu relative">
+                        <button onClick={onClose} className="absolute top-4 right-4 p-1 rounded-full hover:bg-gray-100 text-gray-600 transition hover:scale-110 transform">
+                            <X className="w-6 h-6" />
+                        </button>
+                        <h3 className="text-3xl font-bold text-primaryColor-600 text-center mb-6">
+                            {isLogin ? '登入紀錄簿' : '註冊新帳號'}
+                        </h3>
+                        {/* 移除原本的錯誤訊息顯示區塊 */}
+
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            {!isLogin && (
+                                <div>
+                                    <label htmlFor="nickname" className="block text-sm font-medium text-gray-700">暱稱 (顯示名稱)</label>
+                                    <input
+                                        type="text"
+                                        id="nickname"
+                                        value={nickname}
+                                        onChange={(e) => setNickname(e.target.value)}
+                                        placeholder="請輸入您的暱稱"
+                                        className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500"
+                                        disabled={isLoading}
+                                        required={!isLogin}
+                                    />
+                                </div>
+                            )}
+
+                            <div>
+                                <label htmlFor="email" className="block text-sm font-medium text-gray-700">電子郵件</label>
+                                <input
+                                    type="email"
+                                    id="email"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    placeholder="your.email@example.com"
+                                    className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500"
+                                    disabled={isLoading}
+                                />
+                            </div>
+                            <div>
+                                <label htmlFor="password" className="block text-sm font-medium text-gray-700">密碼 (至少 6 位)</label>
+                                <input
+                                    type="password"
+                                    id="password"
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    placeholder="******"
+                                    className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500"
+                                    disabled={isLoading}
+                                    minLength="6"
+                                />
+                            </div>
+                            <button
+                                type="submit"
+                                disabled={isLoading}
+                                className={
+                                    "w-full flex items-center justify-center px-4 py-3 rounded-full text-white font-semibold transition duration-300 shadow-lg " +
+                                    (isLoading ? "bg-gray-400 cursor-not-allowed" : "bg-primaryColor-600 hover:bg-primaryColor-700")
+                                }
+                            >
+                                {isLoading ? '處理中...' : (isLogin ? '登入' : '註冊')}
+                            </button>
+                        </form>
+
+                        <div className="mt-6 text-center">
+                            <button
+                                onClick={() => { setIsLogin(prev => !prev); setToastMessage(null); setNickname(''); }}
+                                className="text-primaryColor-600 hover:text-primaryColor-800 font-medium text-sm"
+                            >
+                                {isLogin ? '還沒有帳號？點此註冊' : '已經有帳號了？點此登入'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        });
+        
+		/**
+         * 支出 Modal (核心邏輯獨立)
+         */
+        const ExpenseModal = memo(({ db, currentUserId, members, getInitialShares, state, onClose, getDisplayName, isReadOnly, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel}) => {
+            const [newExpense, setNewExpense] = useState({
+                description: '',
+                originalAmount: '',
+                currency: defaultCurrency || DEFAULT_CURRENCY,
+                payerName: currentUserId || '',
+                shares: {}, 
+                imageUrl: '',
+                imagePath: '',
+                imageName: '',
+                imageDataUrl: '',
+                taxRefund: { eligible: false, status: 'pending' },
+            });
+            const [imageFile, setImageFile] = useState(null);
+            const [imagePreviewUrl, setImagePreviewUrl] = useState('');
+            const [removeExistingImage, setRemoveExistingImage] = useState(false);
+            const [isLoadingModal, setIsLoadingModal] = useState(false);
+            const [modalError, setModalError] = useState(null);
+            const [uploadStatus, setUploadStatus] = useState('');
+
+            const isEditing = state.isEditing;
+            const expenseToEdit = state.editingExpense;
+            const modalTitle = isEditing ? '編輯支出記錄' : '新增支出記錄';
+            const submitText = isEditing ? '儲存修改' : '確認新增支出';
+            
+            const currentExchangeRate = liveExchangeRates[newExpense.currency] || DEFAULT_EXCHANGE_RATES[newExpense.currency] || 1.0;
+            const amountInTWD = useMemo(() => {
+                const amount = parseFloat(newExpense.originalAmount) || 0;
+                return amount * currentExchangeRate;
+            }, [newExpense.originalAmount, currentExchangeRate]);
+
+            // ✨ NEW: 選單不列 TWD（因為是預設幣），TWD 改用左邊的 TW 按鈕切換
+            const nonTwdCurrencies = CURRENCIES.filter(c => c !== DEFAULT_CURRENCY);
+            // 當 currency 是 TWD 時，下拉選單顯示「最後一次選的外幣」作為參考
+            const lastForeignCurrency = localStorage.getItem(LAST_EXPENSE_CURRENCY_KEY) || nonTwdCurrencies[0] || 'JPY';
+
+
+            useEffect(() => {
+                if (state.isOpen) {
+                    if (isEditing && expenseToEdit) {
+                        const initialShares = members.reduce((acc, name) => ({ 
+                            ...acc, 
+                            [name]: expenseToEdit.shares[name] !== undefined ? expenseToEdit.shares[name] : 0 
+                        }), {});
+                        setNewExpense({
+                            description: expenseToEdit.description,
+                            originalAmount: expenseToEdit.originalAmount,
+                            currency: expenseToEdit.currency || DEFAULT_CURRENCY,
+                            payerName: expenseToEdit.payerName,
+                            shares: initialShares,
+                            imageUrl: expenseToEdit.imageUrl || '',
+                            imagePath: expenseToEdit.imagePath || '',
+                            imageName: expenseToEdit.imageName || '',
+                            imageDataUrl: expenseToEdit.imageDataUrl || '',
+                            taxRefund: expenseToEdit.taxRefund || { eligible: false, status: 'pending' },
+                        });
+                        setImagePreviewUrl(expenseToEdit.imageUrl || expenseToEdit.imageDataUrl || '');
+					} else {
+					  // 決定預設的付款人：
+					  // 1. 如果 members 裡包含 currentUserId，優先用 currentUserId
+					  // 2. 否則，如果有成員顯示名稱 == currentUserLabel，就用那個成員
+					  // 3. 都沒有就 fallback 回原本的邏輯
+					  let defaultPayerId = null;
+
+					  if (currentUserId && members.includes(currentUserId)) {
+						defaultPayerId = currentUserId;
+					  }
+
+					  if (!defaultPayerId && currentUserLabel) {
+						for (const memberId of members) {
+						  try {
+							const label = getDisplayName(memberId);
+							if (label === currentUserLabel) {
+							  defaultPayerId = memberId;
+							  break;
+							}
+						  } catch (e) {
+							// getDisplayName 出錯就忽略
+						  }
+						}
+					  }
+
+					  if (!defaultPayerId) {
+						defaultPayerId = currentUserId || members[0] || '';
+					  }
+
+                      // ✨ NEW: 幣別記憶讀取邏輯
+                      const savedCurrency = localStorage.getItem(LAST_EXPENSE_CURRENCY_KEY);
+                      const initialCurrency = savedCurrency || defaultCurrency || DEFAULT_CURRENCY;
+
+					  setNewExpense({
+						description: '',
+						originalAmount: '',
+						currency: initialCurrency, // ✨ 改用記憶或預設幣別
+						payerName: defaultPayerId,
+						shares: getInitialShares(),
+                        imageUrl: '',
+                        imagePath: '',
+                        imageName: '',
+                        imageDataUrl: '',
+                        taxRefund: { eligible: false, status: 'pending' },
+					  });
+                      setImagePreviewUrl('');
+					}
+
+                    setImageFile(null);
+                    setRemoveExistingImage(false);
+                    setModalError(null);
+                    setUploadStatus('');
+                }
+            }, [state.isOpen, isEditing, expenseToEdit, members, currentUserId, getInitialShares, currentUserLabel, getDisplayName, defaultCurrency]);
+
+            useEffect(() => {
+                return () => {
+                    if (imagePreviewUrl && imagePreviewUrl.startsWith('blob:')) {
+                        URL.revokeObjectURL(imagePreviewUrl);
+                    }
+                };
+            }, [imagePreviewUrl]);
+
+            const handleInputChange = (e) => {
+                const { name, value } = e.target;
+                setNewExpense(prev => ({
+                    ...prev,
+                    [name]: name === 'originalAmount' ? (value === '' ? '' : parseFloat(value) || '') : value,
+                }));
+            };
+
+            const handleCurrencyChange = (e) => {
+                 const selectedCurrency = e.target.value;
+                 setNewExpense(prev => ({
+                    ...prev,
+                    currency: selectedCurrency,
+                    taxRefund: prev.taxRefund?.eligible
+                      ? { ...createTaxRefund({ currency: selectedCurrency, originalAmount: prev.originalAmount, exchangeRate: liveExchangeRates[selectedCurrency] || DEFAULT_EXCHANGE_RATES[selectedCurrency] || 1 }), status: prev.taxRefund.status }
+                      : prev.taxRefund,
+                 }));
+                 // ✨ NEW: 幣別記憶儲存邏輯
+                 localStorage.setItem(LAST_EXPENSE_CURRENCY_KEY, selectedCurrency);
+            };
+
+            const taxRefundPreview = newExpense.taxRefund?.eligible
+              ? createTaxRefund({
+                  currency: newExpense.currency,
+                  originalAmount: newExpense.originalAmount,
+                  exchangeRate: currentExchangeRate,
+                  country: newExpense.taxRefund.country,
+                  status: newExpense.taxRefund.status,
+                })
+              : null;
+
+            const handleImageChange = (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                if (!file.type.startsWith('image/')) {
+                    setModalError('請選擇圖片檔。');
+                    return;
+                }
+                if (file.size > 20 * 1024 * 1024) {
+                    setModalError('圖片檔案請小於 20MB。');
+                    return;
+                }
+                if (imagePreviewUrl && imagePreviewUrl.startsWith('blob:')) {
+                    URL.revokeObjectURL(imagePreviewUrl);
+                }
+                setImageFile(file);
+                setImagePreviewUrl(URL.createObjectURL(file));
+                setRemoveExistingImage(false);
+                setModalError(null);
+            };
+
+            const compressImage = (file) => new Promise((resolve, reject) => {
+                const imageUrl = URL.createObjectURL(file);
+                const image = new Image();
+                image.onload = () => {
+                    const targets = [
+                        { maxSide: 1600, quality: 0.82 },
+                        { maxSide: 1200, quality: 0.76 },
+                        { maxSide: 1000, quality: 0.72 },
+                        { maxSide: 800, quality: 0.70 },
+                    ];
+
+                    const renderTarget = (targetIndex) => {
+                      try {
+                        const { maxSide, quality } = targets[targetIndex];
+                        const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+                        const width = Math.max(1, Math.round(image.width * scale));
+                        const height = Math.max(1, Math.round(image.height * scale));
+                        const canvas = document.createElement('canvas');
+                        canvas.width = width;
+                        canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(image, 0, 0, width, height);
+
+                        canvas.toBlob((blob) => {
+                            if (!blob) {
+                                URL.revokeObjectURL(imageUrl);
+                                reject(new Error('圖片壓縮失敗，請換一張圖片。'));
+                                return;
+                            }
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                                const dataUrl = reader.result;
+                                if (typeof dataUrl === 'string' && dataUrl.length <= 850000) {
+                                    URL.revokeObjectURL(imageUrl);
+                                    resolve({ dataUrl, blob, width, height });
+                                    return;
+                                }
+                                if (targetIndex < targets.length - 1) {
+                                    renderTarget(targetIndex + 1);
+                                    return;
+                                }
+                                URL.revokeObjectURL(imageUrl);
+                                reject(new Error('圖片壓縮後仍太大，請裁切或換一張圖片。'));
+                            };
+                            reader.onerror = () => {
+                                URL.revokeObjectURL(imageUrl);
+                                reject(new Error('圖片轉換失敗，請換一張圖片。'));
+                            };
+                            reader.readAsDataURL(blob);
+                        }, 'image/jpeg', quality);
+                      } catch (err) {
+                        URL.revokeObjectURL(imageUrl);
+                        reject(err);
+                      }
+                    };
+
+                    renderTarget(0);
+                };
+                image.onerror = () => {
+                    URL.revokeObjectURL(imageUrl);
+                    reject(new Error('圖片讀取失敗，請換一張圖片。'));
+                };
+                image.src = imageUrl;
+            });
+
+            const clearSelectedImage = () => {
+                if (imagePreviewUrl && imagePreviewUrl.startsWith('blob:')) {
+                    URL.revokeObjectURL(imagePreviewUrl);
+                }
+                setImageFile(null);
+                setImagePreviewUrl('');
+                setRemoveExistingImage(Boolean(newExpense.imageUrl || newExpense.imageDataUrl));
+            };
+
+            const handleShareChange = (name, delta) => {
+                setNewExpense(prev => {
+                    const currentShares = prev.shares[name] || 0;
+                    const newShares = Math.max(0, currentShares + delta);
+                    return {
+                        ...prev,
+                        shares: {
+                            ...prev.shares,
+                            [name]: newShares,
+                        },
+                    };
+                });
+            };
+
+            const setToAverageSplit = () => {
+                const averageShares = members.reduce((acc, name) => ({ ...acc, [name]: 1 }), {});
+                setNewExpense(prev => ({
+                    ...prev,
+                    shares: averageShares,
+                }));
+            };
+
+            const saveExpense = async () => {
+                if (isReadOnly) {
+                    setModalError('您正在瀏覽共享紀錄簿，無法進行修改。請切換回您的私有紀錄簿。');
+                    return;
+                }
+                if (!db || !currentUserId) return;
+
+                if (!newExpense.description.trim() || newExpense.originalAmount <= 0 || (newExpense.payerName !== SELF_PAYER_KEY && !newExpense.payerName)) {
+                    setModalError('請輸入有效的品項、金額和付款人！');
+                    return;
+                }
+
+                setIsLoadingModal(true);
+                setModalError(null);
+                try {
+                    const collectionPath = getGroupExpensesPath(collectionId);
+                    const docRef = isEditing
+                        ? doc(db, `${collectionPath}/${expenseToEdit.id}`)
+                        : doc(collection(db, collectionPath));
+
+                    let imageFields = {
+                        imageUrl: newExpense.imageUrl || '',
+                        imagePath: newExpense.imagePath || '',
+                        imageName: newExpense.imageName || '',
+                        imageDataUrl: newExpense.imageDataUrl || '',
+                    };
+
+                    if (removeExistingImage && (newExpense.imagePath || newExpense.imageUrl || newExpense.imageDataUrl)) {
+                        if (newExpense.imagePath) {
+                            try {
+                                const { getStorage, storageRef, deleteObject } = await _getStorage();
+                                await deleteObject(storageRef(getStorage(getFirebaseApp()), newExpense.imagePath));
+                            } catch (imageDeleteError) {
+                                console.warn('Delete old expense image failed:', imageDeleteError);
+                            }
+                        }
+                        imageFields = { imageUrl: '', imagePath: '', imageName: '', imageDataUrl: '' };
+                    }
+
+                    if (imageFile) {
+                        if (newExpense.imagePath) {
+                            try {
+                                const { getStorage, storageRef, deleteObject } = await _getStorage();
+                                await deleteObject(storageRef(getStorage(getFirebaseApp()), newExpense.imagePath));
+                            } catch (imageDeleteError) {
+                                console.warn('Delete replaced expense image failed:', imageDeleteError);
+                            }
+                        }
+                        setUploadStatus('正在壓縮圖片...');
+                        const { blob } = await compressImage(imageFile);
+                        setUploadStatus('正在上傳圖片到 Firebase Storage...');
+                        // ✨ 改用 Firebase Storage 儲存圖片，路徑：groups/{groupId}/expense_images/{expenseId}.jpg
+                        const imagePath = `groups/${collectionId}/expense_images/${docRef.id}.jpg`;
+                        const { getStorage, storageRef, uploadBytes, getDownloadURL } = await _getStorage();
+                        const sRef = storageRef(getStorage(getFirebaseApp()), imagePath);
+                        const uploadResult = await uploadBytes(sRef, blob, { contentType: 'image/jpeg' });
+                        const imageUrl = await getDownloadURL(uploadResult.ref);
+                        imageFields = {
+                            imageUrl,
+                            imagePath,
+                            imageName: imageFile.name,
+                            imageDataUrl: '',
+                        };
+                        setUploadStatus('');
+                    }
+
+                    const expenseToSave = {
+                        description: newExpense.description,
+                        originalAmount: newExpense.originalAmount,
+                        currency: newExpense.currency,
+                        exchangeRate: currentExchangeRate,
+                        amountInTWD: amountInTWD,
+                        taxRefund: taxRefundPreview || { eligible: false, status: 'pending' },
+                        payerName: newExpense.payerName,
+                        shares: Object.entries(newExpense.shares).reduce((acc, [name, share]) => {
+                            if (share > 0) acc[name] = share;
+                            return acc;
+                        }, {}),
+                        ...(isEditing ? {} : { timestamp: serverTimestamp(), creatorId: currentUserId }),
+                        appId: appId,
+                        ...imageFields,
+                    };
+
+                    if (isEditing) {
+                        await updateDoc(docRef, expenseToSave);
+                    } else {
+                        await setDoc(docRef, expenseToSave);
+                    }
+
+                    onClose();
+                } catch (e) {
+                    console.error("Error saving document: ", e);
+                    setModalError(`儲存支出失敗: ${e.message}`);
+                    setUploadStatus('');
+                } finally {
+                    setIsLoadingModal(false);
+                }
+            };
+            
+            if (!state.isOpen) return null;
+
+            return (
+              // 應用 force-gpu 到背景層
+              <div 
+                key={isEditing && expenseToEdit ? expenseToEdit.id : 'add-new'} 
+                className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-start justify-center p-4 z-50 transition-opacity overflow-y-auto force-gpu"
+              >
+                {/* 修正：新增 h-full 和 flex flex-col 讓內容可以獨立滾動 */}
+                <div className="bg-white rounded-xl w-full max-w-lg shadow-2xl transform transition-transform duration-300 scale-100 my-4 h-full sm:h-auto sm:max-h-[95vh] flex flex-col force-gpu">
+                  
+                  {/* 頂部：固定標題 (flex-shrink-0) */}
+                  <div className="p-6 border-b flex justify-between items-center flex-shrink-0">
+                    <h3 className="text-xl font-bold text-gray-800">
+                        {modalTitle} {isReadOnly && <span className="text-red-500 ml-2">(唯讀)</span>}
+                    </h3>
+                    <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-100 text-gray-600 transition hover:scale-110 transform">
+                      <X className="w-6 h-6" />
+                    </button>
+                  </div>
+
+                  {/* 中間內容：可滾動 (flex-1 overflow-y-auto) */}
+                  <div className="p-6 space-y-5 flex-1 overflow-y-auto">
+                    {modalError && <p className="text-red-600 bg-red-100 p-3 rounded-lg text-sm">{modalError}</p>}
+                    {uploadStatus && <p className="text-primaryColor-700 bg-primaryColor-50 p-3 rounded-lg text-sm">{uploadStatus}</p>}
+                    
+                    {/* 1. 品項與金額 */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label htmlFor="description" className="block text-sm font-medium text-gray-700">品項/描述</label>
+                        <input
+                          key="expense-description" 
+                          type="text"
+                          id="description"
+                          name="description"
+                          value={newExpense.description}
+                          onChange={handleInputChange}
+                          placeholder="例如: 晚餐，電影票"
+                          className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500"
+                          disabled={isReadOnly}
+                        />
+                      </div>
+                      
+                      {/* 幣別選擇與金額輸入 */}
+                      <div>
+                        <label htmlFor="originalAmount" className="block text-sm font-medium text-gray-700">幣值/金額</label>
+                        <div className="flex space-x-2 mt-1">
+                          {/* ✨ NEW: TW toggle button - 在幣值下拉左邊，按下去這筆變 TWD，再按一次切回最後選的外幣 */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNewExpense(prev => ({
+                                ...prev,
+                                currency: prev.currency === DEFAULT_CURRENCY ? lastForeignCurrency : DEFAULT_CURRENCY
+                              }));
+                              // 注意：兩種情況都不寫 localStorage — 切換 TWD 跟切回外幣都不影響下次預設
+                            }}
+                            className={`flex-shrink-0 px-3 py-2 rounded-lg border text-sm font-semibold transition ${
+                              newExpense.currency === DEFAULT_CURRENCY
+                                ? 'bg-primaryColor-600 text-white border-primaryColor-600 shadow-sm'
+                                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                            }`}
+                            disabled={isReadOnly}
+                            title="點擊切換 TWD ↔ 最後選的幣值（不影響下次預設）"
+                          >
+                            TW
+                          </button>
+                          <select
+                              id="currency"
+                              name="currency"
+                              value={newExpense.currency === DEFAULT_CURRENCY ? lastForeignCurrency : newExpense.currency}
+                              onChange={handleCurrencyChange}
+                              className="block flex-shrink-0 w-auto border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500 bg-white disabled:bg-gray-100"
+                              disabled={isReadOnly}
+                          >
+                            {nonTwdCurrencies.map(code => (
+                                <option key={code} value={code}>{code}</option>
+                            ))}
+                          </select>
+                          <input
+                            key="expense-amount"
+                            type="number"
+                            id="originalAmount"
+                            name="originalAmount"
+                            value={newExpense.originalAmount}
+                            onChange={handleInputChange}
+                            placeholder="100.00"
+                            className="block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500"
+                            disabled={isReadOnly}
+                          />
+                        </div>
+                        
+                        {/* 顯示換算後的台幣金額 */}
+                        {newExpense.originalAmount > 0 && newExpense.currency !== DEFAULT_CURRENCY && (
+                           <p className="mt-1 text-xs text-gray-500 italic">
+                               換算台幣 (TWD) 約: 
+                               <span className="font-semibold text-primaryColor-600 ml-1">TWD {amountInTWD.toFixed(2)}</span>
+                               (匯率: {currentExchangeRate})
+                           </p>
+                        )}
+                        {newExpense.originalAmount > 0 && newExpense.currency === DEFAULT_CURRENCY && (
+                           <p className="mt-1 text-xs text-gray-500 italic">
+                               分帳計算使用此金額 (TWD)
+                           </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="pt-4 border-t border-gray-100">
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(newExpense.taxRefund?.eligible)}
+                          onChange={(e) => setNewExpense((prev) => ({
+                            ...prev,
+                            taxRefund: e.target.checked
+                              ? createTaxRefund({ currency: prev.currency, originalAmount: prev.originalAmount, exchangeRate: currentExchangeRate })
+                              : { eligible: false, status: 'pending' },
+                          }))}
+                          className="h-4 w-4 rounded border-gray-300 text-primaryColor-600 focus:ring-primaryColor-500"
+                          disabled={isReadOnly}
+                        />
+                        <span className="font-medium text-gray-700">此筆可退稅</span>
+                      </label>
+                      {taxRefundPreview && (
+                        <div className="mt-3 space-y-3 rounded-lg bg-primaryColor-50 p-3">
+                          <div>
+                            <label htmlFor="tax-refund-country" className="block text-sm font-medium text-gray-700">退稅國家／地區</label>
+                            <select
+                              id="tax-refund-country"
+                              value={newExpense.taxRefund.country || ''}
+                              onChange={(e) => {
+                                const profile = getTaxRefundProfileByCountry(e.target.value);
+                                setNewExpense((prev) => ({
+                                  ...prev,
+                                  taxRefund: createTaxRefund({ currency: prev.currency, originalAmount: prev.originalAmount, exchangeRate: currentExchangeRate, country: profile?.country, status: prev.taxRefund.status }),
+                                }));
+                              }}
+                              className="mt-1 block w-full border border-gray-300 rounded-lg bg-white p-2 text-sm"
+                              disabled={isReadOnly}
+                            >
+                              <option value="">請選擇國家／地區</option>
+                              {TAX_REFUND_PROFILES.map((profile) => <option key={profile.country} value={profile.country}>{profile.label}（{Math.round(profile.rate * 100)}%）</option>)}
+                            </select>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <p className="text-sm font-medium text-gray-700">預估退稅金額</p>
+                              <p className="mt-1 rounded-lg bg-white p-2 font-semibold text-primaryColor-700">{newExpense.currency} {taxRefundPreview.estimatedAmount.toLocaleString()}</p>
+                            </div>
+                            <div>
+                              <label htmlFor="tax-refund-status" className="block text-sm font-medium text-gray-700">退稅狀態</label>
+                              <select
+                                id="tax-refund-status"
+                                value={newExpense.taxRefund.status || 'pending'}
+                                onChange={(e) => setNewExpense((prev) => ({ ...prev, taxRefund: { ...prev.taxRefund, status: e.target.value } }))}
+                                className="mt-1 block w-full border border-gray-300 rounded-lg bg-white p-2 text-sm"
+                                disabled={isReadOnly}
+                              >
+                                <option value="pending">待收退稅</option>
+                                <option value="received">已收到</option>
+                              </select>
+                            </div>
+                          </div>
+                          <p className="text-xs text-gray-500">退款歸付款人，不影響分帳或結算。</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 2. 收據 / 圖片 */}
+                    <div className="pt-4 border-t border-gray-100">
+                      <label htmlFor="expenseImage" className="block text-sm font-medium text-gray-700">收據 / 圖片</label>
+                      <div className="mt-2 flex flex-col sm:flex-row gap-3 sm:items-center">
+                        <input
+                          type="file"
+                          id="expenseImage"
+                          accept="image/*"
+                          onChange={handleImageChange}
+                          className="block w-full text-sm text-gray-600 file:mr-4 file:rounded-full file:border-0 file:bg-primaryColor-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-primaryColor-700 hover:file:bg-primaryColor-100 disabled:opacity-50"
+                          disabled={isReadOnly}
+                        />
+                        {imagePreviewUrl && (
+                          <button
+                            type="button"
+                            onClick={clearSelectedImage}
+                            className="px-3 py-2 text-sm rounded-lg text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 disabled:opacity-50"
+                            disabled={isReadOnly}
+                          >
+                            移除圖片
+                          </button>
+                        )}
+                      </div>
+                      <p className="mt-1 text-xs text-gray-500">支援圖片檔，原圖上限 20MB；儲存前會自動壓縮。</p>
+                      {imagePreviewUrl && (
+                        <div className="mt-3">
+                          <img
+                            src={imagePreviewUrl}
+                            alt="支出圖片預覽"
+                            className="h-32 w-32 rounded-lg object-cover border border-gray-200 shadow-sm"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 2. 付款人 */}
+                    <div>
+                      <label htmlFor="payerName" className="block text-sm font-medium text-gray-700">付款人</label>
+                      <select
+                        id="payerName"
+                        name="payerName"
+                        value={newExpense.payerName}
+                        onChange={handleInputChange}
+                        className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500 bg-white"
+                        disabled={isReadOnly}
+                      >
+                        {members.map(member => (
+                          <option key={member} value={member}>
+                            {getDisplayName(member)}
+                          </option>
+                        ))}
+                        <option value={SELF_PAYER_KEY}>各自付款</option>
+                      </select>
+                    </div>
+
+                    {/* 3. 分帳份數設定 */}
+                    <div className="pt-4 border-t border-gray-100">
+                      <div className="flex justify-between items-center mb-3">
+                        <label className="text-lg font-bold text-gray-700">分帳份數</label>
+                        <button
+                          onClick={setToAverageSplit}
+                          type="button"
+                          className="text-sm text-primaryColor-600 hover:text-primaryColor-800 font-medium disabled:opacity-50"
+                          disabled={isReadOnly}
+                        >
+                          [設為平均分配]
+                        </button>
+                      </div>
+                      {/* 移除 max-h-48，讓 flex-1 負責滾動 */}
+                      <div className="space-y-3 pr-2">
+                        {members.map(member => {
+                          const currentShares = newExpense.shares[member] || 0;
+                          const displayMember = getDisplayName(member);
+                          const isPayer = newExpense.payerName === member;
+
+                          return (
+                            <div key={member} className="flex justify-between items-center bg-gray-50 p-3 rounded-lg border border-gray-200">
+                              <span className={`font-medium ${isPayer ? 'text-primaryColor-700' : 'text-gray-700'}`}>
+                                {displayMember} {isPayer && '(付款人)'}
+                              </span>
+                              <div className="flex items-center space-x-2 flex-shrink-0">
+                                <button
+                                  onClick={() => handleShareChange(member, -1)}
+                                  type="button"
+                                  className="p-1.5 bg-red-50 text-red-600 rounded-lg transition hover:scale-105 transform hover:bg-red-100 shadow-sm border border-red-200 disabled:opacity-50 disabled:hover:scale-100"
+                                  aria-label="減少份數"
+                                  disabled={isReadOnly}
+                                >
+                                  <Minus className="w-5 h-5" />
+                                </button>
+                                <span className="w-8 text-center font-bold text-lg text-gray-800">{currentShares}</span>
+                                <button
+                                  onClick={() => handleShareChange(member, 1)}
+                                  type="button"
+                                  className="p-1.5 bg-green-50 text-green-600 rounded-lg transition hover:scale-105 transform hover:bg-green-100 shadow-sm border border-green-200 disabled:opacity-50 disabled:hover:scale-100"
+                                  aria-label="增加份數"
+                                  disabled={isReadOnly}
+                                >
+                                  <Plus className="w-5 h-5" />
+                                </button>
+                                <span className="text-sm text-gray-500 w-8 text-right">份</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+				  </div>
+
+				  {/* 底部：固定儲存按鈕 (flex-shrink-0) */}
+				  <div className="p-6 border-t flex justify-end flex-shrink-0">
+					  <button
+						onClick={saveExpense}
+						disabled={isReadOnly || isLoadingModal || !newExpense.description.trim() || newExpense.originalAmount <= 0 || !newExpense.payerName}
+						className={
+						  "flex items-center px-6 py-3 rounded-full text-white font-semibold transition duration-150 shadow-md " +
+						  ((isReadOnly || isLoadingModal || !newExpense.description.trim() || newExpense.originalAmount <= 0 || !newExpense.payerName)
+							? "bg-gray-400 cursor-not-allowed"
+							: "bg-primaryColor-600 hover:bg-primaryColor-700 hover:shadow-lg")
+						}
+					  >
+						{isLoadingModal ? '儲存中...' : (
+						  <>
+							<CircleCheck className="w-5 h-5 mr-2" />
+							{submitText}
+						  </>
+						)}
+					  </button>
+					</div>
+                </div>
+              </div>
+            );
+        });
+        
+		/**
+         * 成員管理 Modal (核心邏輯獨立)
+         */
+        const MemberManagementModal = memo(({ db, currentUserId, members, customMembers, defaultSharesConfig, isMemberModalOpen, setIsMemberModalOpen, saveMembers, handleSaveDefaultShares, handleDeleteMember, setIsLoading, isLoading, setError, getDisplayName, isReadOnly, groupMembers, groupOwner, inviteUserByEmail, removeGroupMember, setToastMessage, migrateMemberID }) => { // <-- MODIFIED: Add migrateMemberID
+            const [memberInput, setMemberInput] = useState('');
+            const [tempDefaultShares, setTempDefaultShares] = useState({});
+            // NEW: 內部訊息狀態
+            const [modalMessage, setModalMessage] = useState(null); 
+            
+            // NEW: 選擇要替換目標的狀態
+            const [nameToReplace, setNameToReplace] = useState(null); // <-- NEW
+            const [availableUidsForReplace, setAvailableUidsForReplace] = useState([]); // <-- NEW
+
+            useEffect(() => {
+                if (isMemberModalOpen) {
+                    const initialShares = members.reduce((acc, name) => {
+                        const shareValue = defaultSharesConfig[name] !== undefined ? defaultSharesConfig[name] : 1;
+                        acc[name] = shareValue;
+                        return acc;
+                    }, {});
+                    setTempDefaultShares(initialShares);
+                    setMemberInput('');
+                    setModalMessage(null); // NEW: 開啟時清除訊息
+                    
+                    // NEW: 計算可替換的目標 UID
+					const allUIDs = groupMembers.filter(uid => 
+						// 這裡只需要判斷是否為「可替換的目標帳號」，不需要再檢查 customMembers
+						uid.length > 20 && uid !== currentUserId
+					);
+					setAvailableUidsForReplace(allUIDs);
+                    setNameToReplace(null);
+                }
+            }, [isMemberModalOpen, members, defaultSharesConfig, groupMembers, customMembers, currentUserId]); // <-- MODIFIED: 增加依賴
+            
+            // NEW: 內部訊息清除 (防止無限迴圈)
+            const resetMessage = useCallback(() => {
+                setModalMessage(null);
+            }, []);
+
+			
+			// 只處理「一般成員名稱」→ 加到分帳成員名單
+			const handleAddMemberByName = async (name) => {
+			  if (isReadOnly) {
+                setModalMessage('❌ 唯讀模式下無法新增成員。'); 
+                return;
+              }
+
+			  const trimmedName = name.trim();
+              setModalMessage(null); // 清除舊訊息
+
+			  if (
+				trimmedName &&
+				trimmedName !== currentUserId &&
+				!customMembers.includes(trimmedName)
+			  ) {
+				const newMemberList = [...customMembers, trimmedName];
+				await saveMembers(newMemberList);
+                setModalMessage(`✅ 已新增分帳成員: ${trimmedName}`); 
+			  } else if (trimmedName === currentUserId) {
+				setModalMessage('❌ 不能將自己的用戶 ID 新增為成員。'); 
+			  } else if (customMembers.includes(trimmedName)) {
+                setModalMessage(`⚠️ 成員 ${trimmedName} 已存在於分帳清單。`); 
+              }
+			};
+
+			// 共用：判斷是名稱還是 Email
+			const handleSubmitMemberInput = async () => {
+			  if (isReadOnly) {
+				setModalMessage('❌ 唯讀模式下無法新增或邀請成員。'); 
+				return;
+			  }
+
+			  const input = memberInput.trim();
+			  if (!input) return;
+
+              setModalMessage(null); // 清除舊訊息
+
+			  if (input.includes('@')) {
+				// Email → 邀請共享成員
+				await inviteUserByEmail(input, setModalMessage); // 傳遞 setModalMessage
+			  } else {
+				// 一般成員名稱
+				await handleAddMemberByName(input);
+			  }
+
+			  setMemberInput('');
+			};
+            
+            const handleTempShareChange = (name, delta) => {
+                setTempDefaultShares(prev => {
+                    const currentShares = prev[name] || 0;
+                    const newShares = Math.max(0, currentShares + delta);
+                    return {
+                        ...prev,
+                        [name]: newShares,
+                    };
+                });
+            };
+            
+            const handleTempInputChange = (name, value) => {
+                const shareCount = parseInt(value, 10);
+                if (shareCount >= 0 || value === '') {
+                    setTempDefaultShares(prev => ({
+                        ...prev,
+                        [name]: shareCount || 0
+                    }));
+                }
+            };
+            
+            const handleMemberDeleteWrapper = async (member) => {
+                if (isReadOnly) {
+                    setModalMessage('❌ 唯讀模式下無法刪除成員。'); 
+                    return;
+                }
+                await handleDeleteMember(member, setModalMessage); // 傳遞 setModalMessage
+            };
+            
+            const handleSaveDefaultSharesWrapper = async (tempShares) => {
+                await handleSaveDefaultShares(tempShares, setModalMessage); // 傳遞 setModalMessage
+            };
+            
+            // NEW: 處理替換/轉移按鈕
+            const handleReplaceMember = (oldName, newId) => {
+                // 呼叫 App 層級的遷移函式
+                migrateMemberID(oldName, newId, setModalMessage); 
+                setNameToReplace(null); // 關閉選擇 UI
+                setIsMemberModalOpen(false); // 遷移成功後關閉整個 Modal
+            };
+
+            if (!isMemberModalOpen) return null;
+
+            return (
+              // 應用 force-gpu 到背景層
+              <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-start justify-center p-4 z-50 transition-opacity overflow-y-auto force-gpu">
+                  {/* 修正：將 max-w-2xl 的 max-h 改為 h-full，並確保 flex-col 垂直佈局 */}
+                  <div className="bg-white rounded-xl w-full max-w-2xl shadow-2xl transform transition-transform duration-300 scale-100 my-4 h-full sm:h-auto sm:max-h-[95vh] flex flex-col force-gpu">
+                      {/* 頂部：固定標題 (flex-shrink-0) */}
+                      <div className="p-6 border-b flex justify-between items-center flex-shrink-0">
+                          <h3 className="text-xl font-bold text-gray-800">
+                            管理分帳成員與預設份數 {isReadOnly && <span className="text-red-500 ml-2">(唯讀)</span>}
+                          </h3>
+                          <button onClick={() => setIsMemberModalOpen(false)} className="p-1 rounded-full hover:bg-gray-100 text-gray-600 transition hover:scale-110 transform">
+                              <X className="w-6 h-6" />
+                          </button>
+                      </div>
+                      
+                      {/* 修正：中間內容：可滾動 (flex-1 overflow-y-auto) */}
+                      <div className="p-6 space-y-6 flex-1 overflow-y-auto">
+                            {/* NEW: 內部訊息顯示區 */}
+                            {modalMessage && (
+                                <div className={`p-3 rounded-lg text-sm font-semibold ${modalMessage.startsWith('❌') ? 'bg-red-100 text-red-700' : (modalMessage.startsWith('⚠️') ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700')}`}>
+                                    {modalMessage}
+                                </div>
+                            )}
+                            
+                            {/* NEW: 替換選擇 UI */}
+                            {nameToReplace && (
+                                <div className="border border-red-300 p-4 rounded-lg bg-red-50">
+                                    <h4 className="font-semibold text-lg mb-2 text-red-700">
+                                        將「{getDisplayName(nameToReplace)}」替換為哪個帳號？
+                                    </h4>
+                                    
+                                    <div className="flex gap-2 flex-wrap">
+                                        {availableUidsForReplace.length === 0 ? (
+                                            <p className="text-sm text-red-500">
+                                                目前沒有可供替換的用戶 ID（請先透過 Email 邀請新的共享成員）。
+                                            </p>
+                                        ) : (
+                                            availableUidsForReplace.map(uid => (
+                                                <button
+                                                    key={`replace-target-${uid}`}
+                                                    onClick={() => handleReplaceMember(nameToReplace, uid)}
+                                                    disabled={isLoading || isReadOnly}
+                                                    className="px-3 py-1 text-sm rounded-lg text-white bg-red-500 hover:bg-red-600 transition disabled:bg-gray-400"
+                                                >
+                                                    替換為 {getDisplayName(uid)}
+                                                </button>
+                                            ))
+                                        )}
+                                        <button
+                                            onClick={() => setNameToReplace(null)}
+                                            className="px-3 py-1 text-sm rounded-lg text-gray-700 bg-gray-200 hover:bg-gray-300 transition"
+                                        >
+                                            取消替換
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+							{/* 成員管理 + 共享權限（合併版） */}
+							<div className="border p-4 rounded-lg bg-gray-50 flex-shrink-0">
+							  <h4 className="font-semibold text-lg mb-2 flex items-center text-primaryColor-700">
+								<Users className="w-5 h-5 mr-2" />
+								管理分帳成員與共享權限 {isReadOnly && <span className="text-red-500 ml-2">(唯讀)</span>}
+							  </h4>
+
+							  {/* 單一輸入框：名稱 or Email */}
+							  <div className="flex gap-2 items-center mb-2">
+								<input
+								  type="text"
+								  value={memberInput}
+								  onChange={(e) => setMemberInput(e.target.value)}
+								  onKeyDown={(e) => {
+									if (e.key === 'Enter') {
+									  e.preventDefault();
+									  handleSubmitMemberInput();
+									}
+								  }}
+								  placeholder="輸入名稱或Email"
+								  className="flex-grow border border-gray-300 rounded-lg p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500 disabled:bg-gray-100"
+								  disabled={isLoading || isReadOnly}
+								/>
+								<button
+								  onClick={handleSubmitMemberInput}
+								  className={
+									'flex-shrink-0 px-4 py-3 rounded-lg text-white font-semibold transition hover:scale-105 transform ' +
+									(memberInput.trim() === '' || isLoading || isReadOnly
+									  ? 'bg-gray-400 cursor-not-allowed'
+									  : 'bg-primaryColor-600 hover:bg-primaryColor-700')
+								  }
+								  disabled={memberInput.trim() === '' || isLoading || isReadOnly}
+								>
+								  加入
+								</button>
+							  </div>
+
+							  <p className="text-xs text-gray-500 mb-3">
+								以Email加入，為可編輯成員。
+							  </p>
+
+							  {/* 目前有編輯權限的成員列表 */}
+							  <div className="mt-1 text-xs text-gray-600">
+								<p className="font-semibold mb-1">目前有編輯權限的成員：</p>
+
+								{groupMembers && groupMembers.length === 0 ? (
+								  <p className="text-gray-400">尚無成員（只有你自己）。</p>
+								) : (
+								  <div className="flex flex-wrap gap-2">
+									{groupMembers && groupMembers.map((uid) => (
+									  <div
+										key={uid}
+										className="flex items-center px-2 py-1 bg-white border border-gray-300 rounded-lg text-sm"
+									  >
+										<span>
+										  {getDisplayName(uid)}
+										  {uid === groupOwner && (
+											<span className="ml-1 text-[11px] text-primaryColor-600 font-semibold">
+											  （擁有者）
+											</span>
+										  )}
+										</span>
+
+										{!isReadOnly && uid !== groupOwner && (
+										  <button
+											type="button"
+											onClick={() => removeGroupMember(uid, setModalMessage)} // 傳遞 setModalMessage
+											className="ml-2 px-2 py-0.5 text-[11px] rounded-md border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                                            disabled={isReadOnly}
+										  >
+											移除
+										  </button>
+										)}
+									  </div>
+									))}
+								  </div>
+								)}
+							  </div>
+							</div>
+
+                          {/* 現有成員列表 */}
+                          <div>
+                              <h4 className="font-semibold text-lg mb-3 text-gray-700">設定所有成員的預設份數 {isReadOnly && <span className="text-red-500 ml-2">(唯讀)</span>}</h4>
+                              <div className="grid grid-cols-2 gap-x-4 gap-y-2 mb-3 text-sm font-semibold text-gray-600 border-b pb-2">
+                                <span>成員名稱</span>
+                                <span className="flex items-center justify-between">預設份數</span>
+                              </div>
+                              <div className="space-y-2 max-h-64 pr-2">
+                                  {members.map(member => {
+                                      // NEW: 判斷是否為自訂名稱 (非 UID)
+                                      const isCustomName = member !== currentUserId && !groupMembers.includes(member) && member.length < 20;
+                                      
+										return (
+                                          <div key={member} className="grid grid-cols-[1fr_auto] gap-4 items-center p-3 rounded-lg border border-gray-200 bg-white shadow-sm">
+                                              <span 
+                                                  className={`font-medium truncate ${member === currentUserId ? 'text-primaryColor-700' : 'text-gray-800'} 
+                                                    ${isCustomName && !isReadOnly ? 'cursor-pointer hover:text-red-600 hover:underline' : ''}` // ✨ NEW: 增加樣式指示可點擊
+                                                  }
+                                                  title={member}
+                                                  onClick={() => { // ✨ NEW: 增加 onClick 處理器
+                                                      if (isCustomName && !isReadOnly) {
+                                                          setNameToReplace(member);
+                                                      }
+                                                  }}
+                                              >
+                                                  {getDisplayName(member)}
+                                                  {isCustomName && <span className="ml-2 text-red-500 text-xs font-normal"></span>}
+                                              </span>
+                                              <div className="flex items-center space-x-2 flex-shrink">
+                                                
+                                                <button
+                                                    onClick={() => handleTempShareChange(member, -1)}
+                                                    type="button"
+                                                    className="p-1.5 bg-red-50 text-red-600 rounded-lg transition hover:scale-105 transform hover:bg-red-100 shadow-sm border border-red-200 disabled:opacity-50"
+                                                    aria-label="減少份數"
+                                                    disabled={isReadOnly}
+                                                >
+                                                    <Minus className="w-5 h-5" />
+                                                </button>
+                                                
+                                                <input
+                                                    key={`shares-input-${member}`} 
+                                                    type="number"
+                                                    min="0"
+                                                    value={tempDefaultShares[member] === 0 ? 0 : tempDefaultShares[member] || 1}
+                                                    onChange={(e) => handleTempInputChange(member, e.target.value)}
+                                                    placeholder="1"
+                                                    className="w-16 border border-gray-300 rounded-lg p-2 text-center focus:ring-primaryColor-500 focus:border-primaryColor-500 disabled:bg-gray-100"
+                                                    disabled={isLoading || isReadOnly}
+                                                />
+                                                
+                                                <button
+                                                    onClick={() => handleTempShareChange(member, 1)}
+                                                    type="button"
+                                                    className="p-1.5 bg-green-50 text-green-600 rounded-lg transition hover:scale-105 transform hover:bg-green-100 shadow-sm border border-green-200 disabled:opacity-50"
+                                                    aria-label="增加份數"
+                                                    disabled={isReadOnly}
+                                                >
+                                                    <Plus className="w-5 h-5" />
+                                                </button>
+                                                
+                                                <span className="text-gray-500">份</span>
+                                               
+                                                {member !== currentUserId && (
+                                                    <button
+                                                        onClick={() => handleMemberDeleteWrapper(member)}
+                                                        className="p-1 text-red-500 hover:bg-red-100 rounded-full transition hover:scale-110 transform ml-auto disabled:opacity-50"
+                                                        disabled={isLoading || isReadOnly}
+                                                        aria-label="刪除成員"
+                                                    >
+                                                        <UserMinus className="w-5 h-5" />
+                                                    </button>
+                                                )}
+                                              </div>
+                                          </div>
+                                      );
+                                  })}
+                              </div>
+                          </div>
+                      </div>
+                      {/* 底部：固定儲存按鈕 (flex-shrink-0) */}
+                      <div className="p-6 border-t flex justify-end flex-shrink-0">
+                          <button
+                              onClick={() => handleSaveDefaultSharesWrapper(tempDefaultShares)}
+                              disabled={isLoading || isReadOnly}
+                              className={
+                                "flex items-center px-6 py-3 rounded-full text-white font-semibold transition hover:scale-105 transform duration-150 shadow-md " +
+                                ((isLoading || isReadOnly)
+                                  ? "bg-gray-400 cursor-not-allowed"
+                                  : "bg-primaryColor-600 hover:bg-primaryColor-700 hover:shadow-lg")
+                              }
+                          >
+                              <CircleCheck className="w-5 h-5 mr-2" />
+                              儲存預設份數
+                          </button>
+                      </div>
+                  </div>
+              </div>
+            );
+        });
+		
+        /**
          * 主要的 App 元件
          */
         const App = () => {
           // --- 應用程式狀態 ---
+          const [db, setDb] = useState(null);
+          const [auth, setAuth] = useState(null);
           const [userId, setUserId] = useState(null);
+          const [authReady, setAuthReady] = useState(false);
           const [isGuest, setIsGuest] = useState(false); // NEW: 追蹤是否為匿名訪客
           const [isAuthModalOpen, setIsAuthModalOpen] = useState(false); // NEW: 控制 AuthModal 顯示
-		  const {
-			lastExchangeUpdate,
-			liveExchangeRates,
-			converterSourceCurrency,
-			setConverterSourceCurrency,
-			converterTargetCurrency,
-			setConverterTargetCurrency,
-			converterAmount,
-			setConverterAmount,
-			convertedAmount,
-		  } = useExchangeRates();
-		  const defaultCurrency = DEFAULT_CURRENCY;
+          const [userProfiles, setUserProfiles] = useState({});
+		  const [lastExchangeUpdate, setLastExchangeUpdate] = useState(null);
+          const [liveExchangeRates, setLiveExchangeRates] = useState(DEFAULT_EXCHANGE_RATES);
+		  const [defaultCurrency, setDefaultCurrency] = useState(DEFAULT_CURRENCY);
+		  const [detectedCountry, setDetectedCountry] = useState(null);
 		  const [copyMessage, setCopyMessage] = useState('');
           
           const [currentCollectionId, setCurrentCollectionId] = useState(null); // 目前正在檢視的 groupId
 		  const [currentCollectionShortCode, setCurrentCollectionShortCode] = useState(null); // 分享用短代碼
+		  const [groupOwner, setGroupOwner] = useState(null);                   // 群組擁有者 uid
+		  const [groupMembers, setGroupMembers] = useState([]);                 // 群組成員 uid 清單
 
+		  // MODIFIED: 訪客模式 (isGuest) 或不在群組成員清單中都視為唯讀
+		  const isReadOnly = isGuest || !groupMembers.includes(userId); 
+		
 		  const [inviteEmail, setInviteEmail] = useState(''); // 用來輸入要邀請的 email
+		  const [groupName, setGroupName] = useState('分帳記帳簿');     // 顯示在上方標題的名稱
 		  const [isEditingGroupName, setIsEditingGroupName] = useState(false); 
 		  const [groupNameInput, setGroupNameInput] = useState('分帳記帳簿'); // 編輯時使用
           
           // ✨ NEW: 搜尋關鍵字狀態
           const [searchKeyword, setSearchKeyword] = useState('');
 
+          // ✨ MODIFIED: 匯率換算器狀態 (Source and Target)
+          const initialConverterSourceCurrency = localStorage.getItem('lastConverterSourceCurrency') || DEFAULT_CURRENCY;
+          // 左邊幣值 (Source): 讀取 localStorage 或預設 TWD
+          const [converterSourceCurrency, setConverterSourceCurrency] = useState(initialConverterSourceCurrency); 
+          // 右邊幣值 (Target): 預設 TWD，不讀取 localStorage
+          const [converterTargetCurrency, setConverterTargetCurrency] = useState(DEFAULT_CURRENCY); 
+          const [converterAmount, setConverterAmount] = useState('');
+
+          // --- 0. 匯率換算器來源幣別持久化 ---
+          // 只有 Source Currency (左邊) 需要記錄
+          useEffect(() => {
+              if (converterSourceCurrency) {
+                  localStorage.setItem('lastConverterSourceCurrency', converterSourceCurrency);
+              }
+          }, [converterSourceCurrency]);
+
+          const [expenses, setExpenses] = useState([]);
+          const [customMembers, setCustomMembers] = useState([]); 
+          const [defaultSharesConfig, setDefaultSharesConfig] = useState({}); 
           const [members, setMembers] = useState([]); 
           
 		  const ensureDefaultGroup = useCallback(async (_db, uid) => {
@@ -262,11 +1617,25 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
 		}, [error]);
 		
           // --- 1. Firebase 初始化與驗證（支援 /g/短代碼） ---
-          const { auth, authReady, db } = useAuth({
-            getFirebaseServices,
-            onUser: async (user, { auth: _auth, db: _db }) => {
+          useEffect(() => {
+            if (!firebaseConfig) {
+              setError('Firebase configuration is missing.');
+              setAuthReady(true);
+              return;
+            }
+
+            try {
+              const app = getFirebaseApp();
+              const _auth = getAuth(app);
+              const _db = getFirestore(app);
+
+              setDb(_db);
+              setAuth(_auth);
+
               const usersCollectionPath = `artifacts/${appId}/users`;
               const usersRef = collection(_db, usersCollectionPath);
+
+              const unsubscribe = onAuthStateChanged(_auth, async (user) => {
                 try {
                   if (user) {
                     // Persistent user (email/password) or a converted anonymous user
@@ -411,43 +1780,60 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
                     setUserId(null);
                     setIsGuest(false);
                     setError(`認證失敗，應用程式無法運作: ${e.message}`);
+                } finally {
+                  setAuthReady(true);
                 }
-            },
-            onInitializationError: (e) => {
-              console.error('Firebase initialization/auth error:', e);
-              setUserId(null);
-              setIsGuest(false);
-              setError(`認證失敗，應用程式無法運作: ${e.message}`);
-            },
-          });
+              });
 
-          const {
-            customMembers,
-            defaultSharesConfig,
-            expenses,
-            groupMembers,
-            groupName,
-            groupOwner,
-            setCustomMembers,
-            setDefaultSharesConfig,
-            setExpenses,
-            setGroupName,
-            userProfiles,
-          } = useGroup({
-            appId,
-            authReady,
-            currentCollectionId,
-            db,
-            defaultCurrency: DEFAULT_CURRENCY,
-            defaultExchangeRates: DEFAULT_EXCHANGE_RATES,
-            mapExpenseSnapshot,
-            onError: setError,
-            onGroupName: setGroupNameInput,
-            userId,
-          });
+              return () => unsubscribe();
+            } catch (e) {
+              setError(`Firebase initialization failed: ${e.message}`);
+              setAuthReady(true);
+            }
+          }, []);
 
-		  // MODIFIED: 訪客模式 (isGuest) 或不在群組成員清單中都視為唯讀
-		  const isReadOnly = isGuest || !groupMembers.includes(userId);
+		// --- 監聽目前 group 的 owner / members ---
+		useEffect(() => {
+		  if (!db || !currentCollectionId) return;
+
+		  const groupDocRef = doc(db, `artifacts/${appId}/groups/${currentCollectionId}`);
+
+		  const unsub = onSnapshot(
+			groupDocRef,
+			(snap) => {
+			  if (snap.exists) {
+				const data = snap.data();
+				const owner = data.owner || null;
+				const members = Array.isArray(data.members) ? data.members : [];
+
+				// owner 也確保在 members 裡（避免 owner 不見）
+				const mergedMembers = members.includes(owner)
+				  ? members
+				  : [...members, owner].filter(Boolean);
+				  
+				const nameFromDb = data.name || '分帳記帳簿';
+
+				setGroupOwner(owner);
+				setGroupMembers(mergedMembers);
+				setGroupName(nameFromDb);
+				setGroupNameInput(nameFromDb);
+			  } else {
+				console.warn("Group doc not found:", currentCollectionId);
+				setGroupOwner(null);
+				setGroupMembers([]);
+				setGroupName('分帳記帳簿');
+				setGroupNameInput('分帳記帳簿');
+			  }
+			},
+			(err) => {
+			  console.error("Error listening group doc:", err);
+			  setGroupOwner(null);
+			  setGroupMembers([]);
+			}
+		  );
+
+		  return () => unsub();
+		}, [db, currentCollectionId]);
 
 		// 開始編輯群組名稱（只有成員可以編）
 		const startEditGroupName = () => {
@@ -492,6 +1878,39 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
 			setIsLoading(false);
 		  }
 		};
+
+          // --- 2. 獲取所有公共暱稱 ---
+          useEffect(() => {
+            if (!authReady || !db) return;
+            
+            const profilesCollectionPath = `artifacts/${appId}/public_profiles`;
+            const profilesRef = collection(db, profilesCollectionPath);
+
+            const unsubscribeProfiles = onSnapshot(profilesRef, (snapshot) => {
+                const profiles = {};
+                snapshot.forEach(docSnap => {
+					const data = docSnap.data() || {};
+					const uid = data.uid || docSnap.id;           // ✅ doc.id 就是 uid
+					const displayName = data.displayName || data.email; // ✅ 沒暱稱就退回 email
+					if (uid && displayName) {
+					  profiles[uid] = displayName;
+					}
+                });
+                setUserProfiles(profiles);
+            }, (err) => {
+                console.error("Error listening to user profiles:", err);
+            });
+
+            return () => unsubscribeProfiles();
+          }, [authReady, db]);
+
+          // --- 3. 獲取實時匯率 ---
+          useEffect(() => {
+			fetchExchangeRates().then(result => {
+				setLiveExchangeRates(result.rates);
+				setLastExchangeUpdate(result.lastUpdate);
+			});
+		  }, []);
 
 			// 登出（改用 confirm modal，而不是 window.confirm）
           // --- Modal 開關 ---
@@ -540,6 +1959,71 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
 			  setDefaultSharesConfig,
 			  setError
 			]);
+
+          // --- 4. 數據獲取 (Firestore 監聽) ---
+          useEffect(() => {
+            // FIX: 只要不是完全未就緒，就允許載入 (即使是訪客模式，也需要 userId 和 currentCollectionId)
+            if (!authReady || !db || !currentCollectionId || !userId) return; 
+
+            const expensesCollectionPath = getGroupExpensesPath(currentCollectionId);
+			const expensesRef = collection(db, expensesCollectionPath);
+
+            const unsubscribeExpenses = onSnapshot(expensesRef, (snapshot) => {
+              const fetchedExpenses = snapshot.docs.map(docSnap => {
+                const data = docSnap.data();
+                const timestamp = data.timestamp ? data.timestamp.toDate() : null; 
+                
+                const originalAmount = data.originalAmount !== undefined ? data.originalAmount : data.amount;
+                const currency = data.currency || DEFAULT_CURRENCY;
+                const exchangeRate = data.exchangeRate || (DEFAULT_EXCHANGE_RATES[currency] || 1.0);
+                const amountInTWD = data.amountInTWD !== undefined ? data.amountInTWD : originalAmount * exchangeRate;
+
+                return {
+                  id: docSnap.id, 
+                  ...data,
+                  originalAmount: typeof originalAmount === 'number' ? originalAmount : parseFloat(originalAmount || 0),
+                  currency: currency,
+                  exchangeRate: exchangeRate,
+                  amountInTWD: typeof amountInTWD === 'number' ? amountInTWD : parseFloat(amountInTWD || 0),
+                  shares: data.shares || {},
+                  timestamp: timestamp,
+                };
+              });
+              setExpenses(fetchedExpenses);
+            }, (err) => {
+              console.error(`Error listening to expenses in collection ${currentCollectionId}:`, err);
+              if (err.code === 'permission-denied') {
+                  setError(`權限不足：無法讀取此分享連結對應的紀錄簿（ID: ${currentCollectionId}）。請洽擁有者確認權限。`);
+              } else {
+                  setError(`資料同步失敗: ${err.message}`);
+              }
+              setExpenses([]);
+            });
+
+            const membersDocPath = getGroupMembersDocPath(currentCollectionId);
+			const membersDocRef = doc(db, membersDocPath);
+
+            const unsubscribeMembers = onSnapshot(membersDocRef, (docSnap) => {
+                if (docSnap.exists) {
+                    const data = docSnap.data();
+                    const list = Array.isArray(data.list) ? data.list : [];
+                    const shares = data.defaultShares || {};
+                    
+                    setCustomMembers(list);
+                    setDefaultSharesConfig(shares); 
+                } else {
+                    setCustomMembers([]);
+                    setDefaultSharesConfig({}); 
+                }
+            }, (err) => {
+                console.error("Error listening to members settings:", err);
+            });
+
+            return () => {
+              unsubscribeExpenses();
+              unsubscribeMembers();
+            };
+          }, [authReady, db, currentCollectionId, userId]); // FIX: Add userId dependency
 
           // --- 5. 衍生成員清單 ---
 			useEffect(() => {
@@ -671,10 +2155,11 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
                 setIsLoading(true);
                 setError(null);
                 try {
-                    await deleteExpenseRecord(db, appId, currentCollectionId, expenseId);
+                    const docPath = `${getGroupExpensesPath(currentCollectionId)}/${expenseId}`;
+                    await deleteDoc(doc(db, docPath));
                     if (expense?.imagePath) {
                         try {
-                            const { getStorage, storageRef, deleteObject } = await getStorageModule();
+                            const { getStorage, storageRef, deleteObject } = await _getStorage();
                             await deleteObject(storageRef(getStorage(getFirebaseApp()), expense.imagePath));
                         } catch (imageDeleteError) {
                             console.warn('Delete expense image failed:', imageDeleteError);
@@ -703,7 +2188,8 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
                   setIsLoading(true);
                   setError(null);
                   try {
-                      const snapshot = await listExpenses(db, appId, currentCollectionId);
+                      const expensesCollectionPath = getGroupExpensesPath(currentCollectionId);
+                      const snapshot = await getDocs(collection(db, expensesCollectionPath));
 
                       const batch = writeBatch(db);
                       const imagePaths = [];
@@ -714,7 +2200,7 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
                       });
                       await batch.commit();
                       if (imagePaths.length > 0) {
-                          const { getStorage, storageRef, deleteObject } = await getStorageModule();
+                          const { getStorage, storageRef, deleteObject } = await _getStorage();
                           const storage = getStorage(getFirebaseApp());
                           await Promise.allSettled(
                               imagePaths.map(path => deleteObject(storageRef(storage, path)))
@@ -1031,7 +2517,7 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
 				  });
 
 				  // --- 2) 批量更新 expenses (Batch)
-				  const expensesCollectionPath = getGroupExpensesPath(appId, currentCollectionId);
+				  const expensesCollectionPath = getGroupExpensesPath(currentCollectionId);
 				  const expensesSnapshot = await getDocs(collection(db, expensesCollectionPath));
 
 				  let batch = writeBatch(db);
@@ -1126,8 +2612,10 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
                   setIsLoading(true);
                   setError(null);
                   try {
+                      const collectionPath = getGroupExpensesPath(currentCollectionId);
+                      
                       // 使用新欄位格式：originalAmount / currency / amountInTWD
-                      await createExpense(db, appId, currentCollectionId, {
+                      await addDoc(collection(db, collectionPath), {
                           description: `[結清] ${getDisplayName(debtorId)} 歸還給 ${getDisplayName(creditorId)} 欠款`,
                           originalAmount: roundedAmount,
                           currency: DEFAULT_CURRENCY,
@@ -1159,10 +2647,34 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
           }, [db, userId, currentCollectionId, isReadOnly, getDisplayName, openConfirmModal, closeConfirmModal, setToastMessage, setError, setIsLoading]);
 
           // --- 9. 分帳計算 ---
-          const balances = useMemo(
-            () => calculateBalances({ members, expenses }),
-            [expenses, members],
-          );
+          const calculateBalances = useMemo(() => {
+            const balances = members.reduce((acc, name) => ({ ...acc, [name]: 0 }), {});
+
+            expenses.forEach(expense => {
+              if (expense.payerName === SELF_PAYER_KEY) return;
+
+              const amount = expense.amountInTWD; 
+              const { payerName, shares } = expense;
+              const totalShares = Object.values(shares).reduce((sum, s) => sum + s, 0);
+
+              if (totalShares === 0) return;
+
+              const costPerShare = amount / totalShares;
+
+              if (balances[payerName] !== undefined) {
+                balances[payerName] += amount;
+              }
+
+              Object.entries(shares).forEach(([member, shareCount]) => {
+                const memberCost = costPerShare * shareCount;
+                if (balances[member] !== undefined) {
+                  balances[member] -= memberCost;
+                }
+              });
+            });
+
+            return balances;
+          }, [expenses, members]);
 
           // 退稅只追蹤付款人待收款項，不參與 calculateBalances / calculateSettlements。
           const pendingTaxRefundInTWD = useMemo(
@@ -1170,7 +2682,54 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
             [expenses],
           );
 
-          const settlements = useMemo(() => calculateSettlements(balances), [balances]);
+          const calculateSettlements = useMemo(() => {
+            const balances = calculateBalances;
+            const settlements = [];
+
+            const creditors = []; 
+            const debtors = []; 
+
+            const mutableBalances = { ...balances };
+
+            for (const member in mutableBalances) {
+                const balance = mutableBalances[member];
+                if (balance >= 1) { 
+                    creditors.push({ name: member, amount: balance });
+                } else if (balance <= -1) { 
+                    debtors.push({ name: member, amount: -balance }); 
+                }
+            }
+
+            let i = 0; 
+            let j = 0; 
+
+            while (i < debtors.length && j < creditors.length) {
+                const debtor = debtors[i];
+                const creditor = creditors[j];
+
+                const transferAmount = Math.round(Math.min(debtor.amount, creditor.amount));
+
+                if (transferAmount > 0) {
+                    settlements.push({
+                        from: debtor.name,
+                        to: creditor.name,
+                        amount: transferAmount,
+                    });
+                }
+
+                debtor.amount -= transferAmount;
+                creditor.amount -= transferAmount;
+
+                if (debtor.amount < 1) { 
+                    i++;
+                }
+                if (creditor.amount < 1) {
+                    j++;
+                }
+            }
+            
+            return settlements;
+          }, [calculateBalances]); 
 
           const formatTimestamp = (timestamp) => {
             if (!timestamp) return '無日期';
@@ -1185,6 +2744,34 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
               minute: '2-digit',
             });
           };
+
+		  // --- 計算換算結果 ---
+          const convertedAmount = useMemo(() => {
+              const amount = parseFloat(converterAmount) || 0;
+              if (amount <= 0) return 0;
+              
+              // ✨ FIXED: Step 1: Convert source amount to TWD
+              // 使用 liveExchangeRates，如果沒有，則使用 DEFAULT_EXCHANGE_RATES (包含硬編碼 4.5)，再沒有才用 1.0
+              const rateToTWD = liveExchangeRates[converterSourceCurrency] 
+                                || DEFAULT_EXCHANGE_RATES[converterSourceCurrency] // 新增備用
+                                || 1.0; 
+              const amountInTWD = amount * rateToTWD;
+
+              // ✨ FIXED: Step 2: Convert TWD to target currency
+              const rateToTarget = liveExchangeRates[converterTargetCurrency] 
+                                   || DEFAULT_EXCHANGE_RATES[converterTargetCurrency] // 新增備用
+                                   || 1.0; 
+              
+              if (rateToTarget === 0) return 0; // Avoid division by zero
+              
+              // 1 Target Currency = X TWD (rateToTarget)
+              // 1 TWD = 1 / rateToTarget Target Currency
+              const targetAmount = amountInTWD / rateToTarget;
+              
+              // 換算結果四捨五入到小數點後兩位 (為了精準度，不像分帳只取整數)
+              return parseFloat(targetAmount.toFixed(2));
+
+          }, [converterAmount, converterSourceCurrency, converterTargetCurrency, liveExchangeRates]);
 
 			// --- 渲染 ---
 			const currentUserLabel = userId ? getDisplayName(userId) : '';
@@ -1329,17 +2916,70 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
 					  <div className="flex items-center gap-3">
 						<Pencil className="w-10 h-10 text-primaryColor-700" />
 
-						<GroupNameEditor
-						  isEditing={isEditingGroupName}
-						  isReadOnly={isReadOnly}
-						  groupName={groupName}
-						  groupNameInput={groupNameInput}
-						  isLoading={isLoading}
-						  onGroupNameInputChange={setGroupNameInput}
-						  onSave={saveGroupName}
-						  onCancel={cancelEditGroupName}
-						  onStartEdit={startEditGroupName}
-						/>
+						{isEditingGroupName && !isReadOnly ? (
+						  <div className="flex flex-col sm:flex-row sm:items-center gap-2 flex-1">
+							<input
+							  type="text"
+							  value={groupNameInput}
+							  onChange={(e) => setGroupNameInput(e.target.value)}
+							  onKeyDown={(e) => {
+								if (e.key === 'Enter') {
+								  e.preventDefault();
+								  saveGroupName();
+								} else if (e.key === 'Escape') {
+								  e.preventDefault();
+								  cancelEditGroupName();
+								}
+							  }}
+							  className="w-full border-b border-primaryColor-500 bg-transparent text-2xl sm:text-3xl font-extrabold text-primaryColor-700 focus:outline-none focus:border-primaryColor-700"
+							  autoFocus
+							  maxLength={40}
+							  placeholder="輸入這本分帳記帳簿名稱"
+							/>
+
+							{/* 按鈕在手機時會換到下一行 */}
+							<div className="flex gap-2 justify-end sm:justify-start">
+							  <button
+								type="button"
+								onClick={saveGroupName}
+								disabled={isLoading || !groupNameInput.trim()}
+								className={
+								  "px-3 py-1 rounded-lg text-sm font-semibold text-white shadow-md " +
+								  ((isLoading || !groupNameInput.trim())
+									? "bg-gray-400 cursor-not-allowed"
+									: "bg-primaryColor-600 hover:bg-primaryColor-700")
+								}
+							  >
+								儲存
+							  </button>
+							  <button
+								type="button"
+								onClick={cancelEditGroupName}
+								className="px-3 py-1 rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-100"
+							  >
+								取消
+							  </button>
+							</div>
+						  </div>
+						) : (
+						  // 原本的顯示模式保持不變
+						  <div className="flex flex-col">
+							<h1
+							  className={
+								"text-3xl sm:text-4xl font-extrabold text-primaryColor-700 " +
+								(isReadOnly ? "" : "cursor-text hover:underline decoration-dotted")
+							  }
+							  onClick={() => {
+								if (!isReadOnly) {
+								  startEditGroupName();
+								}
+							  }}
+							  title={isReadOnly ? "" : "點擊以修改這本分帳記帳簿名稱"}
+							>
+							  {groupName || '分帳記帳簿'}
+							</h1>
+						  </div>
+						)}
 					  </div>
 
 					  {lastExchangeUpdate && (
@@ -1510,13 +3150,13 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
 
                 {/* 總結與列表 */}
                 <BalanceSummary 
-                    settlements={settlements}
+                    settlements={calculateSettlements} 
+                    balances={calculateBalances} 
+                    members={members} 
                     getDisplayName={getDisplayName} 
                     isReadOnly={isReadOnly}
                     settleMemberDebt={settleMemberDebt}
                     pendingTaxRefundInTWD={pendingTaxRefundInTWD}
-                    UsersIcon={Users}
-                    CircleCheckIcon={CircleCheck}
                 />
                 <ExpenseList 
                     expenses={expenses} 
@@ -1531,8 +3171,6 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
                     // ✨ 新增搜尋相關 props
                     searchKeyword={searchKeyword}
                     setSearchKeyword={setSearchKeyword}
-                    defaultCurrency={DEFAULT_CURRENCY}
-                    icons={{ CircleDollarSign, Trash2, Pencil, Search, Wallet, Crown, X }}
                 />
 
                 {/* Modal 區塊 */}
@@ -1550,16 +3188,9 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
                     liveExchangeRates={liveExchangeRates}
 					defaultCurrency={defaultCurrency}
 					currentUserLabel={currentUserLabel}
-                    fallbackExchangeRates={DEFAULT_EXCHANGE_RATES}
-                    currencies={CURRENCIES}
-                    lastExpenseCurrencyKey={LAST_EXPENSE_CURRENCY_KEY}
-                    selfPayerKey={SELF_PAYER_KEY}
-                    getStorageModule={getStorageModule}
-                    getFirebaseApp={getFirebaseApp}
-                    appId={appId}
-                    icons={{ Plus, Minus, CircleCheck }}
                 />
                 <MemberManagementModal 
+                    db={db}
                     currentUserId={userId}
                     members={members}
                     customMembers={customMembers}
@@ -1569,7 +3200,9 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
                     saveMembers={saveMembers}
                     handleSaveDefaultShares={handleSaveDefaultShares}
                     handleDeleteMember={handleDeleteMember}
+                    setIsLoading={setIsLoading}
                     isLoading={isLoading}
+                    setError={setError}
                     getDisplayName={getDisplayName}
                     isReadOnly={isReadOnly}
 					inviteEmail={inviteEmail}
@@ -1578,8 +3211,8 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
 					groupOwner={groupOwner}
 					inviteUserByEmail={inviteUserByEmail}
 					removeGroupMember={removeGroupMember}
-                    migrateMemberID={migrateMemberID}
-                    icons={{ X, Users, Minus, Plus, UserMinus, CircleCheck }}
+                    setToastMessage={setToastMessage}
+                    migrateMemberID={migrateMemberID} // <-- NEW: 傳入新的遷移函式
                 />
                 
                 {/* 統一的確認提示 Modal */}
@@ -1597,15 +3230,10 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
                 {isGuest && (
                     <AuthModal 
                        auth={auth} 
+                       db={db} 
                        setToastMessage={setToastMessage} 
                        isOpen={isAuthModalOpen} 
                        onClose={() => setIsAuthModalOpen(false)} 
-                       onAuthenticated={async (authenticatedUser, displayName, email) => {
-                         if (db) {
-                           await createOrUpdatePublicProfile(db, authenticatedUser.uid, displayName, email);
-                         }
-                       }}
-                       closeIcon={<X className="w-6 h-6" />}
                      />
                  )}
 
@@ -1618,5 +3246,533 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
         };
         
         // --- 獨立的列表和總結組件 ---
+        const ExpenseList = memo(({ expenses, deleteExpense, startEdit, isLoading, getDisplayName, getPayerLabel, formatTimestamp, isReadOnly, clearAllExpenses, searchKeyword, setSearchKeyword }) => { // ✨ 接受搜尋相關 props
+            const [previewImage, setPreviewImage] = useState(null);
+            // 切換金額顯示狀態：用 expenseId 記錄目前要顯示 TWD 的卡片
+            const [showTwdExpenseIds, setShowTwdExpenseIds] = useState(() => new Set());
+            const toggleAmountDisplay = (expenseId) => {
+                setShowTwdExpenseIds(prev => {
+                    const next = new Set(prev);
+                    if (next.has(expenseId)) {
+                        next.delete(expenseId);
+                    } else {
+                        next.add(expenseId);
+                    }
+                    return next;
+                });
+            };
+            // ✨ NEW: 點擊「每人花費」卡片 → 切換只顯示該付款人的支出
+            // null = 全部；否則存 displayName 或 SELF_PAYER_KEY
+            const [filterPayer, setFilterPayer] = useState(null);
+            const togglePayerFilter = (displayName) => {
+                setFilterPayer(prev => (prev === displayName ? null : displayName));
+            };
+            const sortedExpenses = useMemo(() => {
+                // 1. Sort by timestamp
+                const sorted = [...expenses].sort((a, b) => {
+                    const timeA = a.timestamp ? a.timestamp.getTime() : 0;
+                    const timeB = b.timestamp ? b.timestamp.getTime() : 0;
+                    return timeB - timeA;
+                });
+
+                // 2. Filter by searchKeyword (case-insensitive on description)
+                const kw = searchKeyword.trim().toLowerCase();
+                const kwFiltered = kw
+                    ? sorted.filter(exp => (exp.description || '').toLowerCase().includes(kw))
+                    : sorted;
+
+                // 3. Filter by filterPayer (AND with searchKeyword)
+                // 注意：歷史資料的 exp.payerName 可能是 userId 或 name 兩種形式混雜
+                // 兩邊都用 getDisplayName normalize 後再比對，才不會誤過濾
+                if (!filterPayer) return kwFiltered;
+                if (filterPayer === SELF_PAYER_KEY) {
+                    return kwFiltered.filter(exp => exp.payerName === SELF_PAYER_KEY);
+                }
+                // Per-person filter: include expenses where user paid out-of-pocket OR
+                // it is a 各自付款 expense AND user has shares > 0.
+                // (其他 expense — payer 不是 user，但他有份 — 不應該帶出來；
+                //  user 只是「成本有分攤」，實際沒有先付)
+                return kwFiltered.filter(exp => {
+                    // Case 1: user is the payer
+                    if (getPayerLabel(exp.payerName) === filterPayer) return true;
+                    // Case 2: 各自付款 + user has shares > 0
+                    if (exp.payerName === SELF_PAYER_KEY) {
+                        const shares = exp.shares || {};
+                        for (const [uid, share] of Object.entries(shares)) {
+                            if ((share || 0) > 0 && getPayerLabel(uid) === filterPayer) return true;
+                        }
+                    }
+                    return false;
+                });
+
+            }, [expenses, searchKeyword, filterPayer, getPayerLabel]); // ✨ 依賴 filterPayer + getPayerLabel
+
+            // ✨ NEW: 計算每人分攤到的花費金額 (TWD)。不受 searchKeyword 影響。
+            const memberSpending = useMemo(() => {
+                const totals = {};
+                for (const exp of expenses) {
+                    const shares = exp.shares || {};
+                    const totalShares = Object.values(shares).reduce((s, n) => s + n, 0);
+                    if (totalShares <= 0) continue;
+                    const amountTwd = exp.amountInTWD || 0;
+                    if (amountTwd <= 0) continue;
+                    for (const [uid, share] of Object.entries(shares)) {
+                        if (share <= 0) continue;
+                        totals[uid] = (totals[uid] || 0) + amountTwd * (share / totalShares);
+                    }
+                }
+                return Object.entries(totals)
+                    .map(([uid, amt]) => ({ userId: uid, amount: amt, displayName: getDisplayName(uid) }))
+                    .sort((a, b) => b.amount - a.amount);
+            }, [expenses, getDisplayName]);
+
+            // 1 人以上才標註「最高花費者」皇冠
+            const topSpenderId = memberSpending.length > 1 ? memberSpending[0]?.userId : null;
+            const totalSpending = memberSpending.reduce((s, m) => s + m.amount, 0);
+            const selfPaidSummary = useMemo(() => {
+                return expenses.reduce((summary, exp) => {
+                    if (exp.payerName !== SELF_PAYER_KEY) return summary;
+                    summary.count += 1;
+                    summary.amount += exp.amountInTWD || 0;
+                    return summary;
+                }, { count: 0, amount: 0 });
+            }, [expenses]);
+
+            return (
+              <div className="mt-8">
+                {/* 1. 支出列表標題與清除按鈕 - 保持在同一行 */}
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-2xl font-bold text-gray-800 flex items-center flex-wrap">
+                    <CircleDollarSign className="w-7 h-7 mr-3 text-primaryColor-500" />
+                    所有支出 ({sortedExpenses.length}{filterPayer || searchKeyword ? ` / ${expenses.length}` : ''})
+                  </h2>
+                  
+                  {/* 清除所有資料按鈕 */}
+                  <button
+                      onClick={clearAllExpenses}
+                      disabled={isLoading || isReadOnly || expenses.length === 0}
+                      className="px-3 py-1.5 text-sm rounded-lg text-white bg-red-500 hover:bg-red-600 transition hover:scale-105 transform shadow-md disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center flex-shrink-0"
+                      title={isReadOnly ? "唯讀模式下無法清除資料" : "清除此紀錄簿所有支出"}
+                  >
+                      <Trash2 className="w-4 h-4 mr-1" />
+                      清除所有資料
+                  </button>
+                </div>
+                
+                {/* ✨ NEW: 搜尋欄位 - 獨立出來，在標題下方，清單上方 */}
+                <div className="mb-4">
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={searchKeyword}
+                        onChange={(e) => setSearchKeyword(e.target.value)}
+                        placeholder="輸入品項/描述進行搜尋..." 
+                        // 讓它保持全寬
+                        className="w-full border border-gray-300 rounded-full h-10 py-2 pl-10 pr-4 text-sm focus:ring-primaryColor-500 focus:border-primaryColor-500 transition-all duration-300"
+                        aria-label="搜尋支出"
+                      />
+                      <Search className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" />
+                    </div>
+                </div>
+                
+                {/* 顯示搜尋結果數量提示 */}
+                {searchKeyword.trim() !== '' && expenses.length > sortedExpenses.length && (
+                    <p className="text-sm text-gray-600 mb-4 italic p-2 bg-gray-100 rounded-lg">
+                        🔍 顯示 {sortedExpenses.length} 筆符合「{searchKeyword}」的結果 (總計 {expenses.length} 筆)。
+                    </p>
+                )}
+
+                {/* ✨ NEW: 搜尋結果摘要 - 總金額 + 每份平均（用組內成員份額加總當分母，每個成員只計一次） */}
+                {searchKeyword.trim() !== '' && sortedExpenses.length > 0 && (() => {
+                    // 收集每個 user 第一次出現的 share value（dedup：廷瑋=2、郁傑=1 → 3，不乘上 7 筆）
+                    const memberShareMap = new Map();
+                    // 收集搜尋結果內獨立日期（YYYY-MM-DD），用於「晚/天」單位
+                    const distinctDates = new Set();
+                    for (const exp of sortedExpenses) {
+                        const shares = exp.shares || {};
+                        for (const [uid, share] of Object.entries(shares)) {
+                            if (share > 0 && !memberShareMap.has(uid)) {
+                                memberShareMap.set(uid, share);
+                            }
+                        }
+                        const ts = exp.timestamp;
+                        const date = ts instanceof Date ? ts : (ts && typeof ts.toDate === 'function' ? ts.toDate() : null);
+                        if (date) {
+                            distinctDates.add(date.toISOString().slice(0, 10));
+                        }
+                    }
+                    const memberShareValues = Array.from(memberShareMap.values());
+                    const searchMemberCount = memberShareMap.size;
+                    // 分母 = Σ(每位成員份額)，每人只算一次（不會乘上 expense 數量）
+                    const searchGroupShares = memberShareValues.reduce((s, n) => s + n, 0);
+                    const searchTotal = sortedExpenses.reduce((s, e) => s + (e.amountInTWD || 0), 0);
+                    // 總金額 / 組內份額加總 = 每份平均（例如 52008 / 3 = 17336）
+                    const searchPerShare = searchGroupShares > 0 ? searchTotal / searchGroupShares : 0;
+                    // 住宿關鍵字 → 「每晚每人」, 其他 → 「每天每人」
+                    const isAccommodation = /住宿/.test(searchKeyword);
+                    // 住宿：parse description 內 M/D 或 M/D-M/D 字串（例「札幌住宿9/17-9/20」= 4 晚）
+                    // 其他：依 independent 日期數
+                    let dayCount;
+                    if (isAccommodation) {
+                        const dayStrings = new Set();
+                        const dateRangeRegex = /(\d{1,2})\/(\d{1,2})(?:\s*[-至~]\s*(\d{1,2})\/(\d{1,2}))?/g;
+                        let pm;
+                        for (const exp of sortedExpenses) {
+                            const desc = (exp.description || '');
+                            dateRangeRegex.lastIndex = 0;
+                            while ((pm = dateRangeRegex.exec(desc)) !== null) {
+                                const sm = parseInt(pm[1], 10);
+                                const sd = parseInt(pm[2], 10);
+                                if (pm[3] && pm[4]) {
+                                    const em = parseInt(pm[3], 10);
+                                    const ed = parseInt(pm[4], 10);
+                                    if (sm === em && ed >= sd) {
+                                        for (let d = sd; d <= ed; d++) dayStrings.add(`${sm}/${d}`);
+                                    } else {
+                                        dayStrings.add(`${sm}/${sd}`);
+                                        if (em && ed) dayStrings.add(`${em}/${ed}`);
+                                    }
+                                } else {
+                                    dayStrings.add(`${sm}/${sd}`);
+                                }
+                            }
+                        }
+                        // fallback: 如果完全沒 parse 到日期字串、還是依筆數
+                        dayCount = dayStrings.size > 0 ? dayStrings.size : sortedExpenses.length;
+                    } else {
+                        dayCount = distinctDates.size;
+                    }
+                    // 每晚/每人 = 每份 / 天數（每份已經除過 groupShares，這裡不再重複）
+                    // 例：住宿 9 筆 groupShares=3 → 17336 / 9 = 1926
+                    const searchPerDay = searchGroupShares > 0 && dayCount > 0
+                        ? searchPerShare / dayCount
+                        : null;
+                    return (
+                        <div className="mb-4 p-3 sm:p-4 bg-gradient-to-r from-primaryColor-50 via-white to-white border border-primaryColor-200 rounded-xl shadow-sm">
+                            <div className="flex items-center mb-2">
+                                <Search className="w-4 h-4 mr-1.5 text-primaryColor-600" />
+                                <h3 className="text-sm font-semibold text-gray-700">
+                                    搜尋「{searchKeyword}」結果摘要
+                                </h3>
+                            </div>
+                            <div className="flex items-baseline flex-wrap gap-x-3 gap-y-1 pl-1">
+                                <p className="text-sm text-gray-700">
+                                    總計 <span className="text-xl font-bold text-primaryColor-700 ml-1">TWD {searchTotal.toFixed(0)}</span>
+                                </p>
+                                {searchGroupShares > 0 ? (
+                                    <>
+                                        <p className="text-sm text-gray-700">
+                                            ・每人 <span className="text-lg font-bold text-primaryColor-600 ml-1">TWD {searchPerShare.toFixed(0)}</span>
+                                        </p>
+                                        {isAccommodation && searchPerDay !== null && (
+                                            <p className="text-sm text-gray-700">
+                                                ・每晚平均 <span className="text-lg font-bold text-primaryColor-600 ml-1">TWD {searchPerDay.toFixed(0)}</span>
+                                            </p>
+                                        )}
+                                    </>
+                                ) : (
+                                    <p className="text-xs text-gray-500">・搜尋結果內無有效份額</p>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })()}
+
+                {/* ✨ NEW: 每人花費金額摘要 - 搜尋欄下方，與「結餘總結」計算一致 */}
+                {(memberSpending.length > 0 || selfPaidSummary.count > 0) && (
+                    <div className="mb-5 p-4 sm:p-5 bg-gradient-to-br from-white via-white to-primaryColor-50/60 rounded-2xl border border-gray-100 shadow-sm">
+                        <div className="flex items-center justify-between mb-3 flex-wrap gap-y-1">
+                            <h3 className="text-sm font-semibold text-gray-700 flex items-center">
+                                <Wallet className="w-4 h-4 mr-1.5 text-primaryColor-600" />
+                                每人花費金額
+                            </h3>
+                            <span className="text-xs text-gray-400">
+                                統計範圍：全部 {expenses.length} 筆 · 合計 TWD {totalSpending.toFixed(0)}
+                            </span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                            {memberSpending.map((m) => {
+                                const isTop = m.userId === topSpenderId;
+                                const isActive = filterPayer === m.displayName;
+                                const trimmedName = (m.displayName || '').trim();
+                                const initial = trimmedName ? trimmedName.charAt(trimmedName.length - 1).toUpperCase() : '?';
+                                return (
+                                    <div
+                                        key={m.userId}
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => togglePayerFilter(m.displayName)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePayerFilter(m.displayName); } }}
+                                        aria-pressed={isActive}
+                                        title={isActive ? `取消「${m.displayName}」篩選` : `只顯示付款人為「${m.displayName}」的支出`}
+                                        className={`relative flex items-center p-3 rounded-xl cursor-pointer transition-all duration-200 ${
+                                            isActive
+                                                ? 'bg-gradient-to-r from-primaryColor-100 to-white border-2 border-primaryColor-500 shadow-md ring-2 ring-primaryColor-300'
+                                                : isTop
+                                                    ? 'bg-gradient-to-r from-primaryColor-50 to-white border-2 border-primaryColor-400 shadow-sm hover:shadow-md'
+                                                    : 'bg-gray-50 border border-gray-100 hover:bg-gray-100 hover:border-gray-200'
+                                        }`}
+                                    >
+                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-white flex-shrink-0 text-sm ${
+                                            isActive || isTop ? 'bg-primaryColor-600' : 'bg-gray-400'
+                                        }`}>
+                                            {initial}
+                                        </div>
+                                        <div className="ml-3 min-w-0 flex-1">
+                                            <p className={`text-sm font-medium truncate flex items-center ${isActive || isTop ? 'text-primaryColor-800' : 'text-gray-700'}`}>
+                                                <span className="truncate">{m.displayName}</span>
+                                                {isTop && <Crown className="w-3.5 h-3.5 ml-1 text-amber-500 flex-shrink-0" />}
+                                            </p>
+                                            <p className={`text-lg font-bold leading-tight ${isActive || isTop ? 'text-primaryColor-700' : 'text-gray-800'}`}>
+                                                TWD {m.amount.toFixed(0)}
+                                            </p>
+                                        </div>
+                                        {isActive && (
+                                            <span className="absolute top-1.5 right-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-primaryColor-600 text-white font-medium">
+                                                篩選中
+                                            </span>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                            {selfPaidSummary.count > 0 && (() => {
+                                const isActive = filterPayer === SELF_PAYER_KEY;
+                                return (
+                                    <div
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => togglePayerFilter(SELF_PAYER_KEY)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); togglePayerFilter(SELF_PAYER_KEY); } }}
+                                        aria-pressed={isActive}
+                                        title={isActive ? '取消「各自付款」篩選' : '只顯示各自付款的支出'}
+                                        className={`relative flex items-center p-3 rounded-xl cursor-pointer transition-all duration-200 ${
+                                            isActive
+                                                ? 'bg-gradient-to-r from-gray-100 to-white border-2 border-gray-500 shadow-md ring-2 ring-gray-300'
+                                                : 'bg-gray-50 border border-gray-200 hover:bg-gray-100 hover:border-gray-300'
+                                        }`}
+                                    >
+                                        <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white flex-shrink-0 text-sm bg-gray-500">
+                                            各自
+                                        </div>
+                                        <div className="ml-3 min-w-0 flex-1">
+                                            <p className="text-sm font-medium text-gray-700">各自付款</p>
+                                            <p className="text-lg font-bold leading-tight text-gray-800">TWD {selfPaidSummary.amount.toFixed(0)}</p>
+                                            <p className="text-xs text-gray-500">{selfPaidSummary.count} 筆 · 不計入結算</p>
+                                        </div>
+                                        {isActive && (
+                                            <span className="absolute top-1.5 right-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-gray-600 text-white font-medium">
+                                                篩選中
+                                            </span>
+                                        )}
+                                    </div>
+                                );
+                            })()}
+                        </div>
+                    </div>
+                )}
+                
+                {sortedExpenses.length === 0 ? (
+                  <p className="text-gray-500 italic p-4 bg-white rounded-xl shadow-inner">
+                    {filterPayer && searchKeyword.trim()
+                      ? `找不到任何付款人為「${filterPayer}」且符合「${searchKeyword}」的支出記錄。`
+                      : filterPayer
+                        ? `「${filterPayer}」目前沒有任何支出記錄。`
+                        : searchKeyword.trim()
+                          ? `找不到任何符合「${searchKeyword}」的支出記錄。`
+                          : '目前沒有任何支出記錄。'}
+                  </p>
+                ) : (
+                  <div className="space-y-4">
+                    {sortedExpenses.map((exp) => {
+                      const totalShares = Object.values(exp.shares).reduce((sum, s) => sum + s, 0);
+                      const sharesDetail = Object.entries(exp.shares)
+                        .filter(([, share]) => share > 0)
+                        .map(([name, share]) => `${getDisplayName(name)} (${share}份)`)
+                        .join(', ');
+                      const expenseImageSrc = exp.imageUrl || exp.imageDataUrl || '';
+
+                      const isTwd = exp.currency === DEFAULT_CURRENCY;
+                      const isShowingTwd = showTwdExpenseIds.has(exp.id);
+                      const displayAmount = isShowingTwd
+                        ? `${DEFAULT_CURRENCY} ${exp.amountInTWD.toFixed(0)}`
+                        : `${exp.currency} ${Math.round(exp.originalAmount).toFixed(0)}`;
+                      const canToggle = !isTwd;
+
+                      return (
+                        <div key={exp.id} className="bg-white p-4 rounded-xl shadow-lg border-l-4 border-primaryColor-400 transition duration-150 hover:shadow-xl">
+                          <div className="flex gap-3 justify-between items-start">
+                            <div className="min-w-0 flex-grow">
+                              <p className="font-semibold text-lg text-gray-800">{exp.description}</p>
+                              <p
+                                className={`text-3xl font-extrabold text-primaryColor-600 my-1 ${canToggle ? 'cursor-pointer select-none hover:underline' : ''}`}
+                                onClick={canToggle ? () => toggleAmountDisplay(exp.id) : undefined}
+                                role={canToggle ? 'button' : undefined}
+                                tabIndex={canToggle ? 0 : undefined}
+                                onKeyDown={canToggle ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleAmountDisplay(exp.id); } } : undefined}
+                                title={canToggle ? (isShowingTwd ? '點擊換回原幣' : '點擊切換為台幣') : undefined}
+                                aria-label={canToggle ? (isShowingTwd ? `切換回 ${exp.currency} 顯示` : `切換為台幣顯示`) : undefined}
+                              >
+                                  {displayAmount}
+                              </p>
+                              <p className="text-sm text-gray-600">
+                                <span className="font-medium text-primaryColor-700">付款人:</span> {getPayerLabel(exp.payerName)}
+                                {exp.payerName === SELF_PAYER_KEY && (
+                                  <span className="ml-2 inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">不計入結算</span>
+                                )}
+                              </p>
+                              {exp.taxRefund?.eligible && (
+                                <p className="mt-1 text-xs text-primaryColor-700">
+                                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 font-medium ${exp.taxRefund.status === 'received' ? 'bg-green-100 text-green-700' : 'bg-primaryColor-50 text-primaryColor-700'}`}>
+                                    {exp.taxRefund.status === 'received' ? '退稅已收到' : '待收退稅'}
+                                  </span>
+                                  <span className="ml-2">{exp.currency} {(Number(exp.taxRefund.estimatedAmount) || 0).toLocaleString('zh-TW', { maximumFractionDigits: 2 })}</span>
+                                </p>
+                              )}
+                              <p className="text-xs text-gray-500 mt-1">
+                                <span className="font-medium">分帳:</span> {sharesDetail || '無人分帳'} (總份數: {totalShares})
+                              </p>
+                              <p className="text-xs text-gray-400 mt-1">
+                                <span className="font-medium">時間:</span> {formatTimestamp(exp.timestamp)}
+                              </p>
+                            </div>
+                            <div className={`flex flex-col items-end space-y-2 flex-shrink-0 ${isReadOnly ? 'opacity-50' : ''}`}>
+                              <div className="flex space-x-2">
+                                <button
+                                  onClick={() => startEdit(exp)}
+                                  className="p-2 text-blue-500 bg-white hover:bg-blue-50 rounded-full transition duration-150 hover:scale-110 transform border border-transparent hover:border-blue-300 shadow-md disabled:cursor-not-allowed"
+                                  aria-label="編輯支出"
+                                  disabled={isReadOnly}
+                                  title={isReadOnly ? "唯讀模式下無法編輯" : "編輯支出"}
+                                >
+                                  <Pencil className="w-5 h-5" />
+                                </button>
+                                <button
+                                  onClick={() => deleteExpense(exp)}
+                                  disabled={isLoading || isReadOnly}
+                                  className="p-2 text-red-500 bg-white hover:bg-blue-50 rounded-full transition duration-150 hover:scale-110 transform border border-transparent hover:border-red-300 shadow-md disabled:cursor-not-allowed"
+                                  aria-label="刪除支出"
+                                  title={isReadOnly ? "唯讀模式下無法刪除" : "刪除支出"}
+                                >
+                                  <Trash2 className="w-5 h-5" />
+                                </button>
+                              </div>
+                              {expenseImageSrc && (
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewImage({ url: expenseImageSrc, title: exp.description })}
+                                  className="rounded-lg focus:outline-none focus:ring-2 focus:ring-primaryColor-500"
+                                  aria-label={`查看 ${exp.description} 的圖片`}
+                                >
+                                  <img
+                                    src={expenseImageSrc}
+                                    alt={`${exp.description} 的支出圖片`}
+                                    className="h-20 w-20 rounded-lg object-cover border border-gray-200 shadow-sm"
+                                    loading="lazy"
+                                  />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {previewImage && (
+                  <div className="fixed inset-0 bg-gray-900 bg-opacity-80 z-50 flex items-center justify-center p-4" onClick={() => setPreviewImage(null)}>
+                    <div className="relative max-w-4xl max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewImage(null)}
+                        className="absolute -top-3 -right-3 bg-white rounded-full p-2 text-gray-700 hover:text-gray-900 shadow-lg"
+                        aria-label="關閉圖片預覽"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                      <img
+                        src={previewImage.url}
+                        alt={previewImage.title || '支出圖片'}
+                        className="max-h-[90vh] max-w-full rounded-xl object-contain bg-white shadow-2xl"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+        });
+
+        const BalanceSummary = memo(({ settlements, balances, members, getDisplayName, isReadOnly, settleMemberDebt, pendingTaxRefundInTWD }) => {
+            const debtorBalances = useMemo(() => {
+                return members.filter(member => Math.round(balances[member] || 0) < 0)
+                               .map(member => ({
+                                   id: member,
+                                   amount: Math.abs(Math.round(balances[member] || 0)),
+                                   displayName: getDisplayName(member),
+                               }))
+                               .filter(d => d.amount > 0);
+            }, [balances, members, getDisplayName]);
+
+            return (
+              <div className="mt-8 p-6 bg-white rounded-xl shadow-2xl">
+                <h2 className="text-2xl font-bold mb-4 text-gray-800 flex items-center">
+                  <Users className="w-7 h-7 mr-3 text-primaryColor-500" />
+                  結餘總結 
+                </h2>
+                {pendingTaxRefundInTWD > 0 && (
+                  <div className="mb-4 rounded-xl border border-primaryColor-100 bg-primaryColor-50 p-4">
+                    <p className="text-sm font-medium text-primaryColor-700">待收退稅預估總額</p>
+                    <p className="mt-1 text-2xl font-extrabold text-primaryColor-700">TWD {pendingTaxRefundInTWD.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</p>
+                  </div>
+                )}
+
+                {settlements.length === 0 ? (
+                    <p className="text-lg font-medium text-green-600 p-3 bg-green-50 rounded-lg">🎉 所有帳目已結清！</p>
+                ) : (
+                    <div className="space-y-4">
+                        {settlements.map((settlement, index) => {
+                            const canSettle = !isReadOnly; 
+
+                            return (
+                                <div 
+                                    key={index} 
+                                    className="bg-yellow-50 p-4 rounded-xl shadow-md border-l-4 border-yellow-400 flex justify-between items-center transition duration-150" 
+                                >
+                                    <div className="flex items-center">
+                                        <span className="font-bold text-yellow-800 text-xl mr-3">💸</span>
+                                        <div className="text-gray-800">
+                                            <p className="text-lg">
+                                                <span className="font-bold text-red-600">{getDisplayName(settlement.from)}</span>
+                                                <span className="mx-0 text-gray-500">應付給</span>
+                                                <span className="font-bold text-green-600">{getDisplayName(settlement.to)}</span>
+                                            </p>
+                                            <p className="text-3xl font-extrabold text-yellow-700 mt-1">
+                                                TWD {settlement.amount.toFixed(0)}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    
+                                    {canSettle && (
+                                        <button
+                                            onClick={() => settleMemberDebt(settlement.from, settlement.amount, settlement.to)} 
+                                            className="px-3 py-1 text-sm rounded-lg text-white transition hover:scale-105 transform shadow-md flex items-center bg-green-500 hover:bg-green-600"
+                                            title="新增一筆結清支出記錄"
+                                        >
+                                            <CircleCheck className="w-4 h-4 mr-1" />
+                                            結清
+                                        </button>
+                                    )}
+                                    {isReadOnly && (
+                                         <span className="text-sm text-gray-500 italic">僅成員可操作</span>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+              </div>
+            );
+        });
+        
+
 
 export default App;
