@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  createTaxRefund,
+  getTaxRefundProfile,
+  pendingTaxRefundTotalInTWD,
+} from '../src/lib/tax-refund.js';
+
+test('單一國家幣別自動帶入退稅國家與稅率', () => {
+  assert.equal(getTaxRefundProfile('JPY').country, 'JP');
+  assert.equal(getTaxRefundProfile('THB').rate, 0.07);
+});
+
+test('共用幣別要求使用者選國家，不自動估算', () => {
+  assert.equal(getTaxRefundProfile('EUR'), null);
+  assert.equal(createTaxRefund({ currency: 'EUR', originalAmount: 110, exchangeRate: 33 }).estimatedAmount, 0);
+});
+
+test('以含稅金額反推預估退稅金額', () => {
+  assert.equal(createTaxRefund({ currency: 'JPY', originalAmount: 11000, exchangeRate: 0.25 }).estimatedAmount, 1000);
+  assert.equal(createTaxRefund({ currency: 'THB', originalAmount: 107, exchangeRate: 0.85 }).estimatedAmount, 7);
+});
+
+test('待收退稅總額只加總 pending，並使用每筆保存的匯率', () => {
+  assert.equal(pendingTaxRefundTotalInTWD([
+    { taxRefund: { eligible: true, status: 'pending', estimatedAmount: 1000, exchangeRate: 0.25 } },
+    { taxRefund: { eligible: true, status: 'received', estimatedAmount: 500, exchangeRate: 0.25 } },
+    { taxRefund: { eligible: false, status: 'pending', estimatedAmount: 999, exchangeRate: 1 } },
+  ]), 250);
+});

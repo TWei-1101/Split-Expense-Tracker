@@ -30,6 +30,7 @@ import {
   arrayRemove,
 } from 'firebase/firestore';
 import { detectTelegramMode } from './lib/tg-mode.js';
+import { createTaxRefund, getTaxRefundProfileByCountry, pendingTaxRefundTotalInTWD, TAX_REFUND_PROFILES } from './lib/tax-refund.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
@@ -484,6 +485,7 @@ async function _getStorage() {
                 imagePath: '',
                 imageName: '',
                 imageDataUrl: '',
+                taxRefund: { eligible: false, status: 'pending' },
             });
             const [imageFile, setImageFile] = useState(null);
             const [imagePreviewUrl, setImagePreviewUrl] = useState('');
@@ -526,6 +528,7 @@ async function _getStorage() {
                             imagePath: expenseToEdit.imagePath || '',
                             imageName: expenseToEdit.imageName || '',
                             imageDataUrl: expenseToEdit.imageDataUrl || '',
+                            taxRefund: expenseToEdit.taxRefund || { eligible: false, status: 'pending' },
                         });
                         setImagePreviewUrl(expenseToEdit.imageUrl || expenseToEdit.imageDataUrl || '');
 					} else {
@@ -571,6 +574,7 @@ async function _getStorage() {
                         imagePath: '',
                         imageName: '',
                         imageDataUrl: '',
+                        taxRefund: { eligible: false, status: 'pending' },
 					  });
                       setImagePreviewUrl('');
 					}
@@ -603,10 +607,23 @@ async function _getStorage() {
                  setNewExpense(prev => ({
                     ...prev,
                     currency: selectedCurrency,
+                    taxRefund: prev.taxRefund?.eligible
+                      ? { ...createTaxRefund({ currency: selectedCurrency, originalAmount: prev.originalAmount, exchangeRate: liveExchangeRates[selectedCurrency] || DEFAULT_EXCHANGE_RATES[selectedCurrency] || 1 }), status: prev.taxRefund.status }
+                      : prev.taxRefund,
                  }));
                  // ✨ NEW: 幣別記憶儲存邏輯
                  localStorage.setItem(LAST_EXPENSE_CURRENCY_KEY, selectedCurrency);
             };
+
+            const taxRefundPreview = newExpense.taxRefund?.eligible
+              ? createTaxRefund({
+                  currency: newExpense.currency,
+                  originalAmount: newExpense.originalAmount,
+                  exchangeRate: currentExchangeRate,
+                  country: newExpense.taxRefund.country,
+                  status: newExpense.taxRefund.status,
+                })
+              : null;
 
             const handleImageChange = (e) => {
                 const file = e.target.files?.[0];
@@ -796,6 +813,7 @@ async function _getStorage() {
                         currency: newExpense.currency,
                         exchangeRate: currentExchangeRate,
                         amountInTWD: amountInTWD,
+                        taxRefund: taxRefundPreview || { eligible: false, status: 'pending' },
                         payerName: newExpense.payerName,
                         shares: Object.entries(newExpense.shares).reduce((acc, [name, share]) => {
                             if (share > 0) acc[name] = share;
@@ -2597,6 +2615,12 @@ async function _getStorage() {
             return balances;
           }, [expenses, members]);
 
+          // 退稅只追蹤付款人待收款項，不參與 calculateBalances / calculateSettlements。
+          const pendingTaxRefundInTWD = useMemo(
+            () => pendingTaxRefundTotalInTWD(expenses),
+            [expenses],
+          );
+
           const calculateSettlements = useMemo(() => {
             const balances = calculateBalances;
             const settlements = [];
@@ -3071,6 +3095,7 @@ async function _getStorage() {
                     getDisplayName={getDisplayName} 
                     isReadOnly={isReadOnly}
                     settleMemberDebt={settleMemberDebt}
+                    pendingTaxRefundInTWD={pendingTaxRefundInTWD}
                 />
                 <ExpenseList 
                     expenses={expenses} 
@@ -3534,6 +3559,14 @@ async function _getStorage() {
                                   <span className="ml-2 inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">不計入結算</span>
                                 )}
                               </p>
+                              {exp.taxRefund?.eligible && (
+                                <p className="mt-1 text-xs text-primaryColor-700">
+                                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 font-medium ${exp.taxRefund.status === 'received' ? 'bg-green-100 text-green-700' : 'bg-primaryColor-50 text-primaryColor-700'}`}>
+                                    {exp.taxRefund.status === 'received' ? '退稅已收到' : '待收退稅'}
+                                  </span>
+                                  <span className="ml-2">{exp.currency} {(Number(exp.taxRefund.estimatedAmount) || 0).toLocaleString('zh-TW', { maximumFractionDigits: 2 })}</span>
+                                </p>
+                              )}
                               <p className="text-xs text-gray-500 mt-1">
                                 <span className="font-medium">分帳:</span> {sharesDetail || '無人分帳'} (總份數: {totalShares})
                               </p>
@@ -3607,7 +3640,7 @@ async function _getStorage() {
             );
         });
 
-        const BalanceSummary = memo(({ settlements, balances, members, getDisplayName, isReadOnly, settleMemberDebt }) => {
+        const BalanceSummary = memo(({ settlements, balances, members, getDisplayName, isReadOnly, settleMemberDebt, pendingTaxRefundInTWD }) => {
             const debtorBalances = useMemo(() => {
                 return members.filter(member => Math.round(balances[member] || 0) < 0)
                                .map(member => ({
@@ -3624,6 +3657,11 @@ async function _getStorage() {
                   <Users className="w-7 h-7 mr-3 text-primaryColor-500" />
                   結餘總結 
                 </h2>
+                <div className="mb-4 rounded-xl border border-primaryColor-100 bg-primaryColor-50 p-4">
+                  <p className="text-sm font-medium text-primaryColor-700">待收退稅總額</p>
+                  <p className="mt-1 text-2xl font-extrabold text-primaryColor-700">TWD {(pendingTaxRefundInTWD || 0).toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</p>
+                  <p className="mt-1 text-xs text-gray-500">僅統計待收項目，按各筆支出儲存時的匯率換算；不影響分帳結算。</p>
+                </div>
 
                 {settlements.length === 0 ? (
                     <p className="text-lg font-medium text-green-600 p-3 bg-green-50 rounded-lg">🎉 所有帳目已結清！</p>
