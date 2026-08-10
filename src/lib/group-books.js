@@ -1,5 +1,11 @@
 const DEFAULT_GROUP_NAME = '分帳記帳簿';
 
+function sortBooks(books) {
+  return [...books].sort((a, b) =>
+    a.name.localeCompare(b.name, 'zh-Hant') || a.id.localeCompare(b.id)
+  );
+}
+
 function toBook(id, data, userId) {
   const owner = data?.owner || null;
   const members = Array.isArray(data?.members) ? data.members : [];
@@ -19,9 +25,45 @@ export function buildGroupBookList({ userId, owned = [], invited = [] }) {
     if (book) booksById.set(id, book);
   });
 
-  return [...booksById.values()].sort((a, b) =>
-    a.name.localeCompare(b.name, 'zh-Hant') || a.id.localeCompare(b.id)
+  return sortBooks([...booksById.values()]);
+}
+
+export function renameGroupBookInList(books, id, name) {
+  const trimmedName = (name || '').trim() || DEFAULT_GROUP_NAME;
+  return sortBooks(books.map((book) =>
+    book.id === id ? { ...book, name: trimmedName } : book
+  ));
+}
+
+// A group document listener can deliver a cached, older snapshot after a local
+// rename. Keep the optimistic name until Firestore acknowledges that exact name.
+export function mergeGroupBookSnapshot({
+  books,
+  userId,
+  id,
+  data,
+  pendingName = null,
+  acknowledgePending = true,
+}) {
+  const snapshotBook = toBook(id, data, userId);
+  if (!snapshotBook) {
+    return { books: books.filter((book) => book.id !== id), pendingName: null };
+  }
+
+  const shouldKeepOptimisticName = pendingName && (
+    snapshotBook.name !== pendingName || !acknowledgePending
   );
+  const mergedBook = shouldKeepOptimisticName
+    ? { ...snapshotBook, name: pendingName }
+    : snapshotBook;
+  const replaced = books.some((book) => book.id === id)
+    ? books.map((book) => book.id === id ? mergedBook : book)
+    : [...books, mergedBook];
+
+  return {
+    books: sortBooks(replaced),
+    pendingName: shouldKeepOptimisticName ? pendingName : null,
+  };
 }
 
 export function createNewGroupBook(name, userId) {

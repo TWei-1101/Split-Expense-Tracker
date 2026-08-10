@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
 import { initializeApp, getApp, getApps } from 'firebase/app';
 import {
   getAuth,
@@ -31,7 +31,12 @@ import {
 } from 'firebase/firestore';
 import { detectTelegramMode } from './lib/tg-mode.js';
 import { createTaxRefund, getTaxRefundProfileByCountry, pendingTaxRefundTotalInTWD, TAX_REFUND_PROFILES } from './lib/tax-refund.js';
-import { buildGroupBookList, createNewGroupBook } from './lib/group-books.js';
+import {
+  buildGroupBookList,
+  createNewGroupBook,
+  mergeGroupBookSnapshot,
+  renameGroupBookInList,
+} from './lib/group-books.js';
 import {
   canDeleteGroupBook,
   createGroupDeletionConfirmationSteps,
@@ -1558,6 +1563,9 @@ async function _getStorage() {
 		  const [isEditingGroupName, setIsEditingGroupName] = useState(false); 
 		  const [groupNameInput, setGroupNameInput] = useState('分帳記帳簿'); // 編輯時使用
 		  const [groupBooks, setGroupBooks] = useState([]);
+		  // A rename can race an already-running account-book query. Keep the
+		  // requested name until the current group listener receives its server ack.
+		  const pendingGroupBookNamesRef = useRef(new Map());
 		  const [isGroupBooksLoading, setIsGroupBooksLoading] = useState(false);
 		  const [isCreatingGroupBook, setIsCreatingGroupBook] = useState(false);
 		  const [isGroupBookMenuOpen, setIsGroupBookMenuOpen] = useState(false);
@@ -1641,7 +1649,11 @@ async function _getStorage() {
 		      }
 
 		      if (cancelled) return;
-		      setGroupBooks(buildGroupBookList({ userId, owned, invited }));
+		      let books = buildGroupBookList({ userId, owned, invited });
+		      pendingGroupBookNamesRef.current.forEach((pendingName, id) => {
+		        books = renameGroupBookInList(books, id, pendingName);
+		      });
+		      setGroupBooks(books);
 		      if (ownedResult.status === 'rejected' && memberResult.status === 'rejected') {
 		        console.warn('帳本列表查詢被拒絕，僅顯示目前可讀帳本。', ownedResult.reason, memberResult.reason);
 		      }
@@ -1886,6 +1898,22 @@ async function _getStorage() {
 				setGroupMembers(mergedMembers);
 				setGroupName(nameFromDb);
 				setGroupNameInput(nameFromDb);
+				if (userId && !isGuest) {
+				  const pendingName = pendingGroupBookNamesRef.current.get(currentCollectionId) || null;
+				  setGroupBooks((previous) => {
+				    const merged = mergeGroupBookSnapshot({
+				      books: previous,
+				      userId,
+				      id: currentCollectionId,
+				      data,
+				      pendingName,
+				      acknowledgePending: !snap.metadata.hasPendingWrites,
+				    });
+				    if (merged.pendingName) pendingGroupBookNamesRef.current.set(currentCollectionId, merged.pendingName);
+				    else pendingGroupBookNamesRef.current.delete(currentCollectionId);
+				    return merged.books;
+				  });
+				}
 			  } else {
 				console.warn("Group doc not found:", currentCollectionId);
 				setGroupOwner(null);
@@ -1902,7 +1930,7 @@ async function _getStorage() {
 		  );
 
 		  return () => unsub();
-		}, [db, currentCollectionId]);
+		}, [db, currentCollectionId, userId, isGuest]);
 
 		// 開始編輯群組名稱（只有成員可以編）
 		const startEditGroupName = () => {
@@ -1929,6 +1957,7 @@ async function _getStorage() {
 			setError(null);
 
 			const groupRef = doc(db, `artifacts/${appId}/groups/${currentCollectionId}`);
+			pendingGroupBookNamesRef.current.set(currentCollectionId, trimmed);
 			await setDoc(
 			  groupRef,
 			  {
@@ -1939,8 +1968,10 @@ async function _getStorage() {
 
 			setGroupName(trimmed);
 			setGroupNameInput(trimmed);
+			setGroupBooks((previous) => renameGroupBookInList(previous, currentCollectionId, trimmed));
 			setIsEditingGroupName(false);
 		  } catch (e) {
+			pendingGroupBookNamesRef.current.delete(currentCollectionId);
 			console.error('saveGroupName error:', e);
 			setError(`更新紀錄簿名稱失敗：${e.message}`);
 		  } finally {

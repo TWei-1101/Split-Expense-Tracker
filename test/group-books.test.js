@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildGroupBookList, createNewGroupBook } from '../src/lib/group-books.js';
+import {
+  buildGroupBookList,
+  createNewGroupBook,
+  renameGroupBookInList,
+  mergeGroupBookSnapshot,
+} from '../src/lib/group-books.js';
 
 test('群組帳本列表會合併 owner 與 members 查詢、去重並依名稱排序', () => {
   const books = buildGroupBookList({
@@ -39,4 +44,45 @@ test('建立新帳本模型會修剪名稱並維持獨立 owner/members 結構',
     members: ['u1'],
   });
   assert.equal(createNewGroupBook('   ', 'u1'), null);
+});
+
+test('帳本改名成功後會立即更新帳本選擇清單並維持排序', () => {
+  const renamed = renameGroupBookInList([
+    { id: 'jp', name: '日本旅遊', role: 'owner' },
+    { id: 'family', name: '家庭帳', role: 'member' },
+  ], 'jp', '  京都自由行  ');
+
+  assert.deepEqual(renamed, [
+    { id: 'jp', name: '京都自由行', role: 'owner' },
+    { id: 'family', name: '家庭帳', role: 'member' },
+  ]);
+});
+
+test('晚到的舊名稱 snapshot 不會覆蓋帳本改名的樂觀狀態，確認名稱後才解除保護', () => {
+  const books = [{ id: 'jp', name: '京都自由行', role: 'owner' }];
+  const stale = mergeGroupBookSnapshot({
+    books,
+    userId: 'u1',
+    id: 'jp',
+    data: { name: '日本旅遊', owner: 'u1', members: ['u1'] },
+    pendingName: '京都自由行',
+  });
+
+  assert.deepEqual(stale, {
+    books,
+    pendingName: '京都自由行',
+  });
+
+  const acknowledged = mergeGroupBookSnapshot({
+    books: stale.books,
+    userId: 'u1',
+    id: 'jp',
+    data: { name: '京都自由行', owner: 'u1', members: ['u1'] },
+    pendingName: stale.pendingName,
+  });
+
+  assert.deepEqual(acknowledged, {
+    books,
+    pendingName: null,
+  });
 });
