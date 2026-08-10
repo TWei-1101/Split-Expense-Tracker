@@ -1,13 +1,10 @@
 import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
-import { initializeApp, getApp, getApps } from 'firebase/app';
 import {
-  getAuth,
   onAuthStateChanged,
   signInAnonymously,
   signOut,
 } from 'firebase/auth';
 import {
-  getFirestore,
   collection,
   doc,
   setDoc,
@@ -25,7 +22,7 @@ import {
   arrayRemove,
 } from 'firebase/firestore';
 import { detectTelegramMode } from './lib/tg-mode.js';
-import { pendingTaxRefundTotalInTWD } from './lib/tax-refund.js';
+import { pendingTaxRefundTotalInTWD } from './features/tax-refunds/taxRefund.js';
 import { calculateBalances, SELF_PAYER_KEY } from './domain/calculateBalances.js';
 import { calculateSettlements } from './domain/calculateSettlements.js';
 import BalanceSummary from './features/settlements/BalanceSummary.jsx';
@@ -42,39 +39,11 @@ import {
   listExpenses,
   mapExpenseSnapshot,
 } from './services/expenseRepository.js';
+import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './services/firebase.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
 // --- Firebase 設定（從 CDN 版 hardcode，沿用同一份，避免 query 跑到 default-app-id）---
-const appId = 'YOUR_APP_ID';
-const firebaseConfig = {
-  apiKey: "AIzaSyB8l7Od781kGHyI9pXMLBXvzt7NuuIyq8c",
-  authDomain: "splite-expense-tracker.firebaseapp.com",
-  projectId: "splite-expense-tracker",
-  storageBucket: "splite-expense-tracker.firebasestorage.app",
-  messagingSenderId: "425612895494",
-  appId: "1:425612895494:web:b5889f1d83cafb41d7ea87",
-  measurementId: "G-FVS0WSGZD9",
-};
-
-let _firebaseApp = null;
-function getFirebaseApp() {
-    if (!_firebaseApp) {
-        _firebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
-    }
-    return _firebaseApp;
-}
-
-let _storagePromise = null;
-async function _getStorage() {
-    if (!_storagePromise) {
-        _storagePromise = (async () => {
-            const { getStorage, ref: storageRef, uploadBytes, getDownloadURL, deleteObject } = await import('firebase/storage');
-            return { getStorage, storageRef, uploadBytes, getDownloadURL, deleteObject };
-        })();
-    }
-    return _storagePromise;
-}
 
         
         
@@ -313,16 +282,8 @@ async function _getStorage() {
 		
           // --- 1. Firebase 初始化與驗證（支援 /g/短代碼） ---
           useEffect(() => {
-            if (!firebaseConfig) {
-              setError('Firebase configuration is missing.');
-              setAuthReady(true);
-              return;
-            }
-
             try {
-              const app = getFirebaseApp();
-              const _auth = getAuth(app);
-              const _db = getFirestore(app);
+              const { auth: _auth, db: _db } = getFirebaseServices();
 
               setDb(_db);
               setAuth(_auth);
@@ -828,7 +789,7 @@ async function _getStorage() {
                     await deleteExpenseRecord(db, appId, currentCollectionId, expenseId);
                     if (expense?.imagePath) {
                         try {
-                            const { getStorage, storageRef, deleteObject } = await _getStorage();
+                            const { getStorage, storageRef, deleteObject } = await getStorageModule();
                             await deleteObject(storageRef(getStorage(getFirebaseApp()), expense.imagePath));
                         } catch (imageDeleteError) {
                             console.warn('Delete expense image failed:', imageDeleteError);
@@ -868,7 +829,7 @@ async function _getStorage() {
                       });
                       await batch.commit();
                       if (imagePaths.length > 0) {
-                          const { getStorage, storageRef, deleteObject } = await _getStorage();
+                          const { getStorage, storageRef, deleteObject } = await getStorageModule();
                           const storage = getStorage(getFirebaseApp());
                           await Promise.allSettled(
                               imagePaths.map(path => deleteObject(storageRef(storage, path)))
@@ -1706,7 +1667,7 @@ async function _getStorage() {
                     currencies={CURRENCIES}
                     lastExpenseCurrencyKey={LAST_EXPENSE_CURRENCY_KEY}
                     selfPayerKey={SELF_PAYER_KEY}
-                    getStorageModule={_getStorage}
+                    getStorageModule={getStorageModule}
                     getFirebaseApp={getFirebaseApp}
                     appId={appId}
                     icons={{ Plus, Minus, CircleCheck }}
