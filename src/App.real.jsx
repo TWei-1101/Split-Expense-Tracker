@@ -4099,7 +4099,6 @@ async function _getStorage() {
                       <tr>
                         <th className="px-3 py-3 text-left font-semibold">成員</th>
                         {EXPENSE_CATEGORY_OPTIONS.map(option => <th key={option.value} className="px-3 py-3 text-right font-semibold">{option.label}</th>)}
-                        <th className="px-3 py-3 text-right font-semibold">合計</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
@@ -4109,13 +4108,11 @@ async function _getStorage() {
                           <tr key={member} className="text-gray-700">
                             <td className="px-3 py-3 font-medium whitespace-nowrap">{getDisplayName(member)}</td>
                             {EXPENSE_CATEGORY_OPTIONS.map(option => <td key={option.value} className="px-3 py-3 text-right whitespace-nowrap">TWD {Math.round(totals[option.value] || 0).toLocaleString('zh-TW')}</td>)}
-                            <td className="px-3 py-3 text-right font-bold whitespace-nowrap">TWD {Math.round(totals.total || 0).toLocaleString('zh-TW')}</td>
                           </tr>
                         );
                       })}
                     </tbody>
                   </table>
-                  <p className="px-3 py-2 text-xs text-gray-500 bg-gray-50">依各筆支出的分帳份數計算實際負擔；退稅不影響此統計。</p>
                 </div>
 
                 {settlements.length === 0 ? (
