@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   createTaxRefund,
   getTaxRefundProfile,
@@ -27,4 +28,11 @@ test('待收退稅總額只加總 pending，並使用每筆保存的匯率', () 
     { taxRefund: { eligible: true, status: 'received', estimatedAmount: 500, exchangeRate: 0.25 } },
     { taxRefund: { eligible: false, status: 'pending', estimatedAmount: 999, exchangeRate: 1 } },
   ]), 250);
+});
+
+test('expense modal exposes the tax-refund controls', () => {
+  const appSource = readFileSync(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  assert.match(appSource, /此筆可退稅/);
+  assert.match(appSource, /退稅國家／地區/);
+  assert.match(appSource, /退稅狀態/);
 });

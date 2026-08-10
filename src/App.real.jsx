@@ -948,6 +948,67 @@ async function _getStorage() {
                       </div>
                     </div>
 
+                    <div className="pt-4 border-t border-gray-100">
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(newExpense.taxRefund?.eligible)}
+                          onChange={(e) => setNewExpense((prev) => ({
+                            ...prev,
+                            taxRefund: e.target.checked
+                              ? createTaxRefund({ currency: prev.currency, originalAmount: prev.originalAmount, exchangeRate: currentExchangeRate })
+                              : { eligible: false, status: 'pending' },
+                          }))}
+                          className="h-4 w-4 rounded border-gray-300 text-primaryColor-600 focus:ring-primaryColor-500"
+                          disabled={isReadOnly}
+                        />
+                        <span className="font-medium text-gray-700">此筆可退稅</span>
+                      </label>
+                      {taxRefundPreview && (
+                        <div className="mt-3 space-y-3 rounded-lg bg-primaryColor-50 p-3">
+                          <div>
+                            <label htmlFor="tax-refund-country" className="block text-sm font-medium text-gray-700">退稅國家／地區</label>
+                            <select
+                              id="tax-refund-country"
+                              value={newExpense.taxRefund.country || ''}
+                              onChange={(e) => {
+                                const profile = getTaxRefundProfileByCountry(e.target.value);
+                                setNewExpense((prev) => ({
+                                  ...prev,
+                                  taxRefund: createTaxRefund({ currency: prev.currency, originalAmount: prev.originalAmount, exchangeRate: currentExchangeRate, country: profile?.country, status: prev.taxRefund.status }),
+                                }));
+                              }}
+                              className="mt-1 block w-full border border-gray-300 rounded-lg bg-white p-2 text-sm"
+                              disabled={isReadOnly}
+                            >
+                              <option value="">請選擇國家／地區</option>
+                              {TAX_REFUND_PROFILES.map((profile) => <option key={profile.country} value={profile.country}>{profile.label}（{Math.round(profile.rate * 100)}%）</option>)}
+                            </select>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <p className="text-sm font-medium text-gray-700">預估退稅金額</p>
+                              <p className="mt-1 rounded-lg bg-white p-2 font-semibold text-primaryColor-700">{newExpense.currency} {taxRefundPreview.estimatedAmount.toLocaleString()}</p>
+                            </div>
+                            <div>
+                              <label htmlFor="tax-refund-status" className="block text-sm font-medium text-gray-700">退稅狀態</label>
+                              <select
+                                id="tax-refund-status"
+                                value={newExpense.taxRefund.status || 'pending'}
+                                onChange={(e) => setNewExpense((prev) => ({ ...prev, taxRefund: { ...prev.taxRefund, status: e.target.value } }))}
+                                className="mt-1 block w-full border border-gray-300 rounded-lg bg-white p-2 text-sm"
+                                disabled={isReadOnly}
+                              >
+                                <option value="pending">待收退稅</option>
+                                <option value="received">已收到</option>
+                              </select>
+                            </div>
+                          </div>
+                          <p className="text-xs text-gray-500">退款歸付款人，不影響分帳或結算。</p>
+                        </div>
+                      )}
+                    </div>
+
                     {/* 2. 收據 / 圖片 */}
                     <div className="pt-4 border-t border-gray-100">
                       <label htmlFor="expenseImage" className="block text-sm font-medium text-gray-700">收據 / 圖片</label>
