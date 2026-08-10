@@ -52,6 +52,13 @@ import {
   calculateMemberCategorySpending,
 } from './lib/expense-categories.js';
 import { expenseTimestampToDate, findDuplicateExpenses } from './lib/duplicate-expenses.js';
+import {
+  buildLuggageDeletionPlan,
+  createLuggageItem,
+  getLuggageId,
+  groupTaxRefundExpensesByLuggage,
+  normalizeLuggageList,
+} from './lib/luggage.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
@@ -97,6 +104,9 @@ async function _getStorage() {
 
 		const getGroupMembersDocPath = (groupId) =>
 		  `artifacts/${appId}/groups/${groupId}/settings/members`;
+
+		const getGroupLuggageDocPath = (groupId) =>
+		  `artifacts/${appId}/groups/${groupId}/settings/luggage`;
 
 		const getExpenseImagePath = (groupId, expenseId, fileName) => {
 		  const safeName = (fileName || 'receipt').replace(/[^\w.\-]+/g, '_').slice(-80);
@@ -495,7 +505,7 @@ async function _getStorage() {
 		/**
          * 支出 Modal (核心邏輯獨立)
          */
-        const ExpenseModal = memo(({ db, currentUserId, members, expenses, getInitialShares, state, onClose, getDisplayName, isReadOnly, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel}) => {
+        const ExpenseModal = memo(({ db, currentUserId, members, expenses, luggage, getInitialShares, state, onClose, getDisplayName, isReadOnly, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel}) => {
             const [newExpense, setNewExpense] = useState({
                 description: '',
                 originalAmount: '',
@@ -643,7 +653,7 @@ async function _getStorage() {
                     ...prev,
                     currency: selectedCurrency,
                     taxRefund: prev.taxRefund?.eligible
-                      ? { ...createTaxRefund({ currency: selectedCurrency, originalAmount: prev.originalAmount, exchangeRate: liveExchangeRates[selectedCurrency] || DEFAULT_EXCHANGE_RATES[selectedCurrency] || 1 }), status: prev.taxRefund.status }
+                      ? { ...createTaxRefund({ currency: selectedCurrency, originalAmount: prev.originalAmount, exchangeRate: liveExchangeRates[selectedCurrency] || DEFAULT_EXCHANGE_RATES[selectedCurrency] || 1 }), status: prev.taxRefund.status, luggageId: getLuggageId(prev.taxRefund) }
                       : prev.taxRefund,
                  }));
                  // ✨ NEW: 幣別記憶儲存邏輯
@@ -651,13 +661,13 @@ async function _getStorage() {
             };
 
             const taxRefundPreview = newExpense.taxRefund?.eligible
-              ? createTaxRefund({
+              ? { ...createTaxRefund({
                   currency: newExpense.currency,
                   originalAmount: newExpense.originalAmount,
                   exchangeRate: currentExchangeRate,
                   country: newExpense.taxRefund.country,
                   status: newExpense.taxRefund.status,
-                })
+                }), luggageId: getLuggageId(newExpense.taxRefund) }
               : null;
 
             const handleImageChange = (e) => {
@@ -1027,7 +1037,7 @@ async function _getStorage() {
                           onChange={(e) => setNewExpense((prev) => ({
                             ...prev,
                             taxRefund: e.target.checked
-                              ? createTaxRefund({ currency: prev.currency, originalAmount: prev.originalAmount, exchangeRate: currentExchangeRate })
+                              ? { ...createTaxRefund({ currency: prev.currency, originalAmount: prev.originalAmount, exchangeRate: currentExchangeRate }), luggageId: getLuggageId(prev.taxRefund) }
                               : { eligible: false, status: 'pending' },
                           }))}
                           className="h-4 w-4 rounded border-gray-300 text-primaryColor-600 focus:ring-primaryColor-500"
@@ -1046,7 +1056,7 @@ async function _getStorage() {
                                 const profile = getTaxRefundProfileByCountry(e.target.value);
                                 setNewExpense((prev) => ({
                                   ...prev,
-                                  taxRefund: createTaxRefund({ currency: prev.currency, originalAmount: prev.originalAmount, exchangeRate: currentExchangeRate, country: profile?.country, status: prev.taxRefund.status }),
+                                  taxRefund: { ...createTaxRefund({ currency: prev.currency, originalAmount: prev.originalAmount, exchangeRate: currentExchangeRate, country: profile?.country, status: prev.taxRefund.status }), luggageId: getLuggageId(prev.taxRefund) },
                                 }));
                               }}
                               className="mt-1 block w-full border border-gray-300 rounded-lg bg-white p-2 text-sm"
@@ -1074,6 +1084,19 @@ async function _getStorage() {
                                 <option value="received">已收到</option>
                               </select>
                             </div>
+                          </div>
+                          <div>
+                            <label htmlFor="tax-refund-luggage" className="block text-sm font-medium text-gray-700">放入行李箱</label>
+                            <select
+                              id="tax-refund-luggage"
+                              value={getLuggageId(newExpense.taxRefund)}
+                              onChange={(e) => setNewExpense((prev) => ({ ...prev, taxRefund: { ...prev.taxRefund, luggageId: e.target.value } }))}
+                              className="mt-1 block w-full border border-gray-300 rounded-lg bg-white p-2 text-sm"
+                              disabled={isReadOnly}
+                            >
+                              <option value="">未指定</option>
+                              {normalizeLuggageList(luggage).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                            </select>
                           </div>
                           <p className="text-xs text-gray-500">退款歸付款人，不影響分帳或結算。</p>
                         </div>
@@ -1672,6 +1695,12 @@ async function _getStorage() {
           }, [converterSourceCurrency]);
 
           const [expenses, setExpenses] = useState([]);
+          const [luggage, setLuggage] = useState([]);
+          const [isLuggageModalOpen, setIsLuggageModalOpen] = useState(false);
+          const [newLuggageName, setNewLuggageName] = useState('');
+          const [newLuggageOwnerId, setNewLuggageOwnerId] = useState('');
+          const [editingLuggageId, setEditingLuggageId] = useState('');
+          const [editingLuggageName, setEditingLuggageName] = useState('');
           const [customMembers, setCustomMembers] = useState([]); 
           const [defaultSharesConfig, setDefaultSharesConfig] = useState({}); 
           const [members, setMembers] = useState([]); 
@@ -2206,6 +2235,63 @@ async function _getStorage() {
 		  }, '繼續', 'red');
 		};
 
+          const saveLuggage = async (event) => {
+            event.preventDefault();
+            if (!db || !currentCollectionId || isReadOnly || isLoading) return;
+            try {
+              const item = createLuggageItem({
+                name: newLuggageName,
+                ownerId: newLuggageOwnerId,
+                existing: luggage,
+                id: `luggage-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              });
+              setIsLoading(true);
+              await setDoc(doc(db, getGroupLuggageDocPath(currentCollectionId)), { list: [...luggage, item] }, { merge: true });
+              setNewLuggageName(''); setNewLuggageOwnerId('');
+              setToastMessage(`已新增行李箱「${item.name}」`);
+            } catch (saveError) {
+              setError(`儲存行李箱失敗：${saveError.message}`);
+            } finally { setIsLoading(false); }
+          };
+
+          const renameLuggage = async (item) => {
+            if (!db || !currentCollectionId || isReadOnly || isLoading) return;
+            try {
+              const replacement = createLuggageItem({ name: editingLuggageName, ownerId: item.ownerId, existing: luggage.filter((entry) => entry.id !== item.id), id: item.id });
+              setIsLoading(true);
+              await setDoc(doc(db, getGroupLuggageDocPath(currentCollectionId)), { list: luggage.map((entry) => entry.id === item.id ? replacement : entry) }, { merge: true });
+              setEditingLuggageId(''); setEditingLuggageName('');
+              setToastMessage('行李箱名稱已更新。');
+            } catch (renameError) {
+              setError(`更新行李箱失敗：${renameError.message}`);
+            } finally { setIsLoading(false); }
+          };
+
+          const requestDeleteLuggage = (item) => {
+            if (!db || !currentCollectionId || isReadOnly || isLoading) return;
+            const plan = buildLuggageDeletionPlan({ luggageId: item.id, expenses });
+            openConfirmModal(
+              '刪除行李箱',
+              `確定刪除「${item.name}」嗎？${plan.affectedCount ? `將解除 ${plan.affectedCount} 筆退稅商品的行李箱指派，支出不會刪除。` : '目前沒有商品指派至此行李箱。'}`,
+              async () => {
+                closeConfirmModal();
+                setIsLoading(true); setError(null);
+                try {
+                  for (const expenseBatch of plan.batches) {
+                    const batch = writeBatch(db);
+                    expenseBatch.forEach((expense) => batch.update(doc(db, `${getGroupExpensesPath(currentCollectionId)}/${expense.id}`), { taxRefund: { ...expense.taxRefund, luggageId: '' } }));
+                    await batch.commit();
+                  }
+                  await setDoc(doc(db, getGroupLuggageDocPath(currentCollectionId)), { list: luggage.filter((entry) => entry.id !== item.id) }, { merge: true });
+                  setToastMessage(`已刪除行李箱，${plan.affectedCount} 筆商品已改為未指定。`);
+                } catch (deleteError) {
+                  setError(`刪除行李箱失敗：已解除部分指派時可重新開啟後再確認。${deleteError.message}`);
+                } finally { setIsLoading(false); }
+              },
+              '確認刪除', 'red',
+            );
+          };
+
           // --- 2. 獲取所有公共暱稱 ---
           useEffect(() => {
             if (!authReady || !db) return;
@@ -2346,9 +2432,18 @@ async function _getStorage() {
                 console.error("Error listening to members settings:", err);
             });
 
+            const luggageDocRef = doc(db, getGroupLuggageDocPath(currentCollectionId));
+            const unsubscribeLuggage = onSnapshot(luggageDocRef, (docSnap) => {
+              setLuggage(normalizeLuggageList(docSnap.exists() ? docSnap.data()?.list : []));
+            }, (err) => {
+              console.error('Error listening to luggage settings:', err);
+              setLuggage([]);
+            });
+
             return () => {
               unsubscribeExpenses();
               unsubscribeMembers();
+              unsubscribeLuggage();
             };
           }, [authReady, db, currentCollectionId, userId]); // FIX: Add userId dependency
 
@@ -3552,9 +3647,16 @@ async function _getStorage() {
 					 }
 					 aria-label="管理成員與預設份數"
 					 title={!isOwner ? "只有記帳簿擁有者可以操作" : "管理分帳成員與共享權限"}
-				  >
-				     <Users className="w-6 h-6" />
+                  >
+			     <Users className="w-6 h-6" />
                   </button>
+			  <button
+				onClick={() => setIsLuggageModalOpen(true)}
+				disabled={isReadOnly}
+				className="px-4 py-3 border text-lg font-bold rounded-xl bg-white focus:outline-none focus:ring-4 transition duration-300 shadow-xl hover:scale-[1.03] transform disabled:border-gray-400 disabled:text-gray-400 disabled:cursor-not-allowed focus:ring-primaryColor-300 border-primaryColor-500 text-primaryColor-600 hover:bg-primaryColor-50"
+				aria-label="管理退稅行李箱"
+				title={isReadOnly ? '唯讀模式下無法管理行李箱' : '管理退稅行李箱'}
+			  >🧳</button>
                 </div>
 
                 {/* 總結與列表 */}
@@ -3568,6 +3670,20 @@ async function _getStorage() {
                     pendingTaxRefundInTWD={pendingTaxRefundInTWD}
                     memberCategorySpending={memberCategorySpending}
                 />
+                {(() => {
+                  const grouped = groupTaxRefundExpensesByLuggage({ expenses, luggage });
+                  const assignedGroups = grouped.byLuggage.filter((item) => item.expenses.length);
+                  if (!grouped.unassigned.length && !assignedGroups.length) return null;
+                  return (
+                    <section className="mt-6 rounded-xl bg-white p-5 shadow-lg" aria-label="退稅商品行李箱">
+                      <h2 className="text-lg font-bold text-gray-800">🧳 退稅商品行李箱</h2>
+                      {grouped.unassigned.length > 0 && <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">有 {grouped.unassigned.length} 筆可退稅商品尚未指定行李箱</p>}
+                      <div className="mt-3 space-y-2 text-sm">
+                        {assignedGroups.map((item) => <div key={item.id} className="rounded-lg border border-gray-100 p-3"><p className="font-semibold text-gray-700">{item.name}（{item.expenses.length} 筆）</p><p className="mt-1 text-gray-500 truncate">{item.expenses.map((expense) => expense.description).join('、')}</p></div>)}
+                      </div>
+                    </section>
+                  );
+                })()}
                 <ExpenseList 
                     expenses={expenses} 
                     deleteExpense={deleteExpense} 
@@ -3590,6 +3706,7 @@ async function _getStorage() {
                     currentUserId={userId}
                     members={members}
                     expenses={expenses}
+					luggage={luggage}
                     getInitialShares={getInitialShares}
                     state={expenseModalState}
                     onClose={closeExpenseModal}
@@ -3625,6 +3742,25 @@ async function _getStorage() {
                     setToastMessage={setToastMessage}
                     migrateMemberID={migrateMemberID} // <-- NEW: 傳入新的遷移函式
                 />
+
+                {isLuggageModalOpen && (
+                  <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-gray-900 bg-opacity-75 p-4">
+                    <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white shadow-2xl">
+                      <div className="flex items-center justify-between border-b p-5"><h2 className="text-xl font-bold text-gray-800">🧳 行李箱管理</h2><button onClick={() => setIsLuggageModalOpen(false)} className="rounded-full p-2 text-gray-500 hover:bg-gray-100" aria-label="關閉行李箱管理">✕</button></div>
+                      <div className="space-y-4 p-5">
+                        <form onSubmit={saveLuggage} className="rounded-lg bg-primaryColor-50 p-3">
+                          <label className="block text-sm font-medium text-gray-700">新增行李箱</label>
+                          <input id="new-luggage-name" name="newLuggageName" value={newLuggageName} onChange={(e) => setNewLuggageName(e.target.value)} placeholder="例如：黑色 28 吋" className="mt-2 w-full rounded-lg border border-gray-300 p-2" disabled={isLoading} />
+                          <select id="new-luggage-owner" name="newLuggageOwnerId" value={newLuggageOwnerId} onChange={(e) => setNewLuggageOwnerId(e.target.value)} className="mt-2 w-full rounded-lg border border-gray-300 bg-white p-2 text-sm" disabled={isLoading}><option value="">持有人（可不選）</option>{members.map((member) => <option key={member} value={member}>{getDisplayName(member)}</option>)}</select>
+                          <button type="submit" disabled={isLoading} className="mt-2 rounded-lg bg-primaryColor-600 px-4 py-2 text-sm font-semibold text-white disabled:bg-gray-400">新增</button>
+                        </form>
+                        {luggage.length === 0 ? <p className="text-sm text-gray-500">尚未建立行李箱。建立後可在可退稅支出中指派。</p> : luggage.map((item) => <div key={item.id} className="rounded-lg border border-gray-200 p-3">
+                          {editingLuggageId === item.id ? <div className="flex gap-2"><input aria-label={`修改 ${item.name} 的名稱`} name="editingLuggageName" value={editingLuggageName} onChange={(e) => setEditingLuggageName(e.target.value)} className="min-w-0 flex-1 rounded border border-gray-300 p-2" /><button onClick={() => renameLuggage(item)} className="rounded bg-primaryColor-600 px-3 text-sm font-semibold text-white">儲存</button><button onClick={() => setEditingLuggageId('')} className="px-2 text-sm">取消</button></div> : <div className="flex items-center justify-between gap-2"><div><p className="font-semibold text-gray-800">{item.name}</p>{item.ownerId && <p className="text-xs text-gray-500">持有人：{getDisplayName(item.ownerId)}</p>}</div><div className="flex gap-2"><button onClick={() => { setEditingLuggageId(item.id); setEditingLuggageName(item.name); }} className="text-sm text-primaryColor-700">改名</button><button onClick={() => requestDeleteLuggage(item)} className="text-sm text-red-600">刪除</button></div></div>}
+                        </div>)}
+                      </div>
+                    </div>
+                  </div>
+                )}
                 
                 {/* 統一的確認提示 Modal */}
                 <ConfirmationModal 
