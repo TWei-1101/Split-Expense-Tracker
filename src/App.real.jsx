@@ -26,6 +26,7 @@ import { calculateSettlements } from './domain/calculateSettlements.js';
 import BalanceSummary from './features/settlements/BalanceSummary.jsx';
 import ConfirmationModal from './features/common/ConfirmationModal.jsx';
 import ExpenseModal from './features/expenses/ExpenseModal.jsx';
+import ExpenseList from './features/expenses/ExpenseList.jsx';
 import MemberManagementModal from './features/members/MemberManagementModal.jsx';
 import AuthModal from './features/auth/AuthModal.jsx';
 import useExchangeRates from './hooks/useExchangeRates.js';
@@ -1537,6 +1538,8 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
                     // ✨ 新增搜尋相關 props
                     searchKeyword={searchKeyword}
                     setSearchKeyword={setSearchKeyword}
+                    defaultCurrency={DEFAULT_CURRENCY}
+                    icons={{ CircleDollarSign, Trash2, Pencil, Search, Wallet, Crown, X }}
                 />
 
                 {/* Modal 區塊 */}
@@ -1622,7 +1625,7 @@ import { appId, getFirebaseApp, getFirebaseServices, getStorageModule } from './
         };
         
         // --- 獨立的列表和總結組件 ---
-        const ExpenseList = memo(({ expenses, deleteExpense, startEdit, isLoading, getDisplayName, getPayerLabel, formatTimestamp, isReadOnly, clearAllExpenses, searchKeyword, setSearchKeyword }) => { // ✨ 接受搜尋相關 props
+        const LegacyExpenseList = memo(({ expenses, deleteExpense, startEdit, isLoading, getDisplayName, getPayerLabel, formatTimestamp, isReadOnly, clearAllExpenses, searchKeyword, setSearchKeyword }) => {
             const [previewImage, setPreviewImage] = useState(null);
             // 切換金額顯示狀態：用 expenseId 記錄目前要顯示 TWD 的卡片
             const [showTwdExpenseIds, setShowTwdExpenseIds] = useState(() => new Set());

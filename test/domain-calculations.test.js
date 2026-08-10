@@ -84,3 +84,13 @@ test('exchange rate state is owned by a dedicated hook', () => {
   assert.match(appSource, /} = useExchangeRates\(\)/);
   assert.match(hookSource, /export default function useExchangeRates/);
 });
+
+test('ExpenseList is separated while retaining the list interactions', () => {
+  const appSource = readFileSync(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  const componentSource = readFileSync(new URL('../src/features/expenses/ExpenseList.jsx', import.meta.url), 'utf8');
+
+  assert.match(appSource, /import ExpenseList from '.\/features\/expenses\/ExpenseList\.jsx'/);
+  assert.match(componentSource, /searchKeyword/);
+  assert.match(componentSource, /SELF_PAYER_KEY/);
+  assert.match(componentSource, /setPreviewImage/);
+});
