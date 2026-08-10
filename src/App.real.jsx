@@ -31,6 +31,7 @@ import {
 } from 'firebase/firestore';
 import { detectTelegramMode } from './lib/tg-mode.js';
 import { createTaxRefund, getTaxRefundProfileByCountry, pendingTaxRefundTotalInTWD, TAX_REFUND_PROFILES } from './lib/tax-refund.js';
+import { buildGroupBookList, createNewGroupBook } from './lib/group-books.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
@@ -1543,6 +1544,10 @@ async function _getStorage() {
 		  const [groupName, setGroupName] = useState('分帳記帳簿');     // 顯示在上方標題的名稱
 		  const [isEditingGroupName, setIsEditingGroupName] = useState(false); 
 		  const [groupNameInput, setGroupNameInput] = useState('分帳記帳簿'); // 編輯時使用
+		  const [groupBooks, setGroupBooks] = useState([]);
+		  const [isGroupBooksLoading, setIsGroupBooksLoading] = useState(false);
+		  const [isCreatingGroupBook, setIsCreatingGroupBook] = useState(false);
+		  const [newGroupBookName, setNewGroupBookName] = useState('');
           
           // ✨ NEW: 搜尋關鍵字狀態
           const [searchKeyword, setSearchKeyword] = useState('');
@@ -1585,6 +1590,56 @@ async function _getStorage() {
 		    }
 		    return groupId;
 		  }, []);
+
+		  // 已登入使用者可切換自己建立或受邀加入的帳本；訪客維持分享連結唯讀模式。
+		  useEffect(() => {
+		    if (!db || !userId || isGuest) {
+		      setGroupBooks([]);
+		      return;
+		    }
+
+		    let cancelled = false;
+		    const loadGroupBooks = async () => {
+		      setIsGroupBooksLoading(true);
+		      const groupsRef = collection(db, `artifacts/${appId}/groups`);
+		      const [ownedResult, memberResult] = await Promise.allSettled([
+		        getDocs(query(groupsRef, where('owner', '==', userId))),
+		        getDocs(query(groupsRef, where('members', 'array-contains', userId))),
+		      ]);
+
+		      const owned = ownedResult.status === 'fulfilled'
+		        ? ownedResult.value.docs.map((groupDoc) => ({ id: groupDoc.id, data: groupDoc.data() }))
+		        : [];
+		      const invited = memberResult.status === 'fulfilled'
+		        ? memberResult.value.docs.map((groupDoc) => ({ id: groupDoc.id, data: groupDoc.data() }))
+		        : [];
+
+		      // 規則若不允許 list query，至少保留目前可讀帳本，避免讓既有分享連結失去畫面。
+		      if (!owned.length && !invited.length && currentCollectionId) {
+		        try {
+		          const currentSnap = await getDoc(doc(db, `artifacts/${appId}/groups/${currentCollectionId}`));
+		          if (currentSnap.exists) {
+		            invited.push({ id: currentSnap.id, data: currentSnap.data() });
+		          }
+		        } catch (loadError) {
+		          console.warn('載入目前帳本作為列表 fallback 失敗：', loadError);
+		        }
+		      }
+
+		      if (cancelled) return;
+		      setGroupBooks(buildGroupBookList({ userId, owned, invited }));
+		      if (ownedResult.status === 'rejected' && memberResult.status === 'rejected') {
+		        console.warn('帳本列表查詢被拒絕，僅顯示目前可讀帳本。', ownedResult.reason, memberResult.reason);
+		      }
+		      setIsGroupBooksLoading(false);
+		    };
+
+		    loadGroupBooks().catch((loadError) => {
+		      console.error('載入帳本列表失敗：', loadError);
+		      if (!cancelled) setIsGroupBooksLoading(false);
+		    });
+		    return () => { cancelled = true; };
+		  }, [db, userId, isGuest, currentCollectionId]);
 				  
           const [expenseModalState, setExpenseModalState] = useState({
               isOpen: false,
@@ -1878,6 +1933,54 @@ async function _getStorage() {
 			setIsLoading(false);
 		  }
 		};
+
+		const switchGroupBook = useCallback(async (nextGroupId) => {
+		  if (!nextGroupId || nextGroupId === currentCollectionId || !db || isGuest) return;
+		  setError(null);
+		  setGroupOwner(null);
+		  setGroupMembers([]);
+		  setCurrentCollectionId(nextGroupId);
+		  // 現有短連結只對應使用者的預設帳本；切到其他帳本時不產生錯誤分享連結。
+		  setCurrentCollectionShortCode(null);
+		  if (nextGroupId === userId) {
+		    try {
+		      const userSnap = await getDoc(doc(db, `artifacts/${appId}/users/${userId}`));
+		      setCurrentCollectionShortCode(userSnap.exists ? (userSnap.data()?.shortCode || null) : null);
+		    } catch (switchError) {
+		      console.warn('讀取預設帳本分享代碼失敗：', switchError);
+		    }
+		  }
+		}, [db, userId, isGuest, currentCollectionId]);
+
+		const createGroupBook = useCallback(async (event) => {
+		  event.preventDefault();
+		  const groupBook = createNewGroupBook(newGroupBookName, userId);
+		  if (!groupBook || !db || isGuest || isLoading) return;
+
+		  try {
+		    setIsLoading(true);
+		    setError(null);
+		    const groupRef = doc(collection(db, `artifacts/${appId}/groups`));
+		    await setDoc(groupRef, { ...groupBook, createdAt: serverTimestamp() });
+		    setGroupBooks((previous) => [...previous, {
+		      id: groupRef.id,
+		      name: groupBook.name,
+		      role: 'owner',
+		    }].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant') || a.id.localeCompare(b.id)));
+		    setNewGroupBookName('');
+		    setIsCreatingGroupBook(false);
+		    setGroupOwner(null);
+		    setGroupMembers([]);
+		    setCurrentCollectionId(groupRef.id);
+		    setCurrentCollectionShortCode(null);
+		    setCopyMessage(`已建立「${groupBook.name}」`);
+		  } catch (createError) {
+		    console.error('建立新帳本失敗：', createError);
+		    setError(`建立新帳本失敗：${createError.message}`);
+		  } finally {
+		    setIsLoading(false);
+		  }
+		}, [db, userId, isGuest, isLoading, newGroupBookName, setError, setIsLoading]);
 
           // --- 2. 獲取所有公共暱稱 ---
           useEffect(() => {
@@ -2775,7 +2878,7 @@ async function _getStorage() {
 
 			// --- 渲染 ---
 			const currentUserLabel = userId ? getDisplayName(userId) : '';
-			const isViewingOwn = currentCollectionId === userId && !isGuest; // MODIFIED: 訪客模式不算 viewing own
+			const isViewingOwn = groupOwner === userId && !isGuest; // 使用者擁有的任何帳本都不顯示「返回自己的記帳簿」
 
 			// 複製分享連結（移到 header 使用）
 			const handleCopyShareLink = useCallback(() => {
@@ -2980,9 +3083,58 @@ async function _getStorage() {
 							</h1>
 						  </div>
 						)}
-					  </div>
+						  </div>
 
-					  {lastExchangeUpdate && (
+						  {!isGuest && (
+							<div className="flex flex-wrap items-center gap-2">
+							  <label htmlFor="group-book-switcher" className="text-xs font-semibold text-gray-500">帳本</label>
+							  <select
+								id="group-book-switcher"
+								value={currentCollectionId || ''}
+								onChange={(event) => switchGroupBook(event.target.value)}
+								disabled={isGroupBooksLoading || isLoading}
+								className="min-w-0 max-w-full rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-800 focus:border-primaryColor-500 focus:outline-none focus:ring-2 focus:ring-primaryColor-200 disabled:cursor-not-allowed disabled:bg-gray-100"
+							  >
+								{isGroupBooksLoading && <option value={currentCollectionId || ''}>載入帳本中…</option>}
+								{!isGroupBooksLoading && groupBooks.length === 0 && <option value={currentCollectionId || ''}>目前帳本</option>}
+								{groupBooks.map((book) => (
+								  <option key={book.id} value={book.id}>
+									{book.name}（{book.role === 'owner' ? '擁有者' : '受邀'}）
+								  </option>
+								))}
+							  </select>
+							  <button
+								type="button"
+								onClick={() => setIsCreatingGroupBook((open) => !open)}
+								className="min-h-11 rounded-lg border border-primaryColor-300 bg-white px-3 py-1.5 text-sm font-semibold text-primaryColor-700 hover:bg-primaryColor-50 focus:outline-none focus:ring-2 focus:ring-primaryColor-300"
+							  >
+								新增帳本
+							  </button>
+							</div>
+						  )}
+
+						  {isCreatingGroupBook && !isGuest && (
+							<form onSubmit={createGroupBook} className="mt-1 flex w-full flex-col gap-2 rounded-lg border border-primaryColor-100 bg-primaryColor-50 p-3 sm:flex-row sm:items-center">
+							  <label htmlFor="new-group-book-name" className="text-sm font-semibold text-primaryColor-800">新帳本名稱</label>
+							  <input
+								id="new-group-book-name"
+								name="newGroupBookName"
+								type="text"
+								value={newGroupBookName}
+								onChange={(event) => setNewGroupBookName(event.target.value)}
+								placeholder="例如：2026 日本旅行"
+								maxLength={40}
+								autoFocus
+								className="min-h-11 min-w-0 flex-1 rounded-lg border border-gray-300 bg-white px-3 text-sm focus:border-primaryColor-500 focus:outline-none focus:ring-2 focus:ring-primaryColor-200"
+							  />
+							  <div className="flex gap-2">
+								<button type="submit" disabled={isLoading || !newGroupBookName.trim()} className="min-h-11 rounded-lg bg-primaryColor-600 px-3 text-sm font-semibold text-white hover:bg-primaryColor-700 disabled:cursor-not-allowed disabled:bg-gray-400">建立</button>
+								<button type="button" onClick={() => { setIsCreatingGroupBook(false); setNewGroupBookName(''); }} className="min-h-11 rounded-lg px-3 text-sm font-semibold text-gray-600 hover:bg-white">取消</button>
+							  </div>
+							</form>
+						  )}
+
+						  {lastExchangeUpdate && (
 						<p className="text-xs text-gray-500">
 						  匯率更新：{new Date(lastExchangeUpdate).toLocaleTimeString('zh-TW', {
 							hour: '2-digit',
