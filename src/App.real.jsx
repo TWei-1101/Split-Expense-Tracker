@@ -32,6 +32,11 @@ import {
 import { detectTelegramMode } from './lib/tg-mode.js';
 import { createTaxRefund, getTaxRefundProfileByCountry, pendingTaxRefundTotalInTWD, TAX_REFUND_PROFILES } from './lib/tax-refund.js';
 import { buildGroupBookList, createNewGroupBook } from './lib/group-books.js';
+import {
+  canDeleteGroupBook,
+  createGroupDeletionConfirmationSteps,
+  createGroupDeletionPlan,
+} from './lib/group-deletion.js';
 import { createTimedMessageController } from './lib/transient-message.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
@@ -1990,6 +1995,95 @@ async function _getStorage() {
 		  }
 		}, [db, userId, isGuest, isLoading, newGroupBookName, setError, setIsLoading, setToastMessage]);
 
+		const deleteCurrentGroupBook = () => {
+		  if (!canDeleteGroupBook({ userId, groupOwner, isGuest }) || !db || !currentCollectionId || isLoading) {
+		    setError('只有帳本擁有者可以刪除帳本。');
+		    return;
+		  }
+
+		  const [warning, finalConfirmation] = createGroupDeletionConfirmationSteps(groupName);
+		  const executeDeletion = async () => {
+		    closeConfirmModal();
+		    setIsLoading(true);
+		    setError(null);
+		    try {
+		      const groupRef = doc(db, `artifacts/${appId}/groups/${currentCollectionId}`);
+		      const groupSnap = await getDoc(groupRef);
+		      if (!groupSnap.exists() || groupSnap.data()?.owner !== userId) {
+		        throw new Error('帳本不存在，或您已不再是擁有者。');
+		      }
+
+		      const imagePaths = new Set();
+		      const unmanagedImagePaths = new Set();
+		      const expensesPath = getGroupExpensesPath(currentCollectionId);
+		      // Firestore batch 上限為 500；每次最多刪 400 筆並重新查詢，直到目標帳本清空。
+		      while (true) {
+		        const expenseSnapshot = await getDocs(query(collection(db, expensesPath), limit(400)));
+		        if (expenseSnapshot.empty) break;
+		        const deletionPlan = createGroupDeletionPlan({
+		          appId,
+		          groupId: currentCollectionId,
+		          expenses: expenseSnapshot.docs.map((expenseDoc) => ({ id: expenseDoc.id, ...expenseDoc.data() })),
+		        });
+		        deletionPlan.safeImagePaths.forEach((path) => imagePaths.add(path));
+		        deletionPlan.unmanagedImagePaths.forEach((path) => unmanagedImagePaths.add(path));
+		        const batch = writeBatch(db);
+		        expenseSnapshot.docs.forEach((expenseDoc) => batch.delete(expenseDoc.ref));
+		        await batch.commit();
+		      }
+
+		      const finalBatch = writeBatch(db);
+		      finalBatch.delete(doc(db, getGroupMembersDocPath(currentCollectionId)));
+		      finalBatch.delete(groupRef);
+		      await finalBatch.commit();
+
+		      let deletedImages = 0;
+		      let undeletedImages = unmanagedImagePaths.size;
+		      if (imagePaths.size) {
+		        try {
+		          const { getStorage, storageRef, deleteObject } = await _getStorage();
+		          const storage = getStorage(getFirebaseApp());
+		          const imageResults = await Promise.allSettled(
+		            [...imagePaths].map((path) => deleteObject(storageRef(storage, path)))
+		          );
+		          deletedImages = imageResults.filter((result) => result.status === 'fulfilled').length;
+		          undeletedImages += imageResults.length - deletedImages;
+		        } catch (storageError) {
+		          console.warn('刪除帳本收據圖片失敗：', storageError);
+		          undeletedImages += imagePaths.size;
+		        }
+		      }
+
+		      const remainingBooks = groupBooks.filter((book) => book.id !== currentCollectionId);
+		      let nextGroupId = remainingBooks[0]?.id || null;
+		      if (!nextGroupId) {
+		        nextGroupId = await ensureDefaultGroup(db, userId);
+		        remainingBooks.push({ id: nextGroupId, name: '分帳記帳簿', role: 'owner' });
+		      }
+		      setGroupBooks(remainingBooks);
+		      setGroupOwner(null);
+		      setGroupMembers([]);
+		      setCurrentCollectionId(nextGroupId);
+		      setCurrentCollectionShortCode(null);
+		      setIsGroupBookMenuOpen(false);
+		      const imageSummary = imagePaths.size || unmanagedImagePaths.size
+		        ? `收據圖片：已刪除 ${deletedImages}，未刪除 ${undeletedImages}。`
+		        : '';
+		      setToastMessage(`帳本已刪除。${imageSummary}`);
+		    } catch (deleteError) {
+		      console.error('刪除帳本失敗：', deleteError);
+		      setError(`刪除帳本失敗：${deleteError.message}`);
+		    } finally {
+		      setIsLoading(false);
+		    }
+		  };
+
+		  openConfirmModal(warning.title, warning.message, () => {
+		    closeConfirmModal();
+		    openConfirmModal(finalConfirmation.title, finalConfirmation.message, executeDeletion, '永久刪除', 'red');
+		  }, '繼續', 'red');
+		};
+
           // --- 2. 獲取所有公共暱稱 ---
           useEffect(() => {
             if (!authReady || !db) return;
@@ -3066,6 +3160,19 @@ async function _getStorage() {
 							  >
 								新增帳本
 							  </button>
+							  {isOwner && (
+								<button
+								  type="button"
+								  onClick={() => {
+									setIsGroupBookMenuOpen(false);
+									deleteCurrentGroupBook();
+								  }}
+								  disabled={isLoading}
+								  className="mt-2 min-h-11 w-full rounded-lg border border-red-300 bg-white px-3 py-1.5 text-sm font-semibold text-red-700 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-200 disabled:cursor-not-allowed disabled:bg-gray-100"
+								>
+								  刪除目前帳本
+								</button>
+							  )}
 
 							  {isCreatingGroupBook && (
 								<form onSubmit={createGroupBook} className="mt-3 flex flex-col gap-2 border-t border-primaryColor-100 pt-3">
