@@ -4480,7 +4480,7 @@ async function _getStorage() {
                                 每人花費金額
                             </h3>
                             <span className="text-xs text-gray-400">
-                                統計範圍：全部 {expenses.length} 筆 · 合計 TWD {totalSpending.toFixed(0)}
+                                全部 {expenses.length} 筆 · 合計 TWD {totalSpending.toFixed(0)}
                             </span>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
