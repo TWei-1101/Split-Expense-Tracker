@@ -22,6 +22,7 @@ import {
   setDoc,
   getDoc,
   getDocs,
+  getDocsFromCache,
   updateDoc,
   deleteDoc,
   onSnapshot,
@@ -2676,36 +2677,60 @@ async function _getStorage() {
 
             const expensesCollectionPath = getGroupExpensesPath(currentCollectionId);
 			const expensesRef = collection(db, expensesCollectionPath);
+			// A bootstrap record is created only for a persistent signed-in user and
+			// only for that user's canonical /g/<short-code> URL.  Therefore this
+			// cache read is both collection-scoped and identity-scoped: it can never
+			// make a shared link render the account owner's cached expenses.
+			const canHydrateVerifiedOwnBookFromCache = Boolean(
+			  ownBookBootstrap
+			  && ownBookBootstrap.uid === currentCollectionId
+			  && ownBookBootstrap.ownShortCode === currentCollectionShortCode
+			);
 
-			const unsubscribeExpenses = onSnapshot(expensesRef, { includeMetadataChanges: true }, (snapshot) => {
+			let disposed = false;
+			const applyExpensesSnapshot = (snapshot) => {
+			  if (disposed) return;
 			  setHasPendingExpenseWrites(snapshot.metadata.hasPendingWrites);
 			  // navigator.onLine is only an interface hint on Safari. Firestore
 			  // explicitly marks a cached-only snapshot, which is the reliable
 			  // state to show after an offline reload.
 			  setIsOnline(!snapshot.metadata.fromCache);
 			  const fetchedExpenses = snapshot.docs.map(docSnap => {
-                const data = docSnap.data();
-                const timestamp = data.timestamp ? data.timestamp.toDate() : null; 
-                
-                const originalAmount = data.originalAmount !== undefined ? data.originalAmount : data.amount;
-                const currency = data.currency || DEFAULT_CURRENCY;
-                const exchangeRate = data.exchangeRate || (DEFAULT_EXCHANGE_RATES[currency] || 1.0);
-                const amountInTWD = data.amountInTWD !== undefined ? data.amountInTWD : originalAmount * exchangeRate;
+				const data = docSnap.data();
+				const timestamp = data.timestamp ? data.timestamp.toDate() : null;
 
-                return {
-                  id: docSnap.id, 
-                  ...data,
-                  originalAmount: typeof originalAmount === 'number' ? originalAmount : parseFloat(originalAmount || 0),
-                  currency: currency,
-                  exchangeRate: exchangeRate,
-                  amountInTWD: typeof amountInTWD === 'number' ? amountInTWD : parseFloat(amountInTWD || 0),
-                  shares: data.shares || {},
-                  timestamp: timestamp,
-                };
-              });
-              setExpenses(fetchedExpenses);
+				const originalAmount = data.originalAmount !== undefined ? data.originalAmount : data.amount;
+				const currency = data.currency || DEFAULT_CURRENCY;
+				const exchangeRate = data.exchangeRate || (DEFAULT_EXCHANGE_RATES[currency] || 1.0);
+				const amountInTWD = data.amountInTWD !== undefined ? data.amountInTWD : originalAmount * exchangeRate;
+
+				return {
+				  id: docSnap.id,
+				  ...data,
+				  originalAmount: typeof originalAmount === 'number' ? originalAmount : parseFloat(originalAmount || 0),
+				  currency: currency,
+				  exchangeRate: exchangeRate,
+				  amountInTWD: typeof amountInTWD === 'number' ? amountInTWD : parseFloat(amountInTWD || 0),
+				  shares: data.shares || {},
+				  timestamp: timestamp,
+				};
+			  });
+			  setExpenses(fetchedExpenses);
 			  setExpensesSnapshotCollectionId(currentCollectionId);
-            }, (err) => {
+			};
+
+			// Do not wait for a network-backed listener to decide whether its cache
+			// is usable. Safari can hold that listener while Auth restores offline;
+			// this direct IndexedDB read returns immediately when the exact own-book
+			// collection is present, while the listener below continues reconciliation.
+			if (canHydrateVerifiedOwnBookFromCache) {
+			  getDocsFromCache(expensesRef).then(applyExpensesSnapshot).catch(() => {
+				// No complete local query result: retain the loading gate rather than
+				// showing an unknown or unrelated collection.
+			  });
+			}
+
+			const unsubscribeExpenses = onSnapshot(expensesRef, { includeMetadataChanges: true }, applyExpensesSnapshot, (err) => {
               console.error(`Error listening to expenses in collection ${currentCollectionId}:`, err);
               if (err.code === 'permission-denied') {
                   setError(`權限不足：無法讀取此分享連結對應的紀錄簿（ID: ${currentCollectionId}）。請洽擁有者確認權限。`);
@@ -2750,6 +2775,7 @@ async function _getStorage() {
             });
 
 			return () => {
+				disposed = true;
 				unsubscribeExpenses();
 				unsubscribeRecycleBin();
               unsubscribeMembers();
@@ -3639,9 +3665,21 @@ async function _getStorage() {
 			  setError,
 			]);
 
+		  // For a verified own-book bootstrap, an exact IndexedDB expenses query is
+		  // sufficient to paint safely: the URL, cached uid, cached short code and
+		  // queried collection must all agree.  The group metadata listener may be
+		  // delayed by Safari's offline Auth restoration, but must not hold the
+		  // user's already-cached own ledger behind the startup screen. Shared
+		  // links never satisfy this condition and still require both snapshots.
+		  const hasVerifiedOwnBookExpenses = Boolean(
+			ownBookBootstrap
+			&& ownBookBootstrap.uid === currentCollectionId
+			&& ownBookBootstrap.ownShortCode === currentCollectionShortCode
+			&& expensesSnapshotCollectionId === currentCollectionId
+		  );
 		  const isCurrentCollectionHydrated = Boolean(currentCollectionId)
-			&& groupSnapshotCollectionId === currentCollectionId
-			&& expensesSnapshotCollectionId === currentCollectionId;
+			&& expensesSnapshotCollectionId === currentCollectionId
+			&& (groupSnapshotCollectionId === currentCollectionId || hasVerifiedOwnBookExpenses);
 
 		  if (!authReady || (currentCollectionId && !isCurrentCollectionHydrated)) {
             return (

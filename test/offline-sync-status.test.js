@@ -84,7 +84,7 @@ test('canonicalizes a cached own-book URL in document head before Safari can pai
   const head = html.slice(html.indexOf('<head>'), html.indexOf('</head>'));
   assert.match(head, /canonicalizeOwnBookBeforeFirstPaint/);
   assert.match(head, /split-expense-auth-bootstrap-v1/);
-  assert.match(head, /var isBareRootRequest = !\/\\\/g\\\/\[\^\/\?\#\]\+\/.test\(url\.pathname\)[\s\S]*?!url\.searchParams\.has\('shareId'\)/);
+  assert.match(head, /var isBareRootRequest = !\/\\\/g\\\/\[\^\/\?#\]\+\/.test\(url\.pathname\)[\s\S]*?!url\.searchParams\.has\('shareId'\)/);
   assert.match(head, /url\.pathname = '\/g\/' \+ encodeURIComponent\(cached\.ownShortCode\);[\s\S]*?window\.history\.replaceState\(null, '', url\.toString\(\)\)/);
 });
 
@@ -105,8 +105,17 @@ test('never paints an outgoing collection while the requested collection is hydr
   assert.match(source, /const \[expensesSnapshotCollectionId, setExpensesSnapshotCollectionId\] = useState\(null\)/);
   assert.match(source, /setGroupSnapshotCollectionId\(currentCollectionId\)/);
   assert.match(source, /setExpensesSnapshotCollectionId\(currentCollectionId\)/);
-  assert.match(source, /const isCurrentCollectionHydrated = Boolean\(currentCollectionId\)[\s\S]*?groupSnapshotCollectionId === currentCollectionId[\s\S]*?expensesSnapshotCollectionId === currentCollectionId/);
+  assert.match(source, /const isCurrentCollectionHydrated = Boolean\(currentCollectionId\)[\s\S]*?expensesSnapshotCollectionId === currentCollectionId[\s\S]*?groupSnapshotCollectionId === currentCollectionId \|\| hasVerifiedOwnBookExpenses/);
   assert.match(source, /if \(!authReady \|\| \(currentCollectionId && !isCurrentCollectionHydrated\)\)/);
+});
+
+test('hydrates only the verified canonical own-book expenses directly from IndexedDB', async () => {
+  const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  assert.match(source, /getDocsFromCache,/);
+  assert.match(source, /const canHydrateVerifiedOwnBookFromCache = Boolean\([\s\S]*?ownBookBootstrap\.uid === currentCollectionId[\s\S]*?ownBookBootstrap\.ownShortCode === currentCollectionShortCode/);
+  assert.match(source, /if \(canHydrateVerifiedOwnBookFromCache\) \{[\s\S]*?getDocsFromCache\(expensesRef\)\.then\(applyExpensesSnapshot\)/);
+  assert.match(source, /const hasVerifiedOwnBookExpenses = Boolean\([\s\S]*?ownBookBootstrap\.uid === currentCollectionId[\s\S]*?ownBookBootstrap\.ownShortCode === currentCollectionShortCode[\s\S]*?expensesSnapshotCollectionId === currentCollectionId/);
+  assert.match(source, /groupSnapshotCollectionId === currentCollectionId \|\| hasVerifiedOwnBookExpenses/);
 });
 
 test('never restores a last-viewed shared book for an offline own-book URL', async () => {
@@ -129,7 +138,8 @@ test('restores the canonical own-book share URL after a bare URL return', async 
 
 test('uses Firestore cached snapshots rather than Safari navigator.onLine to show offline status', async () => {
   const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
-  assert.match(source, /onSnapshot\(expensesRef, \{ includeMetadataChanges: true \}, \(snapshot\) => \{[\s\S]*?setIsOnline\(!snapshot\.metadata\.fromCache\)/);
+  assert.match(source, /const applyExpensesSnapshot = \(snapshot\) => \{[\s\S]*?setIsOnline\(!snapshot\.metadata\.fromCache\)/);
+  assert.match(source, /onSnapshot\(expensesRef, \{ includeMetadataChanges: true \}, applyExpensesSnapshot/);
 });
 
 test('uses durable Auth persistence without manually restarting Firestore networking', async () => {
