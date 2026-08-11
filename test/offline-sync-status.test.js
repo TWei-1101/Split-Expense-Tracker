@@ -79,6 +79,15 @@ test('canonicalizes a bare root URL to the cached own-book URL before the first 
   assert.match(appBody, /const ownBookBootstrap = canonicalizeCachedOwnBookUrl\(\);[\s\S]*?const \[userId, setUserId\] = useState\(\(\) => ownBookBootstrap\?\.uid \|\| null\);/);
 });
 
+test('canonicalizes a cached own-book URL in document head before Safari can paint the root page', async () => {
+  const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+  const head = html.slice(html.indexOf('<head>'), html.indexOf('</head>'));
+  assert.match(head, /canonicalizeOwnBookBeforeFirstPaint/);
+  assert.match(head, /split-expense-auth-bootstrap-v1/);
+  assert.match(head, /var isBareRootRequest = !\/\\\/g\\\/\[\^\/\?\#\]\+\/.test\(url\.pathname\)[\s\S]*?!url\.searchParams\.has\('shareId'\)/);
+  assert.match(head, /url\.pathname = '\/g\/' \+ encodeURIComponent\(cached\.ownShortCode\);[\s\S]*?window\.history\.replaceState\(null, '', url\.toString\(\)\)/);
+});
+
 test('does not canonicalize an explicit shared link using the cached own-book URL', async () => {
   const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
   assert.match(source, /if \(!isBareRootRequest \|\| !cachedSignedInUser\?\.ownShortCode\) return null;/);

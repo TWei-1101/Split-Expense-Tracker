@@ -10,6 +10,33 @@
     <link rel="apple-touch-icon" sizes="250x250" href="/apple-touch-icon-250.png">
     <link rel="apple-touch-icon" sizes="512x512" href="/apple-touch-icon-512.png">
     <title>分帳記帳簿</title>
+    <script>
+      // Safari can paint the URL of the navigation before the ES module that
+      // mounts React has downloaded.  Keep this tiny, synchronous bootstrap in
+      // the document head so a reload of the bare entry URL is canonicalized
+      // before the first page frame, rather than waiting for App.jsx to run.
+      // This is deliberately limited to the account's previously verified own
+      // book: explicit /g links and legacy shareId links may be shared books.
+      (function canonicalizeOwnBookBeforeFirstPaint() {
+        try {
+          var url = new URL(window.location.href);
+          var isBareRootRequest = !/\/g\/[^/?#]+/.test(url.pathname)
+            && !url.searchParams.has('shareId');
+          if (!isBareRootRequest) return;
+
+          var cached = JSON.parse(
+            window.localStorage.getItem('split-expense-auth-bootstrap-v1') || 'null'
+          );
+          if (!cached || typeof cached.uid !== 'string' || !cached.uid
+            || typeof cached.ownShortCode !== 'string' || !cached.ownShortCode) return;
+
+          url.pathname = '/g/' + encodeURIComponent(cached.ownShortCode);
+          window.history.replaceState(null, '', url.toString());
+        } catch (error) {
+          // localStorage may be disabled; App.jsx retains a later safe fallback.
+        }
+      }());
+    </script>
     <!-- Telegram WebApp SDK: defer 讓一般瀏覽器不會被卡 (only used when launched inside Telegram Mini App) -->
     <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
 </head>
