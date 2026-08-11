@@ -129,6 +129,27 @@ function clearCachedSignedInUser() {
     }
 }
 
+// This runs while App is rendering, before React commits its first frame.  A
+// bare root URL is the signed-in user's entry point, so canonicalize it from
+// the previously verified local session instead of rendering the root book and
+// waiting for Firebase Auth to restore (which can take ~30 seconds offline in
+// Safari).  Explicit /g links and legacy share links are intentionally left
+// untouched: they may belong to a different, shared book.
+function canonicalizeCachedOwnBookUrl() {
+    if (typeof window === 'undefined') return null;
+
+    const url = new URL(window.location.href);
+    const requestedShortCode = url.pathname.match(/\/g\/([^/?#]+)/)?.[1] || null;
+    const isBareRootRequest = !requestedShortCode && !url.searchParams.has('shareId');
+    const cachedSignedInUser = readCachedSignedInUser();
+    if (!isBareRootRequest || !cachedSignedInUser?.ownShortCode) return null;
+
+    const ownBookUrl = new URL(url.toString());
+    ownBookUrl.pathname = `/g/${cachedSignedInUser.ownShortCode}`;
+    window.history.replaceState(null, '', ownBookUrl.toString());
+    return cachedSignedInUser;
+}
+
 function getFirebaseApp() {
     if (!_firebaseApp) {
         _firebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
@@ -1826,11 +1847,14 @@ async function _getStorage() {
          * 主要的 App 元件
          */
         const App = () => {
+          // Do this before any state is initialized so a root refresh never
+          // commits a frame for the wrong collection or the wrong URL.
+          const ownBookBootstrap = canonicalizeCachedOwnBookUrl();
           // --- 應用程式狀態 ---
-          const [db, setDb] = useState(null);
-          const [auth, setAuth] = useState(null);
-          const [userId, setUserId] = useState(null);
-          const [authReady, setAuthReady] = useState(false);
+          const [db, setDb] = useState(() => ownBookBootstrap ? getFirestoreWithPersistentCache(getFirebaseApp()) : null);
+          const [auth, setAuth] = useState(() => ownBookBootstrap ? getFirebaseAuthWithPersistentCache(getFirebaseApp()) : null);
+          const [userId, setUserId] = useState(() => ownBookBootstrap?.uid || null);
+          const [authReady, setAuthReady] = useState(() => Boolean(ownBookBootstrap));
           const [isGuest, setIsGuest] = useState(false); // NEW: 追蹤是否為匿名訪客
           const [isAuthModalOpen, setIsAuthModalOpen] = useState(false); // NEW: 控制 AuthModal 顯示
           const [userProfiles, setUserProfiles] = useState({});
@@ -1846,8 +1870,8 @@ async function _getStorage() {
 		  const setToastMessage = useCallback((message) => toastController.show(message), [toastController]);
 		  useEffect(() => () => toastController.clear(), [toastController]);
           
-          const [currentCollectionId, setCurrentCollectionId] = useState(null); // 目前正在檢視的 groupId
-		  const [currentCollectionShortCode, setCurrentCollectionShortCode] = useState(null); // 分享用短代碼
+          const [currentCollectionId, setCurrentCollectionId] = useState(() => ownBookBootstrap?.uid || null); // 目前正在檢視的 groupId
+		  const [currentCollectionShortCode, setCurrentCollectionShortCode] = useState(() => ownBookBootstrap?.ownShortCode || null); // 分享用短代碼
 		  const [groupOwner, setGroupOwner] = useState(null);                   // 群組擁有者 uid
 		  const [groupMembers, setGroupMembers] = useState([]);                 // 群組成員 uid 清單
 

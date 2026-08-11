@@ -72,6 +72,18 @@ test('boots a previously verified account into its own book before Safari finish
   assert.match(source, /clearCachedSignedInUser\(\);\s*await signOut\(auth\)/);
 });
 
+test('canonicalizes a bare root URL to the cached own-book URL before the first App render', async () => {
+  const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  assert.match(source, /function canonicalizeCachedOwnBookUrl\(\)[\s\S]*?const isBareRootRequest = !requestedShortCode && !url\.searchParams\.has\('shareId'\)[\s\S]*?cachedSignedInUser\?\.ownShortCode[\s\S]*?window\.history\.replaceState\(null, '', ownBookUrl\.toString\(\)\)/);
+  const appBody = source.slice(source.indexOf('const App = () => {'));
+  assert.match(appBody, /const ownBookBootstrap = canonicalizeCachedOwnBookUrl\(\);[\s\S]*?const \[userId, setUserId\] = useState\(\(\) => ownBookBootstrap\?\.uid \|\| null\);/);
+});
+
+test('does not canonicalize an explicit shared link using the cached own-book URL', async () => {
+  const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  assert.match(source, /if \(!isBareRootRequest \|\| !cachedSignedInUser\?\.ownShortCode\) return null;/);
+});
+
 test('never restores a last-viewed shared book for an offline own-book URL', async () => {
   const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
   assert.match(source, /bootstrap cache is deliberately scoped to the signed-in[\s\S]*?setCurrentCollectionId\(\(prev\) => prev \|\| cachedSignedInUser\.uid\)/);
