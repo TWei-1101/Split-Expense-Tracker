@@ -4544,7 +4544,7 @@ async function _getStorage() {
                                         <div className="ml-3 min-w-0 flex-1">
                                             <p className="text-sm font-medium text-gray-700">各自付款</p>
                                             <p className="text-lg font-bold leading-tight text-gray-800">TWD {selfPaidSummary.amount.toFixed(0)}</p>
-                                            <p className="text-xs text-gray-500">{selfPaidSummary.count} 筆 · 不計入結算</p>
+                                            <p className="text-xs text-gray-500">{selfPaidSummary.count} 筆 · 不計入結餘總結</p>
                                         </div>
                                         {isActive && (
                                             <span className="absolute top-1.5 right-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-gray-600 text-white font-medium">
@@ -4611,7 +4611,7 @@ async function _getStorage() {
                               <p className="text-sm text-gray-600">
                                 <span className="font-medium text-primaryColor-700">付款人:</span> {getPayerLabel(exp.payerName)}
                                 {exp.payerName === SELF_PAYER_KEY && (
-                                  <span className="ml-2 inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">不計入結算</span>
+                                  <span className="ml-2 inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">不計入結餘總結</span>
                                 )}
                               </p>
                               {luggageName && <p className="mt-1 text-xs text-gray-600"><span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-800">🧳 {luggageName}</span></p>}

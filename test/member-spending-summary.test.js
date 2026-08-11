@@ -40,6 +40,11 @@ test('各自付款摘要跟隨分類：只計入目前分類，沒有各自付�
   assert.deepEqual(summarizeSelfPaid(food.filter(exp => exp.payerName !== '__SELF_PAYER__')), { count: 0, amount: 0 });
 });
 
+test('各自付款以結餘總結文案說明，且沒有舊的結算用語', () => {
+  assert.match(appSource, /不計入結餘總結/);
+  assert.doesNotMatch(appSource, /不計入結算/);
+});
+
 test('不再顯示獨立的各成員分類支出表', () => {
   assert.doesNotMatch(appSource, /各成員分類支出/);
   assert.doesNotMatch(appSource, /memberCategorySpending/);
