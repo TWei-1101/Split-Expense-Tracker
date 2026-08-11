@@ -3579,10 +3579,6 @@ async function _getStorage() {
 				  const cachedOwnShortCode = cachedSession?.uid === userId
 					? cachedSession.ownShortCode
 					: null;
-				  setGroupOwner(null);
-				  setGroupMembers([]);
-				  setCurrentCollectionId(userId);
-				  setCurrentCollectionShortCode(cachedOwnShortCode || null);
 				  if (cachedOwnShortCode) {
 					cacheSignedInUser({ uid: userId, isAnonymous: false }, {
 					  collectionId: userId,
@@ -3596,6 +3592,12 @@ async function _getStorage() {
 					window.location.replace(`${rootPath.endsWith('/') ? rootPath : `${rootPath}/`}g/${cachedOwnShortCode}`);
 					return;
 				  }
+				  // Only the legacy cache-miss path switches in place. The normal
+				  // path above navigates before React can create new listeners.
+				  setGroupOwner(null);
+				  setGroupMembers([]);
+				  setCurrentCollectionId(userId);
+				  setCurrentCollectionShortCode(null);
 
 				  const usersCollectionPath = `artifacts/${appId}/users`;
 				  const usersRef = collection(db, usersCollectionPath);

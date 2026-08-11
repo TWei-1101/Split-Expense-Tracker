@@ -74,7 +74,7 @@ test('boots a previously verified account before Safari finishes offline Auth re
 test('returns to the own book before waiting on Firestore for its share code', async () => {
   const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
   const returnHandler = source.slice(source.indexOf('const handleReturnToOwn'));
-  assert.match(returnHandler, /const cachedOwnShortCode = cachedSession\?\.uid === userId[\s\S]*?setCurrentCollectionId\(userId\);[\s\S]*?const myDocRef = doc\(usersRef, userId\);/);
+  assert.match(returnHandler, /const cachedOwnShortCode = cachedSession\?\.uid === userId[\s\S]*?if \(cachedOwnShortCode\) \{[\s\S]*?return;[\s\S]*?setCurrentCollectionId\(userId\);[\s\S]*?const myDocRef = doc\(usersRef, userId\);/);
   assert.match(returnHandler, /cacheSignedInUser\(\{ uid: userId, isAnonymous: false \}, \{[\s\S]*?ownShortCode: myShortCode,/);
 });
 
