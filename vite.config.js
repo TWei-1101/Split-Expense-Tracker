@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'prompt',
+      registerType: 'autoUpdate',
       includeAssets: ['apple-touch-icon-192.png', 'apple-touch-icon-512.png'],
       manifest: {
         name: '分帳記帳簿',

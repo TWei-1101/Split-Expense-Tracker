@@ -13,7 +13,7 @@ test('reports offline when the browser has no network, even with local pending w
 test('reports pending writes as syncing after network returns', () => {
   assert.deepEqual(getOfflineSyncStatus({ isOnline: true, hasPendingWrites: true }), {
     kind: 'syncing',
-    label: '正在同步離線新增的支出…',
+    label: '待同步',
   });
 });
 
@@ -37,4 +37,16 @@ test('places the offline sync status beside the balance summary heading', async 
   const balanceSummary = source.slice(source.indexOf('const BalanceSummary'));
   assert.match(source, /<BalanceSummary[\s\S]*offlineSyncStatus=\{offlineSyncStatus\}/);
   assert.match(balanceSummary, /結餘總結[\s\S]*role="status"/);
+});
+
+test('keeps the expense form open after an offline save and prevents a duplicate submit', async () => {
+  const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  assert.match(source, /if \(queued\) \{\s*setOfflineSaveMessage\([\s\S]*?\} else \{\s*onClose\(\);/);
+  assert.match(source, /Boolean\(offlineSaveMessage\)/);
+  assert.match(source, /已暫存，請關閉/);
+});
+
+test('activates the latest service worker immediately for offline launches', async () => {
+  const config = await readFile(new URL('../vite.config.js', import.meta.url), 'utf8');
+  assert.match(config, /registerType:\s*'autoUpdate'/);
 });
