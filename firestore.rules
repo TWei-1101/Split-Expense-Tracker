@@ -2,14 +2,69 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // user docs (existing)
-    match /artifacts/{appId}/users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+    function isSignedIn() { return request.auth != null; }
+
+    function groupDoc(appId, groupId) {
+      return get(/databases/$(database)/documents/artifacts/$(appId)/groups/$(groupId));
     }
 
-    // expense items: existing rule (broad for simplicity)
-    match /{document=**} {
-      allow read, write: if request.auth != null;
+    function isGroupMember(appId, groupId) {
+      return isSignedIn()
+        && (request.auth.uid in groupDoc(appId, groupId).data.members);
+    }
+
+    // artifacts/{appId} 根文件（讓分享頁可讀 metadata；不讓前端亂寫根文件）
+    match /artifacts/{appId} {
+      allow read: if true;
+      allow write: if false;
+
+      // public（分享頁用，允許讀）
+      match /public/{docId} {
+        allow read: if true;
+        allow write: if false;
+      }
+
+      // groups（分享可讀；只有成員可寫）
+      match /groups/{groupId} {
+        allow read: if true;
+
+        // 建群組：需要登入（含匿名也算登入）
+        allow create: if isSignedIn();
+
+        // 改/刪群組：限成員
+        allow update, delete: if isGroupMember(appId, groupId);
+
+        // expenses：分享可讀；限成員可寫
+        match /expenses/{expenseId} {
+          allow read: if true;
+          allow write: if isGroupMember(appId, groupId);
+        }
+
+        // expense recycle bin：沿用 expenses 的成員讀寫權限。
+        match /expense-recycle-bin/{recordId} {
+          allow read: if true;
+          allow write: if isGroupMember(appId, groupId);
+        }
+
+        // settings：分享可讀；限成員可寫
+        match /settings/{docId} {
+          allow read: if true;
+          allow write: if isGroupMember(appId, groupId);
+        }
+      }
+
+      // users：shortCode 初始化/查詢會用到
+      // 允許登入(含匿名)讀；本人可寫自己的 doc
+      match /users/{uid} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn() && request.auth.uid == uid;
+      }
+
+      // public_profiles：公開讀；本人可寫
+      match /public_profiles/{uid} {
+        allow read: if true;
+        allow write: if isSignedIn() && request.auth.uid == uid;
+      }
     }
   }
 }
