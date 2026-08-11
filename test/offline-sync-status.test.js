@@ -31,3 +31,10 @@ test('PWA icons are square PNGs at the advertised install sizes', async () => {
     assert.equal(png.readUInt32BE(20), size, `${size}px icon height`);
   }
 });
+
+test('places the offline sync status beside the balance summary heading', async () => {
+  const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  const balanceSummary = source.slice(source.indexOf('const BalanceSummary'));
+  assert.match(source, /<BalanceSummary[\s\S]*offlineSyncStatus=\{offlineSyncStatus\}/);
+  assert.match(balanceSummary, /結餘總結[\s\S]*role="status"/);
+});

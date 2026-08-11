@@ -3816,20 +3816,6 @@ async function _getStorage() {
                     </div>
                 )}
 
-                <div
-                  role="status"
-                  aria-live="polite"
-                  className={`mt-4 inline-flex items-center rounded-full px-3 py-1.5 text-xs font-semibold ${offlineSyncStatus.kind === 'offline'
-                    ? 'bg-amber-100 text-amber-800'
-                    : offlineSyncStatus.kind === 'syncing'
-                      ? 'bg-blue-100 text-blue-800'
-                      : 'bg-emerald-100 text-emerald-800'}`}
-                  title={offlineSyncStatus.kind === 'synced' ? 'Firestore 已完成目前支出的同步' : offlineSyncStatus.label}
-                >
-                  <span className="mr-1.5" aria-hidden="true">{offlineSyncStatus.kind === 'offline' ? '⚠️' : offlineSyncStatus.kind === 'syncing' ? '↻' : '✓'}</span>
-                  {offlineSyncStatus.label}
-                </div>
-                
                 {/* NEW: 複製連結成功或失敗的訊息提示 (Toast 效果) - 保持全域，用於登入/登出/複製 */}
                 <AnimatedToast message={copyMessage} />
                 
@@ -3888,6 +3874,7 @@ async function _getStorage() {
                     settleMemberDebt={settleMemberDebt}
                     pendingTaxRefundInTWD={pendingTaxRefundInTWD}
                     memberCategorySpending={memberCategorySpending}
+                    offlineSyncStatus={offlineSyncStatus}
                 />
                 {expenses.some((expense) => getExpenseLuggageId(expense)) && <button type="button" onClick={() => setIsLuggageItemsModalOpen(true)} className="mt-6 flex w-full items-center justify-between rounded-xl bg-white p-5 text-left shadow-lg transition hover:bg-gray-50" aria-label="查看行李箱商品"><span className="text-lg font-bold text-gray-800">🧳 行李箱商品</span><span className="text-sm font-medium text-primaryColor-700">查看</span></button>}
                 <ExpenseList 
@@ -4513,7 +4500,7 @@ async function _getStorage() {
             );
         });
 
-        const BalanceSummary = memo(({ settlements, balances, members, getDisplayName, isReadOnly, settleMemberDebt, pendingTaxRefundInTWD, memberCategorySpending }) => {
+        const BalanceSummary = memo(({ settlements, balances, members, getDisplayName, isReadOnly, settleMemberDebt, pendingTaxRefundInTWD, memberCategorySpending, offlineSyncStatus }) => {
             const debtorBalances = useMemo(() => {
                 return members.filter(member => Math.round(balances[member] || 0) < 0)
                                .map(member => ({
@@ -4526,10 +4513,25 @@ async function _getStorage() {
 
             return (
               <div className="mt-8 p-6 bg-white rounded-xl shadow-2xl">
-                <h2 className="text-2xl font-bold mb-4 text-gray-800 flex items-center">
-                  <Users className="w-7 h-7 mr-3 text-primaryColor-500" />
-                  結餘總結 
-                </h2>
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="flex items-center text-2xl font-bold text-gray-800">
+                    <Users className="mr-3 h-7 w-7 text-primaryColor-500" />
+                    結餘總結
+                  </h2>
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    className={`inline-flex items-center rounded-full px-3 py-1.5 text-xs font-semibold ${offlineSyncStatus.kind === 'offline'
+                      ? 'bg-amber-100 text-amber-800'
+                      : offlineSyncStatus.kind === 'syncing'
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'bg-emerald-100 text-emerald-800'}`}
+                    title={offlineSyncStatus.kind === 'synced' ? 'Firestore 已完成目前支出的同步' : offlineSyncStatus.label}
+                  >
+                    <span className="mr-1.5" aria-hidden="true">{offlineSyncStatus.kind === 'offline' ? '⚠️' : offlineSyncStatus.kind === 'syncing' ? '↻' : '✓'}</span>
+                    {offlineSyncStatus.label}
+                  </div>
+                </div>
                 {pendingTaxRefundInTWD > 0 && (
                   <div className="mb-4 rounded-xl border border-primaryColor-100 bg-primaryColor-50 p-4">
                     <p className="text-sm font-medium text-primaryColor-700">待收退稅預估總額</p>
