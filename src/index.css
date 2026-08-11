@@ -17,3 +17,82 @@ input[type='number']::-webkit-outer-spin-button {
   transform: translateZ(0);
   will-change: transform;
 }
+
+:root {
+  --motion-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.app-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgb(17 24 39 / 0.75);
+  opacity: 1;
+  transition: opacity 250ms var(--motion-ease-out);
+}
+
+.app-modal-surface {
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity 250ms var(--motion-ease-out), transform 250ms var(--motion-ease-out);
+  will-change: transform, opacity;
+}
+
+.app-modal-backdrop--exit,
+.app-modal-surface--exit { opacity: 0; }
+.app-modal-surface--exit { transform: scale(.96); }
+
+@starting-style {
+  .app-modal-backdrop { opacity: 0; }
+  .app-modal-surface { opacity: 0; transform: scale(.96); }
+  .app-toast { opacity: 0; transform: translate(-50%, -8px); }
+  .app-popover { opacity: 0; transform: translateY(-4px) scale(.98); }
+}
+
+.app-toast {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  z-index: 50;
+  padding: .75rem;
+  color: white;
+  background: #2563eb;
+  border-radius: .5rem;
+  box-shadow: 0 20px 25px -5px rgb(0 0 0 / .1);
+  opacity: 1;
+  transform: translate(-50%, 0);
+  transition: opacity 250ms var(--motion-ease-out), transform 250ms var(--motion-ease-out);
+  will-change: transform, opacity;
+}
+.app-toast--exit { opacity: 0; transform: translate(-50%, -8px); }
+
+.app-popover {
+  transform-origin: top left;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition: opacity 180ms var(--motion-ease-out), transform 180ms var(--motion-ease-out);
+  will-change: transform, opacity;
+}
+.app-popover--exit { opacity: 0; transform: translateY(-4px) scale(.98); }
+
+.recycle-bin-card {
+  opacity: 1;
+  transform: translateX(0);
+  transition: opacity 150ms var(--motion-ease-out), transform 150ms var(--motion-ease-out);
+}
+.recycle-bin-card--exiting { opacity: 0; transform: translateX(8px); }
+
+@media (prefers-reduced-motion: reduce) {
+  .app-modal-backdrop,
+  .app-modal-surface,
+  .app-toast,
+  .app-popover { transition-duration: 150ms; }
+  .app-modal-surface--exit { transform: none; }
+  .app-toast--exit { transform: translate(-50%, 0); }
+  .app-popover--exit { transform: none; }
+  .recycle-bin-card--exiting { transform: none; }
+}

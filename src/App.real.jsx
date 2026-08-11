@@ -332,20 +332,86 @@ async function _getStorage() {
             }
         };
         
+        const MOTION_EXIT_MS = 250;
+        const waitForMotionExit = (duration) => new Promise(resolve => window.setTimeout(resolve, duration));
+
+        // Keep the DOM mounted through the exit transition so closing a dialog never teleports away.
+        const useAnimatedPresence = (isOpen, duration = MOTION_EXIT_MS) => {
+            const [isPresent, setIsPresent] = useState(isOpen);
+            const [isExiting, setIsExiting] = useState(false);
+
+            useEffect(() => {
+                let timer;
+                let exitTimer;
+                if (isOpen) {
+                    timer = window.setTimeout(() => {
+                        setIsPresent(true);
+                        setIsExiting(false);
+                    }, 0);
+                } else if (isPresent) {
+                    timer = window.setTimeout(() => {
+                        setIsExiting(true);
+                        exitTimer = window.setTimeout(() => setIsPresent(false), duration);
+                    }, 0);
+                }
+                return () => { window.clearTimeout(timer); window.clearTimeout(exitTimer); };
+            }, [isOpen, isPresent, duration]);
+
+            return { isPresent, isExiting };
+        };
+
+        const AnimatedModalFrame = ({ isOpen, onClose, children, contentClassName = '', ariaLabel }) => {
+            const { isPresent, isExiting } = useAnimatedPresence(isOpen);
+
+            useEffect(() => {
+                if (!isPresent || !isOpen) return undefined;
+                const handleKeyDown = (event) => {
+                    if (event.key === 'Escape') onClose();
+                };
+                window.addEventListener('keydown', handleKeyDown);
+                return () => window.removeEventListener('keydown', handleKeyDown);
+            }, [isPresent, isOpen, onClose]);
+
+            if (!isPresent) return null;
+            return (
+                <div
+                    className={`app-modal-backdrop ${isExiting ? 'app-modal-backdrop--exit' : ''}`}
+                    onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}
+                >
+                    <div role="dialog" aria-modal="true" aria-label={ariaLabel} className={`app-modal-surface ${isExiting ? 'app-modal-surface--exit' : ''} ${contentClassName}`}>
+                        {children}
+                    </div>
+                </div>
+            );
+        };
+
+        const AnimatedToast = ({ message }) => {
+            const { isPresent, isExiting } = useAnimatedPresence(Boolean(message), 250);
+            const [lastMessage, setLastMessage] = useState(message);
+            useEffect(() => {
+                if (message) window.setTimeout(() => setLastMessage(message), 0);
+            }, [message]);
+            if (!isPresent) return null;
+            return <div className={`app-toast ${isExiting ? 'app-toast--exit' : ''}`} role="status"><p className="font-semibold text-sm">{lastMessage}</p></div>;
+        };
+
+        const AnimatedPopover = ({ isOpen, children, className = '' }) => {
+            const { isPresent, isExiting } = useAnimatedPresence(isOpen, 180);
+            if (!isPresent) return null;
+            return <div className={`app-popover ${isExiting ? 'app-popover--exit' : ''} ${className}`}>{children}</div>;
+        };
+
         /**
          * 通用確認提示 Modal
          */
         const ConfirmationModal = memo(({ isOpen, onClose, onConfirm, title, message, confirmText, confirmColor = 'red' }) => {
-            if (!isOpen) return null;
-
             const colorClass =
                 confirmColor === 'green'
                     ? 'bg-green-600 hover:bg-green-700'
                     : 'bg-red-600 hover:bg-red-700';
 
             return (
-                <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center p-4 z-[9999] transition-opacity force-gpu">
-                    <div className="bg-white rounded-xl w-full max-w-sm shadow-2xl transform transition-transform duration-300 scale-100 force-gpu">
+                <AnimatedModalFrame isOpen={isOpen} onClose={onClose} ariaLabel={title} contentClassName="w-full max-w-sm rounded-xl bg-white shadow-2xl">
                         <div className="p-6">
                             <h3 className="text-xl font-bold text-gray-800 mb-4">{title}</h3>
                             <p className="text-gray-600 mb-6">{message}</p>
@@ -364,8 +430,7 @@ async function _getStorage() {
                                 </button>
                             </div>
                         </div>
-                    </div>
-                </div>
+                </AnimatedModalFrame>
             );
         });
 
@@ -535,6 +600,7 @@ async function _getStorage() {
             const [modalError, setModalError] = useState(null);
             const [uploadStatus, setUploadStatus] = useState('');
             const [duplicateCandidates, setDuplicateCandidates] = useState([]);
+            const { isPresent: isExpenseModalPresent, isExiting: isExpenseModalExiting } = useAnimatedPresence(state.isOpen);
 
             const isEditing = state.isEditing;
             const expenseToEdit = state.editingExpense;
@@ -914,16 +980,17 @@ async function _getStorage() {
                 }
             };
             
-            if (!state.isOpen) return null;
+            if (!isExpenseModalPresent) return null;
 
             return (
               // 應用 force-gpu 到背景層
               <div 
                 key={isEditing && expenseToEdit ? expenseToEdit.id : 'add-new'} 
-                className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-start justify-center p-4 z-50 transition-opacity overflow-y-auto force-gpu"
+                className={`app-modal-backdrop items-start overflow-y-auto ${isExpenseModalExiting ? 'app-modal-backdrop--exit' : ''}`}
+                onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}
               >
                 {/* 修正：新增 h-full 和 flex flex-col 讓內容可以獨立滾動 */}
-                <div className="bg-white rounded-xl w-full max-w-lg shadow-2xl transform transition-transform duration-300 scale-100 my-4 h-full sm:h-auto sm:max-h-[95vh] flex flex-col force-gpu">
+                <div role="dialog" aria-modal="true" aria-label={modalTitle} className={`app-modal-surface bg-white rounded-xl w-full max-w-lg shadow-2xl my-4 h-full sm:h-auto sm:max-h-[95vh] flex flex-col force-gpu ${isExpenseModalExiting ? 'app-modal-surface--exit' : ''}`}>
                   
                   {/* 頂部：固定標題 (flex-shrink-0) */}
                   <div className="p-6 border-b flex justify-between items-center flex-shrink-0">
@@ -1401,13 +1468,14 @@ async function _getStorage() {
                 setIsMemberModalOpen(false); // 遷移成功後關閉整個 Modal
             };
 
-            if (!isMemberModalOpen) return null;
+            const { isPresent: isMemberModalPresent, isExiting: isMemberModalExiting } = useAnimatedPresence(isMemberModalOpen);
+            if (!isMemberModalPresent) return null;
 
             return (
               // 應用 force-gpu 到背景層
-              <div className="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-start justify-center p-4 z-50 transition-opacity overflow-y-auto force-gpu">
+              <div className={`app-modal-backdrop items-start overflow-y-auto ${isMemberModalExiting ? 'app-modal-backdrop--exit' : ''}`} onMouseDown={(event) => { if (event.target === event.currentTarget) setIsMemberModalOpen(false); }}>
                   {/* 修正：將 max-w-2xl 的 max-h 改為 h-full，並確保 flex-col 垂直佈局 */}
-                  <div className="bg-white rounded-xl w-full max-w-2xl shadow-2xl transform transition-transform duration-300 scale-100 my-4 h-full sm:h-auto sm:max-h-[95vh] flex flex-col force-gpu">
+                  <div role="dialog" aria-modal="true" aria-label="管理分帳成員與預設份數" className={`app-modal-surface bg-white rounded-xl w-full max-w-2xl shadow-2xl my-4 h-full sm:h-auto sm:max-h-[95vh] flex flex-col force-gpu ${isMemberModalExiting ? 'app-modal-surface--exit' : ''}`}>
                       {/* 頂部：固定標題 (flex-shrink-0) */}
                       <div className="p-6 border-b flex justify-between items-center flex-shrink-0">
                           <h3 className="text-xl font-bold text-gray-800">
@@ -1709,6 +1777,7 @@ async function _getStorage() {
           const [expenses, setExpenses] = useState([]);
 		  const [recycleBinExpenses, setRecycleBinExpenses] = useState([]);
 		  const [isRecycleBinModalOpen, setIsRecycleBinModalOpen] = useState(false);
+		  const [pendingRecycleBinExpenseIds, setPendingRecycleBinExpenseIds] = useState(() => new Set());
           const [luggage, setLuggage] = useState([]);
           const [isLuggageModalOpen, setIsLuggageModalOpen] = useState(false);
           const [isLuggageItemsModalOpen, setIsLuggageItemsModalOpen] = useState(false);
@@ -2674,6 +2743,8 @@ async function _getStorage() {
 
 		  const restoreRecycleBinExpense = useCallback(async (record) => {
 			if (isReadOnly || !db || !record?.id || !record.expense) return;
+			setPendingRecycleBinExpenseIds(previous => new Set(previous).add(record.id));
+			await waitForMotionExit(150);
 			setIsLoading(true);
 			try {
 			  const batch = writeBatch(db);
@@ -2684,6 +2755,7 @@ async function _getStorage() {
 			} catch (restoreError) {
 			  console.error('還原回收桶支出失敗：', restoreError);
 			  setError(`還原支出失敗: ${restoreError.message}`);
+			  setPendingRecycleBinExpenseIds(previous => { const next = new Set(previous); next.delete(record.id); return next; });
 			} finally { setIsLoading(false); }
 		  }, [db, currentCollectionId, isReadOnly, setError, setIsLoading]);
 
@@ -2691,6 +2763,8 @@ async function _getStorage() {
 			if (isReadOnly || !db || !record?.id) return;
 			openConfirmModal('永久刪除支出', '永久刪除後無法還原，收據圖片也會一併刪除。', async () => {
 			  closeConfirmModal();
+			  setPendingRecycleBinExpenseIds(previous => new Set(previous).add(record.id));
+			  await waitForMotionExit(150);
 			  setIsLoading(true);
 			  try {
 				await deleteDoc(doc(db, getGroupRecycleBinPath(currentCollectionId), record.id));
@@ -2700,9 +2774,10 @@ async function _getStorage() {
 				  const { getStorage, storageRef, deleteObject } = await _getStorage();
 				  await deleteObject(storageRef(getStorage(getFirebaseApp()), imagePath));
 				}
-			  } catch (deleteError) {
-				console.error('永久刪除回收桶支出失敗：', deleteError);
-				setError(`永久刪除支出失敗: ${deleteError.message}`);
+			} catch (deleteError) {
+			  console.error('永久刪除回收桶支出失敗：', deleteError);
+			  setError(`永久刪除支出失敗: ${deleteError.message}`);
+			  setPendingRecycleBinExpenseIds(previous => { const next = new Set(previous); next.delete(record.id); return next; });
 			  } finally { setIsLoading(false); }
 			});
 		  }, [db, currentCollectionId, isReadOnly, openConfirmModal, closeConfirmModal, setError, setIsLoading]);
@@ -3427,8 +3502,8 @@ async function _getStorage() {
 							<Pencil className="w-10 h-10 text-primaryColor-700" aria-hidden="true" />
 						  )}
 
-						  {isGroupBookMenuOpen && !isGuest && (
-							<div id="group-book-menu" className="absolute left-0 top-full z-40 mt-2 w-72 rounded-xl border border-primaryColor-100 bg-white p-3 shadow-xl">
+						  {!isGuest && (
+							<AnimatedPopover isOpen={isGroupBookMenuOpen} className="absolute left-0 top-full z-40 mt-2 w-72 rounded-xl border border-primaryColor-100 bg-white p-3 shadow-xl">
 							  <label htmlFor="group-book-switcher" className="text-sm font-semibold text-gray-700">選擇帳本</label>
 							  <select
 								id="group-book-switcher"
@@ -3489,7 +3564,7 @@ async function _getStorage() {
 								  </div>
 								</form>
 							  )}
-							</div>
+							</AnimatedPopover>
 						  )}
 						</div>
 
@@ -3682,11 +3757,7 @@ async function _getStorage() {
                 )}
                 
                 {/* NEW: 複製連結成功或失敗的訊息提示 (Toast 效果) - 保持全域，用於登入/登出/複製 */}
-                {copyMessage && (
-                    <div className="fixed top-4 left-1/2 transform -translate-x-1/2 p-3 bg-primaryColor-600 text-white rounded-lg shadow-xl z-50 transition-opacity duration-300">
-                        <p className="font-semibold text-sm">{copyMessage}</p>
-                    </div>
-                )}
+                <AnimatedToast message={copyMessage} />
                 
                 
                 {/* 主要功能區塊 */}
@@ -3805,24 +3876,18 @@ async function _getStorage() {
                     migrateMemberID={migrateMemberID} // <-- NEW: 傳入新的遷移函式
                 />
 
-				{isRecycleBinModalOpen && (
-				  <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-gray-900 bg-opacity-75 p-4">
-					<div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white shadow-2xl">
+				<AnimatedModalFrame isOpen={isRecycleBinModalOpen} onClose={() => setIsRecycleBinModalOpen(false)} ariaLabel="支出回收桶" contentClassName="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white shadow-2xl">
 					  <div className="flex items-center justify-between border-b p-5"><div><h2 className="text-xl font-bold text-gray-800">♻️ 支出回收桶</h2><p className="mt-1 text-sm text-gray-500">項目會保留 30 天，之後自動永久清除。</p></div><button onClick={() => setIsRecycleBinModalOpen(false)} className="rounded-full p-2 text-gray-500 hover:bg-gray-100" aria-label="關閉回收桶">✕</button></div>
 					  <div className="space-y-3 p-5">
 						{recycleBinExpenses.length === 0 ? <p className="text-sm text-gray-500">回收桶目前是空的。</p> : recycleBinExpenses.map(record => {
 						  const expense = record.expense || {};
 						  const deletedDate = record.deletedAt?.toDate ? record.deletedAt.toDate() : (record.deletedAt ? new Date(record.deletedAt) : null);
-						  return <div key={record.id} className="rounded-lg border border-gray-200 p-3"><p className="font-semibold text-gray-800">{expense.description || '未命名支出'}</p><p className="mt-1 text-sm text-gray-600">{expense.currency || DEFAULT_CURRENCY} {Math.round(expense.originalAmount ?? expense.amount ?? 0).toLocaleString('zh-TW')}</p>{deletedDate && <p className="mt-1 text-xs text-gray-500">刪除於：{deletedDate.toLocaleString('zh-TW')}</p>}<div className="mt-3 flex gap-3"><button onClick={() => restoreRecycleBinExpense(record)} disabled={isLoading || isReadOnly} className="text-sm font-semibold text-primaryColor-700 disabled:text-gray-400">還原</button><button onClick={() => permanentlyDeleteRecycleBinExpense(record)} disabled={isLoading || isReadOnly} className="text-sm font-semibold text-red-600 disabled:text-gray-400">永久刪除</button></div></div>;
+						  return <div key={record.id} className={`recycle-bin-card rounded-lg border border-gray-200 p-3 ${pendingRecycleBinExpenseIds.has(record.id) ? 'recycle-bin-card--exiting' : ''}`}><p className="font-semibold text-gray-800">{expense.description || '未命名支出'}</p><p className="mt-1 text-sm text-gray-600">{expense.currency || DEFAULT_CURRENCY} {Math.round(expense.originalAmount ?? expense.amount ?? 0).toLocaleString('zh-TW')}</p>{deletedDate && <p className="mt-1 text-xs text-gray-500">刪除於：{deletedDate.toLocaleString('zh-TW')}</p>}<div className="mt-3 flex gap-3"><button onClick={() => restoreRecycleBinExpense(record)} disabled={isLoading || isReadOnly || pendingRecycleBinExpenseIds.has(record.id)} className="text-sm font-semibold text-primaryColor-700 disabled:text-gray-400">還原</button><button onClick={() => permanentlyDeleteRecycleBinExpense(record)} disabled={isLoading || isReadOnly || pendingRecycleBinExpenseIds.has(record.id)} className="text-sm font-semibold text-red-600 disabled:text-gray-400">永久刪除</button></div></div>;
 						})}
 					  </div>
-					</div>
-				  </div>
-				)}
+				</AnimatedModalFrame>
 
-                {isLuggageModalOpen && (
-                  <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-gray-900 bg-opacity-75 p-4">
-                    <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white shadow-2xl">
+                <AnimatedModalFrame isOpen={isLuggageModalOpen} onClose={() => setIsLuggageModalOpen(false)} ariaLabel="行李箱管理" contentClassName="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white shadow-2xl">
                       <div className="flex items-center justify-between border-b p-5"><h2 className="text-xl font-bold text-gray-800">🧳 行李箱管理</h2><button onClick={() => setIsLuggageModalOpen(false)} className="rounded-full p-2 text-gray-500 hover:bg-gray-100" aria-label="關閉行李箱管理">✕</button></div>
                       <div className="space-y-4 p-5">
                         <form onSubmit={saveLuggage} className="rounded-lg bg-primaryColor-50 p-3">
@@ -3835,9 +3900,7 @@ async function _getStorage() {
                           {editingLuggageId === item.id ? <div className="flex gap-2"><input aria-label={`修改 ${item.name} 的名稱`} name="editingLuggageName" value={editingLuggageName} onChange={(e) => setEditingLuggageName(e.target.value)} className="min-w-0 flex-1 rounded border border-gray-300 p-2" /><button onClick={() => renameLuggage(item)} className="rounded bg-primaryColor-600 px-3 text-sm font-semibold text-white">儲存</button><button onClick={() => setEditingLuggageId('')} className="px-2 text-sm">取消</button></div> : <div className="flex items-center justify-between gap-2"><div><p className="font-semibold text-gray-800">{item.name}</p>{item.ownerId && <p className="text-xs text-gray-500">持有人：{getDisplayName(item.ownerId)}</p>}</div><div className="flex gap-2"><button onClick={() => { setEditingLuggageId(item.id); setEditingLuggageName(item.name); }} className="text-sm text-primaryColor-700">改名</button><button onClick={() => requestDeleteLuggage(item)} className="text-sm text-red-600">刪除</button></div></div>}
                         </div>)}
                       </div>
-                    </div>
-                  </div>
-                )}
+                </AnimatedModalFrame>
 
                 {isLuggageItemsModalOpen && (() => {
                   const grouped = groupTaxRefundExpensesByLuggage({ expenses, luggage });
