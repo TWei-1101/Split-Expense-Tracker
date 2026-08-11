@@ -83,11 +83,10 @@ test('uses Firestore cached snapshots rather than Safari navigator.onLine to sho
   assert.match(source, /onSnapshot\(expensesRef, \{ includeMetadataChanges: true \}, \(snapshot\) => \{[\s\S]*?setIsOnline\(!snapshot\.metadata\.fromCache\)/);
 });
 
-test('uses durable Auth persistence and explicitly switches Firestore networking', async () => {
+test('uses durable Auth persistence without manually restarting Firestore networking', async () => {
   const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
   assert.match(source, /initializeAuth\(app, \{\s*persistence: \[indexedDBLocalPersistence, browserLocalPersistence\]/);
-  assert.match(source, /online \? enableNetwork\(db\) : disableNetwork\(db\)/);
-  assert.match(source, /window\.addEventListener\('online', syncFirestoreNetwork\)/);
+  assert.doesNotMatch(source, /enableNetwork\(|disableNetwork\(/);
 });
 
 test('uses single-tab Firestore persistence to avoid Safari duplicate listener targets', async () => {

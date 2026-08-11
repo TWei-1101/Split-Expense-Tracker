@@ -16,8 +16,6 @@ import {
   getFirestore,
   initializeFirestore,
   persistentLocalCache,
-  disableNetwork,
-  enableNetwork,
   collection,
   doc,
   addDoc,
@@ -2012,25 +2010,6 @@ async function _getStorage() {
 		  return () => clearTimeout(timer);
 		}, [error]);
 
-          useEffect(() => {
-            const syncFirestoreNetwork = () => {
-              const online = navigator.onLine;
-              setIsOnline(online);
-              if (!db) return;
-              const networkPromise = online ? enableNetwork(db) : disableNetwork(db);
-              networkPromise.catch((networkError) => {
-                console.warn(`Firestore ${online ? '重新連線' : '離線'}切換失敗：`, networkError);
-              });
-            };
-            syncFirestoreNetwork();
-            window.addEventListener('online', syncFirestoreNetwork);
-            window.addEventListener('offline', syncFirestoreNetwork);
-            return () => {
-              window.removeEventListener('online', syncFirestoreNetwork);
-              window.removeEventListener('offline', syncFirestoreNetwork);
-            };
-          }, [db]);
-		
           // --- 1. Firebase 初始化與驗證（支援 /g/短代碼） ---
           useEffect(() => {
             if (!firebaseConfig) {
