@@ -90,7 +90,23 @@ test('canonicalizes a cached own-book URL in document head before Safari can pai
 
 test('does not canonicalize an explicit shared link using the cached own-book URL', async () => {
   const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
-  assert.match(source, /if \(!isBareRootRequest \|\| !cachedSignedInUser\?\.ownShortCode\) return null;/);
+  assert.match(source, /if \(requestedShortCode\) \{\s*return requestedShortCode === cachedSignedInUser\.ownShortCode\s*\? cachedSignedInUser\s*:\s*null;/);
+});
+
+test('bootstraps an explicit canonical own-book URL before Auth restoration', async () => {
+  const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  assert.match(source, /const requestedOwnBook = requestedShortCode[\s\S]*?requestedShortCode === cachedSignedInUser\?\.ownShortCode/);
+  assert.match(source, /function canonicalizeCachedOwnBookUrl\(\)[\s\S]*?if \(requestedShortCode\) \{[\s\S]*?requestedShortCode === cachedSignedInUser\.ownShortCode/);
+});
+
+test('never paints an outgoing collection while the requested collection is hydrating', async () => {
+  const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  assert.match(source, /const \[groupSnapshotCollectionId, setGroupSnapshotCollectionId\] = useState\(null\)/);
+  assert.match(source, /const \[expensesSnapshotCollectionId, setExpensesSnapshotCollectionId\] = useState\(null\)/);
+  assert.match(source, /setGroupSnapshotCollectionId\(currentCollectionId\)/);
+  assert.match(source, /setExpensesSnapshotCollectionId\(currentCollectionId\)/);
+  assert.match(source, /const isCurrentCollectionHydrated = Boolean\(currentCollectionId\)[\s\S]*?groupSnapshotCollectionId === currentCollectionId[\s\S]*?expensesSnapshotCollectionId === currentCollectionId/);
+  assert.match(source, /if \(!authReady \|\| \(currentCollectionId && !isCurrentCollectionHydrated\)\)/);
 });
 
 test('never restores a last-viewed shared book for an offline own-book URL', async () => {

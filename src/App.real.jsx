@@ -133,8 +133,8 @@ function clearCachedSignedInUser() {
 // bare root URL is the signed-in user's entry point, so canonicalize it from
 // the previously verified local session instead of rendering the root book and
 // waiting for Firebase Auth to restore (which can take ~30 seconds offline in
-// Safari).  Explicit /g links and legacy share links are intentionally left
-// untouched: they may belong to a different, shared book.
+// Safari). An explicit /g link is only bootstrapped when it is the exact
+// previously verified own-book URL; other links may belong to a shared book.
 function canonicalizeCachedOwnBookUrl() {
     if (typeof window === 'undefined') return null;
 
@@ -142,7 +142,13 @@ function canonicalizeCachedOwnBookUrl() {
     const requestedShortCode = url.pathname.match(/\/g\/([^/?#]+)/)?.[1] || null;
     const isBareRootRequest = !requestedShortCode && !url.searchParams.has('shareId');
     const cachedSignedInUser = readCachedSignedInUser();
-    if (!isBareRootRequest || !cachedSignedInUser?.ownShortCode) return null;
+    if (!cachedSignedInUser?.ownShortCode) return null;
+    if (requestedShortCode) {
+        return requestedShortCode === cachedSignedInUser.ownShortCode
+            ? cachedSignedInUser
+            : null;
+    }
+    if (!isBareRootRequest) return null;
 
     const ownBookUrl = new URL(url.toString());
     ownBookUrl.pathname = `/g/${cachedSignedInUser.ownShortCode}`;
@@ -1872,6 +1878,10 @@ async function _getStorage() {
           
           const [currentCollectionId, setCurrentCollectionId] = useState(() => ownBookBootstrap?.uid || null); // 目前正在檢視的 groupId
 		  const [currentCollectionShortCode, setCurrentCollectionShortCode] = useState(() => ownBookBootstrap?.ownShortCode || null); // 分享用短代碼
+		  // Do not paint collection-scoped state until both listeners have
+		  // hydrated the exact collection requested by the current URL.
+		  const [groupSnapshotCollectionId, setGroupSnapshotCollectionId] = useState(null);
+		  const [expensesSnapshotCollectionId, setExpensesSnapshotCollectionId] = useState(null);
 		  const [groupOwner, setGroupOwner] = useState(null);                   // 群組擁有者 uid
 		  const [groupMembers, setGroupMembers] = useState([]);                 // 群組成員 uid 清單
 
@@ -2314,11 +2324,13 @@ async function _getStorage() {
 				setGroupName('分帳記帳簿');
 				setGroupNameInput('分帳記帳簿');
 			  }
+			  setGroupSnapshotCollectionId(currentCollectionId);
 			},
 			(err) => {
 			  console.error("Error listening group doc:", err);
 			  setGroupOwner(null);
 			  setGroupMembers([]);
+			  setGroupSnapshotCollectionId(currentCollectionId);
 			}
 		  );
 
@@ -2692,6 +2704,7 @@ async function _getStorage() {
                 };
               });
               setExpenses(fetchedExpenses);
+			  setExpensesSnapshotCollectionId(currentCollectionId);
             }, (err) => {
               console.error(`Error listening to expenses in collection ${currentCollectionId}:`, err);
               if (err.code === 'permission-denied') {
@@ -2701,6 +2714,7 @@ async function _getStorage() {
               }
               setExpenses([]);
               setHasPendingExpenseWrites(false);
+			  setExpensesSnapshotCollectionId(currentCollectionId);
             });
 
 			const recycleBinPath = getGroupRecycleBinPath(currentCollectionId);
@@ -3625,7 +3639,11 @@ async function _getStorage() {
 			  setError,
 			]);
 
-          if (!authReady) {
+		  const isCurrentCollectionHydrated = Boolean(currentCollectionId)
+			&& groupSnapshotCollectionId === currentCollectionId
+			&& expensesSnapshotCollectionId === currentCollectionId;
+
+		  if (!authReady || (currentCollectionId && !isCurrentCollectionHydrated)) {
             return (
                 <div className="min-h-screen bg-gray-100 flex items-center justify-center">
                     <p className="text-lg text-primaryColor-600">應用程式啟動中...</p>
