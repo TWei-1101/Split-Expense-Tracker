@@ -4296,13 +4296,13 @@ async function _getStorage() {
             const topSpenderId = memberSpending.length > 1 ? memberSpending[0]?.userId : null;
             const totalSpending = memberSpending.reduce((s, m) => s + m.amount, 0);
             const selfPaidSummary = useMemo(() => {
-                return expenses.reduce((summary, exp) => {
+                return spendingExpenses.reduce((summary, exp) => {
                     if (exp.payerName !== SELF_PAYER_KEY) return summary;
                     summary.count += 1;
                     summary.amount += exp.amountInTWD || 0;
                     return summary;
                 }, { count: 0, amount: 0 });
-            }, [expenses]);
+            }, [spendingExpenses]);
 
             return (
               <div className="mt-8">
