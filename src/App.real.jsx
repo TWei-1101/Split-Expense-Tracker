@@ -59,6 +59,10 @@ import {
   groupTaxRefundExpensesByLuggage,
   normalizeLuggageList,
 } from './lib/luggage.js';
+import {
+  buildExpiredRecycleBinCleanupPlan,
+  createRecycleBinRecord,
+} from './lib/expense-recycle-bin.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
@@ -101,6 +105,9 @@ async function _getStorage() {
         
 		const getGroupExpensesPath = (groupId) =>
 		  `artifacts/${appId}/groups/${groupId}/expenses`;
+
+		const getGroupRecycleBinPath = (groupId) =>
+		  `artifacts/${appId}/groups/${groupId}/expense-recycle-bin`;
 
 		const getGroupMembersDocPath = (groupId) =>
 		  `artifacts/${appId}/groups/${groupId}/settings/members`;
@@ -1700,6 +1707,8 @@ async function _getStorage() {
           }, [converterSourceCurrency]);
 
           const [expenses, setExpenses] = useState([]);
+		  const [recycleBinExpenses, setRecycleBinExpenses] = useState([]);
+		  const [isRecycleBinModalOpen, setIsRecycleBinModalOpen] = useState(false);
           const [luggage, setLuggage] = useState([]);
           const [isLuggageModalOpen, setIsLuggageModalOpen] = useState(false);
           const [isLuggageItemsModalOpen, setIsLuggageItemsModalOpen] = useState(false);
@@ -2419,6 +2428,11 @@ async function _getStorage() {
               setExpenses([]);
             });
 
+			const recycleBinPath = getGroupRecycleBinPath(currentCollectionId);
+			const unsubscribeRecycleBin = onSnapshot(collection(db, recycleBinPath), (snapshot) => {
+			  setRecycleBinExpenses(snapshot.docs.map(recycleDoc => ({ id: recycleDoc.id, ...recycleDoc.data() })));
+			});
+
             const membersDocPath = getGroupMembersDocPath(currentCollectionId);
 			const membersDocRef = doc(db, membersDocPath);
 
@@ -2446,12 +2460,41 @@ async function _getStorage() {
               setLuggage([]);
             });
 
-            return () => {
-              unsubscribeExpenses();
+			return () => {
+				unsubscribeExpenses();
+				unsubscribeRecycleBin();
               unsubscribeMembers();
               unsubscribeLuggage();
             };
           }, [authReady, db, currentCollectionId, userId]); // FIX: Add userId dependency
+
+		  // 開啟帳本時清理逾期回收桶；每個 batch 最多 400 個 document，保留 Firestore 500 操作餘裕。
+		  useEffect(() => {
+			if (!db || !currentCollectionId || isReadOnly || recycleBinExpenses.length === 0) return;
+			let cancelled = false;
+			const cleanupExpiredRecycleBin = async () => {
+			  const plan = buildExpiredRecycleBinCleanupPlan({ records: recycleBinExpenses });
+			  if (plan.batches.length === 0) return;
+			  try {
+				for (const records of plan.batches) {
+				  const batch = writeBatch(db);
+				  records.forEach(record => batch.delete(doc(db, getGroupRecycleBinPath(currentCollectionId), record.id)));
+				  await batch.commit();
+				}
+				const validPrefixes = [`groups/${currentCollectionId}/`, `artifacts/${appId}/groups/${currentCollectionId}/`];
+				const safeImagePaths = plan.imagePaths.filter(path => validPrefixes.some(prefix => path.startsWith(prefix)));
+				if (!cancelled && safeImagePaths.length) {
+				  const { getStorage, storageRef, deleteObject } = await _getStorage();
+				  const storage = getStorage(getFirebaseApp());
+				  await Promise.allSettled(safeImagePaths.map(path => deleteObject(storageRef(storage, path))));
+				}
+			  } catch (cleanupError) {
+				console.warn('清理逾期回收桶失敗：', cleanupError);
+			  }
+			};
+			cleanupExpiredRecycleBin();
+			return () => { cancelled = true; };
+		  }, [db, currentCollectionId, isReadOnly, recycleBinExpenses]);
 
           // --- 5. 衍生成員清單 ---
 			useEffect(() => {
@@ -2575,15 +2618,10 @@ async function _getStorage() {
                 setError(null);
                 try {
                     const docPath = `${getGroupExpensesPath(currentCollectionId)}/${expenseId}`;
-                    await deleteDoc(doc(db, docPath));
-                    if (expense?.imagePath) {
-                        try {
-                            const { getStorage, storageRef, deleteObject } = await _getStorage();
-                            await deleteObject(storageRef(getStorage(getFirebaseApp()), expense.imagePath));
-                        } catch (imageDeleteError) {
-                            console.warn('Delete expense image failed:', imageDeleteError);
-                        }
-                    }
+                    const batch = writeBatch(db);
+                    batch.set(doc(db, getGroupRecycleBinPath(currentCollectionId), expenseId), createRecycleBinRecord({ expense: { ...expense, id: expenseId }, deletedAt: serverTimestamp() }));
+                    batch.delete(doc(db, docPath));
+                    await batch.commit();
                 } catch (e) {
                     console.error("Error deleting document: ", e);
                     setError(`刪除支出失敗: ${e.message}`);
@@ -2592,7 +2630,7 @@ async function _getStorage() {
                 }
             };
             
-            openConfirmModal('確認刪除支出', '您確定要刪除這筆支出記錄嗎？此操作無法撤銷。', onConfirm);
+            openConfirmModal('移至回收桶', '這筆支出會在回收桶保留 30 天，可隨時還原。', onConfirm);
           }, [db, currentCollectionId, isReadOnly, openConfirmModal, closeConfirmModal, setError, setIsLoading]);
 
           const clearAllExpenses = useCallback(async () => {
@@ -2610,20 +2648,14 @@ async function _getStorage() {
                       const expensesCollectionPath = getGroupExpensesPath(currentCollectionId);
                       const snapshot = await getDocs(collection(db, expensesCollectionPath));
 
-                      const batch = writeBatch(db);
-                      const imagePaths = [];
-                      snapshot.docs.forEach(docSnap => {
-                          const data = docSnap.data() || {};
-                          if (data.imagePath) imagePaths.push(data.imagePath);
-                          batch.delete(docSnap.ref);
-                      });
-                      await batch.commit();
-                      if (imagePaths.length > 0) {
-                          const { getStorage, storageRef, deleteObject } = await _getStorage();
-                          const storage = getStorage(getFirebaseApp());
-                          await Promise.allSettled(
-                              imagePaths.map(path => deleteObject(storageRef(storage, path)))
-                          );
+                      for (let index = 0; index < snapshot.docs.length; index += 200) {
+                          const batch = writeBatch(db);
+                          snapshot.docs.slice(index, index + 200).forEach(docSnap => {
+                              const expense = { id: docSnap.id, ...(docSnap.data() || {}) };
+                              batch.set(doc(db, getGroupRecycleBinPath(currentCollectionId), docSnap.id), createRecycleBinRecord({ expense, deletedAt: serverTimestamp() }));
+                              batch.delete(docSnap.ref);
+                          });
+                          await batch.commit();
                       }
                   } catch (e) {
                       console.error("Error clearing all documents: ", e);
@@ -2635,10 +2667,45 @@ async function _getStorage() {
 
               openConfirmModal(
                   '確認清除所有支出', 
-                  '您確定要刪除此記帳簿中的所有支出記錄嗎？', 
+                  '您確定要將此記帳簿中的所有支出移至回收桶嗎？可在 30 天內還原。',
                   onConfirm
               );
           }, [db, currentCollectionId, isReadOnly, openConfirmModal, closeConfirmModal, setError, setIsLoading]);
+
+		  const restoreRecycleBinExpense = useCallback(async (record) => {
+			if (isReadOnly || !db || !record?.id || !record.expense) return;
+			setIsLoading(true);
+			try {
+			  const batch = writeBatch(db);
+			  const { id: ignoredId, ...expenseData } = record.expense;
+			  batch.set(doc(db, getGroupExpensesPath(currentCollectionId), record.id), expenseData);
+			  batch.delete(doc(db, getGroupRecycleBinPath(currentCollectionId), record.id));
+			  await batch.commit();
+			} catch (restoreError) {
+			  console.error('還原回收桶支出失敗：', restoreError);
+			  setError(`還原支出失敗: ${restoreError.message}`);
+			} finally { setIsLoading(false); }
+		  }, [db, currentCollectionId, isReadOnly, setError, setIsLoading]);
+
+		  const permanentlyDeleteRecycleBinExpense = useCallback((record) => {
+			if (isReadOnly || !db || !record?.id) return;
+			openConfirmModal('永久刪除支出', '永久刪除後無法還原，收據圖片也會一併刪除。', async () => {
+			  closeConfirmModal();
+			  setIsLoading(true);
+			  try {
+				await deleteDoc(doc(db, getGroupRecycleBinPath(currentCollectionId), record.id));
+				const imagePath = record.expense?.imagePath;
+				const validPrefixes = [`groups/${currentCollectionId}/`, `artifacts/${appId}/groups/${currentCollectionId}/`];
+				if (imagePath && validPrefixes.some(prefix => imagePath.startsWith(prefix))) {
+				  const { getStorage, storageRef, deleteObject } = await _getStorage();
+				  await deleteObject(storageRef(getStorage(getFirebaseApp()), imagePath));
+				}
+			  } catch (deleteError) {
+				console.error('永久刪除回收桶支出失敗：', deleteError);
+				setError(`永久刪除支出失敗: ${deleteError.message}`);
+			  } finally { setIsLoading(false); }
+			});
+		  }, [db, currentCollectionId, isReadOnly, openConfirmModal, closeConfirmModal, setError, setIsLoading]);
 
           // --- 7. 成員管理 ---
           const saveMembers = useCallback(async (newMemberList) => {
@@ -3663,6 +3730,7 @@ async function _getStorage() {
 				aria-label="管理退稅行李箱"
 				title={isReadOnly ? '唯讀模式下無法管理行李箱' : '管理退稅行李箱'}
 			  >🧳</button>
+			  <button onClick={() => setIsRecycleBinModalOpen(true)} className="px-4 py-3 border text-lg font-bold rounded-xl bg-white focus:outline-none focus:ring-4 transition duration-300 shadow-xl hover:scale-[1.03] transform focus:ring-primaryColor-300 border-primaryColor-500 text-primaryColor-600 hover:bg-primaryColor-50" aria-label="開啟支出回收桶" title="支出回收桶">♻️</button>
                 </div>
 
                 {/* 總結與列表 */}
@@ -3736,6 +3804,21 @@ async function _getStorage() {
                     setToastMessage={setToastMessage}
                     migrateMemberID={migrateMemberID} // <-- NEW: 傳入新的遷移函式
                 />
+
+				{isRecycleBinModalOpen && (
+				  <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-gray-900 bg-opacity-75 p-4">
+					<div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white shadow-2xl">
+					  <div className="flex items-center justify-between border-b p-5"><div><h2 className="text-xl font-bold text-gray-800">♻️ 支出回收桶</h2><p className="mt-1 text-sm text-gray-500">項目會保留 30 天，之後自動永久清除。</p></div><button onClick={() => setIsRecycleBinModalOpen(false)} className="rounded-full p-2 text-gray-500 hover:bg-gray-100" aria-label="關閉回收桶">✕</button></div>
+					  <div className="space-y-3 p-5">
+						{recycleBinExpenses.length === 0 ? <p className="text-sm text-gray-500">回收桶目前是空的。</p> : recycleBinExpenses.map(record => {
+						  const expense = record.expense || {};
+						  const deletedDate = record.deletedAt?.toDate ? record.deletedAt.toDate() : (record.deletedAt ? new Date(record.deletedAt) : null);
+						  return <div key={record.id} className="rounded-lg border border-gray-200 p-3"><p className="font-semibold text-gray-800">{expense.description || '未命名支出'}</p><p className="mt-1 text-sm text-gray-600">{expense.currency || DEFAULT_CURRENCY} {Math.round(expense.originalAmount ?? expense.amount ?? 0).toLocaleString('zh-TW')}</p>{deletedDate && <p className="mt-1 text-xs text-gray-500">刪除於：{deletedDate.toLocaleString('zh-TW')}</p>}<div className="mt-3 flex gap-3"><button onClick={() => restoreRecycleBinExpense(record)} disabled={isLoading || isReadOnly} className="text-sm font-semibold text-primaryColor-700 disabled:text-gray-400">還原</button><button onClick={() => permanentlyDeleteRecycleBinExpense(record)} disabled={isLoading || isReadOnly} className="text-sm font-semibold text-red-600 disabled:text-gray-400">永久刪除</button></div></div>;
+						})}
+					  </div>
+					</div>
+				  </div>
+				)}
 
                 {isLuggageModalOpen && (
                   <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-gray-900 bg-opacity-75 p-4">
