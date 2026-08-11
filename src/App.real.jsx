@@ -2,6 +2,9 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from '
 import { initializeApp, getApp, getApps } from 'firebase/app';
 import {
   getAuth,
+  initializeAuth,
+  indexedDBLocalPersistence,
+  browserLocalPersistence,
   onAuthStateChanged,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
@@ -14,6 +17,8 @@ import {
   initializeFirestore,
   persistentLocalCache,
   persistentMultipleTabManager,
+  disableNetwork,
+  enableNetwork,
   collection,
   doc,
   addDoc,
@@ -88,11 +93,27 @@ const firebaseConfig = {
 
 let _firebaseApp = null;
 let _firestore = null;
+let _authInstance = null;
 function getFirebaseApp() {
     if (!_firebaseApp) {
         _firebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
     }
     return _firebaseApp;
+}
+
+function getFirebaseAuthWithPersistentCache(app) {
+    if (_authInstance) return _authInstance;
+    try {
+        // Make Safari's durable stores explicit. IndexedDB is preferred for
+        // offline reloads, with localStorage as the supported fallback.
+        _authInstance = initializeAuth(app, {
+            persistence: [indexedDBLocalPersistence, browserLocalPersistence],
+        });
+    } catch (error) {
+        // Firebase may already have initialized Auth through another bundle.
+        _authInstance = getAuth(app);
+    }
+    return _authInstance;
 }
 
 function getFirestoreWithPersistentCache(app) {
@@ -1951,14 +1972,23 @@ async function _getStorage() {
 		}, [error]);
 
           useEffect(() => {
-            const updateOnlineStatus = () => setIsOnline(navigator.onLine);
-            window.addEventListener('online', updateOnlineStatus);
-            window.addEventListener('offline', updateOnlineStatus);
-            return () => {
-              window.removeEventListener('online', updateOnlineStatus);
-              window.removeEventListener('offline', updateOnlineStatus);
+            const syncFirestoreNetwork = () => {
+              const online = navigator.onLine;
+              setIsOnline(online);
+              if (!db) return;
+              const networkPromise = online ? enableNetwork(db) : disableNetwork(db);
+              networkPromise.catch((networkError) => {
+                console.warn(`Firestore ${online ? '重新連線' : '離線'}切換失敗：`, networkError);
+              });
             };
-          }, []);
+            syncFirestoreNetwork();
+            window.addEventListener('online', syncFirestoreNetwork);
+            window.addEventListener('offline', syncFirestoreNetwork);
+            return () => {
+              window.removeEventListener('online', syncFirestoreNetwork);
+              window.removeEventListener('offline', syncFirestoreNetwork);
+            };
+          }, [db]);
 		
           // --- 1. Firebase 初始化與驗證（支援 /g/短代碼） ---
           useEffect(() => {
@@ -1970,7 +2000,7 @@ async function _getStorage() {
 
             try {
               const app = getFirebaseApp();
-              const _auth = getAuth(app);
+              const _auth = getFirebaseAuthWithPersistentCache(app);
               const _db = getFirestoreWithPersistentCache(app);
 
               setDb(_db);
