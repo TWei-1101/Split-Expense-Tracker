@@ -95,3 +95,9 @@ test('uses durable Auth persistence and explicitly switches Firestore networking
   assert.match(source, /online \? enableNetwork\(db\) : disableNetwork\(db\)/);
   assert.match(source, /window\.addEventListener\('online', syncFirestoreNetwork\)/);
 });
+
+test('uses single-tab Firestore persistence to avoid Safari duplicate listener targets', async () => {
+  const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  assert.match(source, /localCache: persistentLocalCache\(\)/);
+  assert.doesNotMatch(source, /persistentMultipleTabManager/);
+});

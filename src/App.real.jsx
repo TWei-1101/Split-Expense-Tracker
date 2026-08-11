@@ -16,7 +16,6 @@ import {
   getFirestore,
   initializeFirestore,
   persistentLocalCache,
-  persistentMultipleTabManager,
   disableNetwork,
   enableNetwork,
   collection,
@@ -165,7 +164,11 @@ function getFirestoreWithPersistentCache(app) {
     }
     try {
         _firestore = initializeFirestore(app, {
-            localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+            // Safari's page restore can be reported as a second active tab by
+            // the multi-tab coordinator, which then duplicates Firestore
+            // listen targets. This app only needs durable offline storage, so
+            // retain IndexedDB while keeping its listeners single-tab.
+            localCache: persistentLocalCache(),
         });
     } catch (error) {
         // Private/locked-down browsers can reject IndexedDB. Keep online use working.
