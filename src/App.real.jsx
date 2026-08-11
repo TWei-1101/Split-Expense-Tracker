@@ -3563,93 +3563,22 @@ async function _getStorage() {
 
 			// 返回自己的記帳簿（加入 confirm modal）
 			const handleReturnToOwn = useCallback(() => {
-			  if (!db || !userId) return;
+			  if (!userId) return;
 
-			  const onConfirm = async () => {
+			  const onConfirm = () => {
 				closeConfirmModal();
-
-				try {
-				  setIsLoading(true);
-				  setError(null);
-
-				  // Returning to the user's own book is a local navigation. It must
-				  // not wait for Firestore: Safari can keep a recovered connection in
-				  // its retry window even though this book is already in local cache.
-				  const cachedSession = readCachedSignedInUser();
-				  const cachedOwnShortCode = cachedSession?.uid === userId
-					? cachedSession.ownShortCode
-					: null;
-				  if (cachedOwnShortCode) {
-					cacheSignedInUser({ uid: userId, isAnonymous: false }, {
-					  collectionId: userId,
-					  shortCode: cachedOwnShortCode,
-					  ownShortCode: cachedOwnShortCode,
-					});
-					const url = new URL(window.location.href);
-					const rootPath = url.pathname.includes('/g/')
-					  ? url.pathname.slice(0, url.pathname.indexOf('/g/'))
-					  : url.pathname;
-					window.location.replace(`${rootPath.endsWith('/') ? rootPath : `${rootPath}/`}g/${cachedOwnShortCode}`);
-					return;
-				  }
-				  // Only the legacy cache-miss path switches in place. The normal
-				  // path above navigates before React can create new listeners.
-				  setGroupOwner(null);
-				  setGroupMembers([]);
-				  setCurrentCollectionId(userId);
-				  setCurrentCollectionShortCode(null);
-
-				  const usersCollectionPath = `artifacts/${appId}/users`;
-				  const usersRef = collection(db, usersCollectionPath);
-				  const myDocRef = doc(usersRef, userId);
-				  const mySnap = await getDoc(myDocRef);
-
-				  let myShortCode = null;
-
-			  if (mySnap.exists()) {
-					const data = mySnap.data() || {};
-					myShortCode = data.shortCode || null;
-				  }
-
-				  // 如果還沒有 shortCode，就幫自己產生一個
-				  if (!myShortCode) {
-					myShortCode = generateShortCode();
-					await setDoc(
-					  myDocRef,
-					  {
-						shortCode: myShortCode,
-						createdAt: serverTimestamp(),
-					  },
-					  { merge: true }
-					);
-				  }
-
-				  setCurrentCollectionShortCode(myShortCode);
-				  cacheSignedInUser({ uid: userId, isAnonymous: false }, {
-					collectionId: userId,
-					shortCode: myShortCode,
-					ownShortCode: myShortCode,
-				  });
-
-				  // 更新網址為 /g/自己的 shortCode（不重整頁面）
-				  const url = new URL(window.location.href);
-				  let rootPath = url.pathname;
-				  const marker = '/g/';
-				  const idx = rootPath.indexOf(marker);
-				  if (idx !== -1) {
-					rootPath = rootPath.slice(0, idx);
-				  }
-				  if (!rootPath.endsWith('/')) {
-					rootPath = rootPath + '/';
-				  }
-				  const newUrl = `${rootPath}g/${myShortCode}`;
-				  window.history.replaceState(null, '', newUrl);
-				} catch (e) {
-				  console.error('handleReturnToOwn error:', e);
-				  setError(`返回自己的記帳簿失敗：${e.message}`);
-				} finally {
-				  setIsLoading(false);
-				}
+				// This deliberately mirrors opening the bare site URL, which is the
+				// Safari flow already verified to open the user's own book. Do not
+				// touch Firestore, React group state, or the cached share code here.
+				const ownBookUrl = new URL(window.location.href);
+				const shareMarker = '/g/';
+				const shareIndex = ownBookUrl.pathname.indexOf(shareMarker);
+				ownBookUrl.pathname = shareIndex === -1
+				  ? ownBookUrl.pathname
+				  : ownBookUrl.pathname.slice(0, shareIndex) || '/';
+				ownBookUrl.search = '';
+				ownBookUrl.hash = '';
+				window.location.assign(ownBookUrl.toString());
 			  };
 
 			  openConfirmModal(
@@ -3658,16 +3587,9 @@ async function _getStorage() {
 				onConfirm
 			  );
 			}, [
-			  db,
 			  userId,
 			  openConfirmModal,
 			  closeConfirmModal,
-			  setIsLoading,
-			  setError,
-			  setCurrentCollectionId,
-			  setCurrentCollectionShortCode,
-			  setGroupOwner,
-			  setGroupMembers,
 			]);
 
           if (!authReady) {
