@@ -78,6 +78,12 @@ test('returns to the own book before waiting on Firestore for its share code', a
   assert.match(returnHandler, /cacheSignedInUser\(\{ uid: userId, isAnonymous: false \}, \{[\s\S]*?ownShortCode: myShortCode,/);
 });
 
+test('reloads the cached own book instead of switching Firestore listeners in place', async () => {
+  const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  const returnHandler = source.slice(source.indexOf('const handleReturnToOwn'));
+  assert.match(returnHandler, /if \(cachedOwnShortCode\) \{[\s\S]*?window\.location\.replace\([\s\S]*?return;[\s\S]*?const usersCollectionPath/);
+});
+
 test('uses Firestore cached snapshots rather than Safari navigator.onLine to show offline status', async () => {
   const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
   assert.match(source, /onSnapshot\(expensesRef, \{ includeMetadataChanges: true \}, \(snapshot\) => \{[\s\S]*?setIsOnline\(!snapshot\.metadata\.fromCache\)/);

@@ -3580,6 +3580,19 @@ async function _getStorage() {
 				  setGroupMembers([]);
 				  setCurrentCollectionId(userId);
 				  setCurrentCollectionShortCode(cachedOwnShortCode || null);
+				  if (cachedOwnShortCode) {
+					cacheSignedInUser({ uid: userId, isAnonymous: false }, {
+					  collectionId: userId,
+					  shortCode: cachedOwnShortCode,
+					  ownShortCode: cachedOwnShortCode,
+					});
+					const url = new URL(window.location.href);
+					const rootPath = url.pathname.includes('/g/')
+					  ? url.pathname.slice(0, url.pathname.indexOf('/g/'))
+					  : url.pathname;
+					window.location.replace(`${rootPath.endsWith('/') ? rootPath : `${rootPath}/`}g/${cachedOwnShortCode}`);
+					return;
+				  }
 
 				  const usersCollectionPath = `artifacts/${appId}/users`;
 				  const usersRef = collection(db, usersCollectionPath);
