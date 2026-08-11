@@ -39,11 +39,10 @@ test('places the offline sync status beside the balance summary heading', async 
   assert.match(balanceSummary, /結餘總結[\s\S]*role="status"/);
 });
 
-test('keeps the expense form open after an offline save and prevents a duplicate submit', async () => {
+test('automatically closes the expense form after an offline save', async () => {
   const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
-  assert.match(source, /if \(queued\) \{\s*setOfflineSaveMessage\([\s\S]*?\} else \{\s*onClose\(\);/);
-  assert.match(source, /Boolean\(offlineSaveMessage\)/);
-  assert.match(source, /已暫存，請關閉/);
+  assert.match(source, /onExpenseSaved\?\.\(\{ queued: !isOnline, isEditing \}\);\s*onClose\(\);/);
+  assert.doesNotMatch(source, /offlineSaveMessage/);
 });
 
 test('activates the latest service worker immediately for offline launches', async () => {

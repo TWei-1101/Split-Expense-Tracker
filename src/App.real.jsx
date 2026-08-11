@@ -637,7 +637,6 @@ async function _getStorage() {
             const [removeExistingImage, setRemoveExistingImage] = useState(false);
             const [isLoadingModal, setIsLoadingModal] = useState(false);
             const [modalError, setModalError] = useState(null);
-            const [offlineSaveMessage, setOfflineSaveMessage] = useState(null);
             const [uploadStatus, setUploadStatus] = useState('');
             const [duplicateCandidates, setDuplicateCandidates] = useState([]);
             const { isPresent: isExpenseModalPresent, isEntering: isExpenseModalEntering, isExiting: isExpenseModalExiting } = useAnimatedPresence(state.isOpen);
@@ -736,7 +735,6 @@ async function _getStorage() {
                     setImageFile(null);
                     setRemoveExistingImage(false);
                     setModalError(null);
-                    setOfflineSaveMessage(null);
                     setUploadStatus('');
                     setDuplicateCandidates([]);
                 }
@@ -1016,13 +1014,8 @@ async function _getStorage() {
                         await setDoc(docRef, expenseToSave);
                     }
 
-                    const queued = !isOnline;
-                    onExpenseSaved?.({ queued, isEditing });
-                    if (queued) {
-                        setOfflineSaveMessage('這筆支出已儲存在本機，恢復連線後會自動同步。');
-                    } else {
-                        onClose();
-                    }
+                    onExpenseSaved?.({ queued: !isOnline, isEditing });
+                    onClose();
                 } catch (e) {
                     console.error("Error saving document: ", e);
                     setModalError(`儲存支出失敗: ${e.message}`);
@@ -1057,7 +1050,6 @@ async function _getStorage() {
                   {/* 中間內容：可滾動 (flex-1 overflow-y-auto) */}
                   <div className="p-6 space-y-5 flex-1 overflow-y-auto">
                     {modalError && <p className="text-red-600 bg-red-100 p-3 rounded-lg text-sm">{modalError}</p>}
-                    {offlineSaveMessage && <p role="status" className="bg-amber-50 p-3 text-sm text-amber-800 rounded-lg">{offlineSaveMessage}</p>}
                     {uploadStatus && <p className="text-primaryColor-700 bg-primaryColor-50 p-3 rounded-lg text-sm">{uploadStatus}</p>}
                     
                     {/* 1. 品項與金額 */}
@@ -1348,15 +1340,15 @@ async function _getStorage() {
 				  <div className="p-6 border-t flex justify-end flex-shrink-0">
 					  <button
 						onClick={saveExpense}
-						disabled={isReadOnly || isLoadingModal || Boolean(offlineSaveMessage) || !newExpense.description.trim() || newExpense.originalAmount <= 0 || !newExpense.payerName}
+						disabled={isReadOnly || isLoadingModal || !newExpense.description.trim() || newExpense.originalAmount <= 0 || !newExpense.payerName}
 						className={
 						  "flex items-center px-6 py-3 rounded-full text-white font-semibold transition duration-150 shadow-md " +
-						  ((isReadOnly || isLoadingModal || offlineSaveMessage || !newExpense.description.trim() || newExpense.originalAmount <= 0 || !newExpense.payerName)
+						  ((isReadOnly || isLoadingModal || !newExpense.description.trim() || newExpense.originalAmount <= 0 || !newExpense.payerName)
 							? "bg-gray-400 cursor-not-allowed"
 							: "bg-primaryColor-600 hover:bg-primaryColor-700 hover:shadow-lg")
 						}
 					  >
-						{isLoadingModal ? '儲存中...' : offlineSaveMessage ? '已暫存，請關閉' : (
+						{isLoadingModal ? '儲存中...' : (
 						  <>
 							<CircleCheck className="w-5 h-5 mr-2" />
 							{submitText}
