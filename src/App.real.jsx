@@ -2147,7 +2147,7 @@ async function _getStorage() {
                         // to avoid re-registering listeners. Once Auth has
                         // resolved the user's own short code, restore the
                         // canonical share URL without a navigation.
-                        if (!shortCodeFromPath && !shareId && myShortCode) {
+                        if (navigator.onLine && !shortCodeFromPath && !shareId && myShortCode) {
                           const rootPath = (url.pathname || '/').endsWith('/')
                             ? (url.pathname || '/')
                             : `${url.pathname}/`;
@@ -3562,9 +3562,19 @@ async function _getStorage() {
 				const ownBookUrl = new URL(window.location.href);
 				const shareMarker = '/g/';
 				const shareIndex = ownBookUrl.pathname.indexOf(shareMarker);
-				ownBookUrl.pathname = shareIndex === -1
+				const rootPath = shareIndex === -1
 				  ? ownBookUrl.pathname
 				  : ownBookUrl.pathname.slice(0, shareIndex) || '/';
+				const cachedSession = readCachedSignedInUser();
+				const ownShortCode = cachedSession?.uid === userId
+				  ? cachedSession.ownShortCode
+				  : null;
+				if (!navigator.onLine && !ownShortCode) {
+				  setError('離線時找不到自己的帳本快取，請先恢復連線後再返回。');
+				  return;
+				}
+				const normalizedRoot = rootPath.endsWith('/') ? rootPath : `${rootPath}/`;
+				ownBookUrl.pathname = ownShortCode ? `${normalizedRoot}g/${ownShortCode}` : normalizedRoot;
 				ownBookUrl.search = '';
 				ownBookUrl.hash = '';
 				window.location.assign(ownBookUrl.toString());
@@ -3579,6 +3589,7 @@ async function _getStorage() {
 			  userId,
 			  openConfirmModal,
 			  closeConfirmModal,
+			  setError,
 			]);
 
           if (!authReady) {
