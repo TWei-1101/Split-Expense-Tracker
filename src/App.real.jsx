@@ -617,7 +617,7 @@ async function _getStorage() {
 		/**
          * 支出 Modal (核心邏輯獨立)
          */
-        const ExpenseModal = memo(({ db, currentUserId, members, expenses, luggage, getInitialShares, state, onClose, getDisplayName, isReadOnly, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel, isOnline, onExpenseSaved}) => {
+        const ExpenseModal = memo(({ db, currentUserId, members, expenses, luggage, getInitialShares, state, onClose, getDisplayName, isReadOnly, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel, isOnline, onExpenseSaved, onExpenseSaveFailed }) => {
             const [newExpense, setNewExpense] = useState({
                 description: '',
                 originalAmount: '',
@@ -1013,20 +1013,15 @@ async function _getStorage() {
                       ? updateDoc(docRef, expenseToSave)
                       : setDoc(docRef, expenseToSave);
 
-                    if (!isOnline) {
-                        // Firestore has accepted the write into its local queue at this point,
-                        // but its Promise waits for a server acknowledgement that cannot arrive
-                        // while offline. Close immediately instead of leaving the form stuck.
-                        writePromise.catch((writeError) => {
-                          console.error('離線暫存支出失敗：', writeError);
-                        });
-                        onExpenseSaved?.({ queued: true, isEditing });
-                        onClose();
-                        return;
-                    }
-
-                    await writePromise;
-                    onExpenseSaved?.({ queued: false, isEditing });
+                    // A Firestore write is queued locally before this Promise resolves. The
+                    // Promise itself waits for a server acknowledgement, which can hang when
+                    // Safari reports an interface as online but the network is unreachable.
+                    // Close on the local enqueue; report a later rejected write globally.
+                    writePromise.catch((writeError) => {
+                      console.error('支出同步失敗：', writeError);
+                      onExpenseSaveFailed?.(writeError);
+                    });
+                    onExpenseSaved?.({ queued: !isOnline, isEditing });
                     onClose();
                 } catch (e) {
                     console.error("Error saving document: ", e);
@@ -1991,6 +1986,16 @@ async function _getStorage() {
                     const isAnon = user.isAnonymous; // NEW: 檢查是否為匿名用戶
                     setUserId(user.uid);
                     setIsGuest(isAnon); // NEW: 設定訪客狀態
+
+                    // A signed-in user's own book is already known. Do not wait for any
+                    // network read before rendering it: Safari can restore Firebase Auth from
+                    // disk while its Firestore reads remain pending offline.
+                    const initialUrl = new URL(window.location.href);
+                    const hasExplicitSharedBook = initialUrl.pathname.includes('/g/') || initialUrl.searchParams.has('shareId');
+                    if (!hasExplicitSharedBook) {
+                      setCurrentCollectionId((prev) => prev || user.uid);
+                      setAuthReady(true);
+                    }
 
                     // 1. 先幫登入者自己建立 / 補上短代碼
                     let myShortCode = null;
@@ -3930,6 +3935,7 @@ async function _getStorage() {
                     onExpenseSaved={({ queued, isEditing }) => setToastMessage(queued
                       ? `📥 ${isEditing ? '修改' : '新增'}已儲存於本機，恢復連線後會自動同步。`
                       : `✅ 支出${isEditing ? '修改' : '新增'}完成。`)}
+                    onExpenseSaveFailed={(writeError) => setError(`支出同步失敗：${writeError.message}`)}
                 />
                 <MemberManagementModal 
                     db={db}

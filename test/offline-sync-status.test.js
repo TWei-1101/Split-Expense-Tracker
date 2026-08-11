@@ -41,8 +41,9 @@ test('places the offline sync status beside the balance summary heading', async 
 
 test('automatically closes the expense form after an offline save', async () => {
   const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
-  assert.match(source, /if \(!isOnline\) \{[\s\S]*?onExpenseSaved\?\.\(\{ queued: true, isEditing \}\);\s*onClose\(\);\s*return;/);
   assert.match(source, /const writePromise = isEditing/);
+  assert.match(source, /writePromise\.catch\([\s\S]*?onExpenseSaved\?\.\(\{ queued: !isOnline, isEditing \}\);\s*onClose\(\);/);
+  assert.doesNotMatch(source, /await writePromise/);
   assert.doesNotMatch(source, /offlineSaveMessage/);
 });
 
@@ -54,4 +55,9 @@ test('activates the latest service worker immediately for offline launches', asy
 test('registers the service worker immediately so the first online launch primes offline access', async () => {
   const source = await readFile(new URL('../src/main.jsx', import.meta.url), 'utf8');
   assert.match(source, /registerSW\(\{\s*immediate: true,/);
+});
+
+test('does not block a cached signed-in user from opening their own book offline', async () => {
+  const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  assert.match(source, /const hasExplicitSharedBook = initialUrl\.pathname\.includes\('\/g\/'\)[\s\S]*?if \(!hasExplicitSharedBook\) \{\s*setCurrentCollectionId\(\(prev\) => prev \|\| user\.uid\);\s*setAuthReady\(true\);/);
 });
