@@ -41,11 +41,17 @@ test('places the offline sync status beside the balance summary heading', async 
 
 test('automatically closes the expense form after an offline save', async () => {
   const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
-  assert.match(source, /onExpenseSaved\?\.\(\{ queued: !isOnline, isEditing \}\);\s*onClose\(\);/);
+  assert.match(source, /if \(!isOnline\) \{[\s\S]*?onExpenseSaved\?\.\(\{ queued: true, isEditing \}\);\s*onClose\(\);\s*return;/);
+  assert.match(source, /const writePromise = isEditing/);
   assert.doesNotMatch(source, /offlineSaveMessage/);
 });
 
 test('activates the latest service worker immediately for offline launches', async () => {
   const config = await readFile(new URL('../vite.config.js', import.meta.url), 'utf8');
   assert.match(config, /registerType:\s*'autoUpdate'/);
+});
+
+test('registers the service worker immediately so the first online launch primes offline access', async () => {
+  const source = await readFile(new URL('../src/main.jsx', import.meta.url), 'utf8');
+  assert.match(source, /registerSW\(\{\s*immediate: true,/);
 });

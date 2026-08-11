@@ -7,6 +7,13 @@ function deletedAtToMillis(deletedAt) {
   return 0;
 }
 
+export function sortRecycleBinRecordsNewestFirst(records = []) {
+  return [...records].sort((a, b) => {
+    const byDeletedAt = deletedAtToMillis(b?.deletedAt) - deletedAtToMillis(a?.deletedAt);
+    return byDeletedAt || String(b?.id || '').localeCompare(String(a?.id || ''));
+  });
+}
+
 export function createRecycleBinRecord({ expense, deletedAt }) {
   return { id: expense.id, deletedAt, expense: { ...expense } };
 }

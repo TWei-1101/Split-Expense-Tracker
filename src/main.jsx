@@ -5,6 +5,7 @@ import App from './App.jsx'
 import TelegramWrapper from './TelegramWrapper.jsx'
 
 const updateSW = registerSW({
+  immediate: true,
   onNeedRefresh() {
     if (window.confirm('分帳記帳簿有新版本，現在更新嗎？')) updateSW(true);
   },

@@ -4,6 +4,7 @@ import {
   buildExpiredRecycleBinCleanupPlan,
   createRecycleBinRecord,
   isRecycleBinRecordExpired,
+  sortRecycleBinRecordsNewestFirst,
 } from '../src/lib/expense-recycle-bin.js';
 
 test('移入回收桶會保留原始 id、完整支出資料與刪除時間', () => {
@@ -13,6 +14,17 @@ test('移入回收桶會保留原始 id、完整支出資料與刪除時間', ()
   assert.equal(record.id, 'expense-1');
   assert.equal(record.deletedAt, 123456);
   assert.deepEqual(record.expense, expense);
+});
+
+test('回收桶依刪除時間由新到舊排序，沒有時間的項目排最後', () => {
+  const sorted = sortRecycleBinRecordsNewestFirst([
+    { id: 'old', deletedAt: 100 },
+    { id: 'unknown', deletedAt: null },
+    { id: 'new', deletedAt: { toMillis: () => 300 } },
+    { id: 'middle', deletedAt: new Date(200) },
+  ]);
+
+  assert.deepEqual(sorted.map(record => record.id), ['new', 'middle', 'old', 'unknown']);
 });
 
 test('僅刪除超過 30 天的回收桶紀錄，並以小於 500 筆的批次規劃', () => {

@@ -68,6 +68,7 @@ import {
 import {
   buildExpiredRecycleBinCleanupPlan,
   createRecycleBinRecord,
+  sortRecycleBinRecordsNewestFirst,
 } from './lib/expense-recycle-bin.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
@@ -1008,13 +1009,24 @@ async function _getStorage() {
                         ...imageFields,
                     };
 
-                    if (isEditing) {
-                        await updateDoc(docRef, expenseToSave);
-                    } else {
-                        await setDoc(docRef, expenseToSave);
+                    const writePromise = isEditing
+                      ? updateDoc(docRef, expenseToSave)
+                      : setDoc(docRef, expenseToSave);
+
+                    if (!isOnline) {
+                        // Firestore has accepted the write into its local queue at this point,
+                        // but its Promise waits for a server acknowledgement that cannot arrive
+                        // while offline. Close immediately instead of leaving the form stuck.
+                        writePromise.catch((writeError) => {
+                          console.error('離線暫存支出失敗：', writeError);
+                        });
+                        onExpenseSaved?.({ queued: true, isEditing });
+                        onClose();
+                        return;
                     }
 
-                    onExpenseSaved?.({ queued: !isOnline, isEditing });
+                    await writePromise;
+                    onExpenseSaved?.({ queued: false, isEditing });
                     onClose();
                 } catch (e) {
                     console.error("Error saving document: ", e);
@@ -1821,7 +1833,11 @@ async function _getStorage() {
 
           const [expenses, setExpenses] = useState([]);
 		  const [recycleBinExpenses, setRecycleBinExpenses] = useState([]);
-		  const [isRecycleBinModalOpen, setIsRecycleBinModalOpen] = useState(false);
+          const sortedRecycleBinExpenses = useMemo(
+            () => sortRecycleBinRecordsNewestFirst(recycleBinExpenses),
+            [recycleBinExpenses],
+          );
+          const [isRecycleBinModalOpen, setIsRecycleBinModalOpen] = useState(false);
 		  const [pendingRecycleBinExpenseIds, setPendingRecycleBinExpenseIds] = useState(() => new Set());
           const [luggage, setLuggage] = useState([]);
           const [isLuggageModalOpen, setIsLuggageModalOpen] = useState(false);
@@ -3944,7 +3960,7 @@ async function _getStorage() {
 				<AnimatedModalFrame isOpen={isRecycleBinModalOpen} onClose={() => setIsRecycleBinModalOpen(false)} ariaLabel="支出回收桶" contentClassName="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white shadow-2xl">
 					  <div className="flex items-center justify-between border-b p-5"><div><h2 className="text-xl font-bold text-gray-800">♻️ 支出回收桶</h2><p className="mt-1 text-sm text-gray-500">項目會保留 30 天，之後自動永久清除。</p></div><button onClick={() => setIsRecycleBinModalOpen(false)} className="rounded-full p-2 text-gray-500 hover:bg-gray-100" aria-label="關閉回收桶">✕</button></div>
 					  <div className="space-y-3 p-5">
-						{recycleBinExpenses.length === 0 ? <p className="text-sm text-gray-500">回收桶目前是空的。</p> : recycleBinExpenses.map(record => {
+						{sortedRecycleBinExpenses.length === 0 ? <p className="text-sm text-gray-500">回收桶目前是空的。</p> : sortedRecycleBinExpenses.map(record => {
 						  const expense = record.expense || {};
 						  const deletedDate = record.deletedAt?.toDate ? record.deletedAt.toDate() : (record.deletedAt ? new Date(record.deletedAt) : null);
 						  return <div key={record.id} className={`recycle-bin-card rounded-lg border border-gray-200 p-3 ${pendingRecycleBinExpenseIds.has(record.id) ? 'recycle-bin-card--exiting' : ''}`}><p className="font-semibold text-gray-800">{expense.description || '未命名支出'}</p><p className="mt-1 text-sm text-gray-600">{expense.currency || DEFAULT_CURRENCY} {Math.round(expense.originalAmount ?? expense.amount ?? 0).toLocaleString('zh-TW')}</p>{deletedDate && <p className="mt-1 text-xs text-gray-500">刪除於：{deletedDate.toLocaleString('zh-TW')}</p>}<div className="mt-3 flex gap-3"><button onClick={() => restoreRecycleBinExpense(record)} disabled={isLoading || isReadOnly || pendingRecycleBinExpenseIds.has(record.id)} className="text-sm font-semibold text-primaryColor-700 disabled:text-gray-400">還原</button><button onClick={() => permanentlyDeleteRecycleBinExpense(record)} disabled={isLoading || isReadOnly || pendingRecycleBinExpenseIds.has(record.id)} className="text-sm font-semibold text-red-600 disabled:text-gray-400">永久刪除</button></div></div>;
