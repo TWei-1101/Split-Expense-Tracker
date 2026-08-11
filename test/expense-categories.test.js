@@ -69,10 +69,9 @@ test('退稅資訊不改變分類分攤金額', () => {
   assert.equal(spending.b.food, 500);
 });
 
-test('支出表單提供分類手動調整，總覽呈現各成員分類支出', () => {
+test('支出表單提供分類手動調整，所有支出提供分類篩選', () => {
   const appSource = readFileSync(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
   assert.match(appSource, /htmlFor="expense-category"/);
   assert.match(appSource, /setCategoryWasManuallySelected\(true\)/);
-  assert.match(appSource, /各成員分類支出/);
-  assert.match(appSource, /calculateMemberCategorySpending/);
+  assert.match(appSource, /aria-label="支出分類篩選"/);
 });

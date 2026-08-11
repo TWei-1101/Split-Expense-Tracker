@@ -58,7 +58,6 @@ import {
   normalizeExpenseCategory,
   toggleExpenseCategoryFilter,
   filterExpensesByCategory,
-  calculateMemberCategorySpending,
 } from './lib/expense-categories.js';
 import { expenseTimestampToDate, findDuplicateExpenses } from './lib/duplicate-expenses.js';
 import {
@@ -3519,11 +3518,6 @@ async function _getStorage() {
             [expenses],
           );
 
-          const memberCategorySpending = useMemo(
-            () => calculateMemberCategorySpending({ members, expenses }),
-            [members, expenses],
-          );
-
           const calculateSettlements = useMemo(() => {
             const balances = calculateBalances;
             const settlements = [];
@@ -4070,7 +4064,6 @@ async function _getStorage() {
                     isReadOnly={isReadOnly}
                     settleMemberDebt={settleMemberDebt}
                     pendingTaxRefundInTWD={pendingTaxRefundInTWD}
-                    memberCategorySpending={memberCategorySpending}
                     offlineSyncStatus={offlineSyncStatus}
                 />
                 {expenses.some((expense) => getExpenseLuggageId(expense)) && <button type="button" onClick={() => setIsLuggageItemsModalOpen(true)} className="mt-6 flex w-full items-center justify-between rounded-xl bg-white p-5 text-left shadow-lg transition hover:bg-gray-50" aria-label="查看行李箱商品"><span className="text-lg font-bold text-gray-800">🧳 行李箱商品</span><span className="text-sm font-medium text-primaryColor-700">查看</span></button>}
@@ -4279,10 +4272,11 @@ async function _getStorage() {
 
             }, [expenses, searchKeyword, filterCategory, filterPayer, getPayerLabel]); // ✨ 依賴篩選條件 + getPayerLabel
 
-            // ✨ NEW: 計算每人分攤到的花費金額 (TWD)。不受 searchKeyword 影響。
+            // 每人分攤金額會跟隨「所有支出」的分類篩選；搜尋與付款人篩選只影響清單。
+            const spendingExpenses = useMemo(() => filterExpensesByCategory(expenses, filterCategory), [expenses, filterCategory]);
             const memberSpending = useMemo(() => {
                 const totals = {};
-                for (const exp of expenses) {
+                for (const exp of spendingExpenses) {
                     const shares = exp.shares || {};
                     const totalShares = Object.values(shares).reduce((s, n) => s + n, 0);
                     if (totalShares <= 0) continue;
@@ -4296,7 +4290,7 @@ async function _getStorage() {
                 return Object.entries(totals)
                     .map(([uid, amt]) => ({ userId: uid, amount: amt, displayName: getDisplayName(uid) }))
                     .sort((a, b) => b.amount - a.amount);
-            }, [expenses, getDisplayName]);
+            }, [spendingExpenses, getDisplayName]);
 
             // 1 人以上才標註「最高花費者」皇冠
             const topSpenderId = memberSpending.length > 1 ? memberSpending[0]?.userId : null;
@@ -4480,7 +4474,7 @@ async function _getStorage() {
                                 每人花費金額
                             </h3>
                             <span className="text-xs text-gray-400">
-                                全部 {expenses.length} 筆 · 合計 TWD {totalSpending.toFixed(0)}
+                                {filterCategory ? `${EXPENSE_CATEGORY_OPTIONS.find(option => option.value === filterCategory)?.label} ${spendingExpenses.length} 筆` : `全部 ${expenses.length} 筆`} · 合計 TWD {totalSpending.toFixed(0)}
                             </span>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
@@ -4698,7 +4692,7 @@ async function _getStorage() {
             );
         });
 
-        const BalanceSummary = memo(({ settlements, balances, members, getDisplayName, isReadOnly, settleMemberDebt, pendingTaxRefundInTWD, memberCategorySpending, offlineSyncStatus }) => {
+        const BalanceSummary = memo(({ settlements, balances, members, getDisplayName, isReadOnly, settleMemberDebt, pendingTaxRefundInTWD, offlineSyncStatus }) => {
             const debtorBalances = useMemo(() => {
                 return members.filter(member => Math.round(balances[member] || 0) < 0)
                                .map(member => ({
@@ -4736,29 +4730,6 @@ async function _getStorage() {
                     <p className="mt-1 text-2xl font-extrabold text-primaryColor-700">TWD {pendingTaxRefundInTWD.toLocaleString('zh-TW', { maximumFractionDigits: 0 })}</p>
                   </div>
                 )}
-
-                <div className="mb-6 overflow-x-auto rounded-xl border border-gray-100">
-                  <table className="w-full min-w-[620px] text-sm">
-                    <caption className="caption-top px-1 pb-3 text-left text-lg font-bold text-gray-800">各成員分類支出</caption>
-                    <thead className="bg-gray-50 text-gray-600">
-                      <tr>
-                        <th className="px-3 py-3 text-left font-semibold">成員</th>
-                        {EXPENSE_CATEGORY_OPTIONS.map(option => <th key={option.value} className="px-3 py-3 text-right font-semibold">{option.label}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {members.map(member => {
-                        const totals = memberCategorySpending?.[member] || {};
-                        return (
-                          <tr key={member} className="text-gray-700">
-                            <td className="px-3 py-3 font-medium whitespace-nowrap">{getDisplayName(member)}</td>
-                            {EXPENSE_CATEGORY_OPTIONS.map(option => <td key={option.value} className="px-3 py-3 text-right whitespace-nowrap">TWD {Math.round(totals[option.value] || 0).toLocaleString('zh-TW')}</td>)}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
 
                 {settlements.length === 0 ? (
                     <p className="text-lg font-medium text-green-600 p-3 bg-green-50 rounded-lg">🎉 所有帳目已結清！</p>
