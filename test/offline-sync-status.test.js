@@ -62,6 +62,19 @@ test('does not block a cached signed-in user from opening their own book offline
   assert.match(source, /const hasExplicitSharedBook = initialUrl\.pathname\.includes\('\/g\/'\)[\s\S]*?if \(!hasExplicitSharedBook\) \{\s*setCurrentCollectionId\(\(prev\) => prev \|\| user\.uid\);\s*setAuthReady\(true\);/);
 });
 
+test('boots a previously verified account before Safari finishes offline Auth restoration', async () => {
+  const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  assert.match(source, /const AUTH_BOOTSTRAP_STORAGE_KEY = 'split-expense-auth-bootstrap-v1'/);
+  assert.match(source, /const cachedSignedInUser = !hasExplicitSharedBook \? readCachedSignedInUser\(\) : null;[\s\S]*?setCurrentCollectionId\(\(prev\) => prev \|\| cachedSignedInUser\.uid\);[\s\S]*?setAuthReady\(true\)/);
+  assert.match(source, /cacheSignedInUser\(user\)/);
+  assert.match(source, /clearCachedSignedInUser\(\);\s*await signOut\(auth\)/);
+});
+
+test('uses Firestore cached snapshots rather than Safari navigator.onLine to show offline status', async () => {
+  const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  assert.match(source, /onSnapshot\(expensesRef, \{ includeMetadataChanges: true \}, \(snapshot\) => \{[\s\S]*?setIsOnline\(!snapshot\.metadata\.fromCache\)/);
+});
+
 test('uses durable Auth persistence and explicitly switches Firestore networking', async () => {
   const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
   assert.match(source, /initializeAuth\(app, \{\s*persistence: \[indexedDBLocalPersistence, browserLocalPersistence\]/);

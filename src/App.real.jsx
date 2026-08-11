@@ -94,6 +94,39 @@ const firebaseConfig = {
 let _firebaseApp = null;
 let _firestore = null;
 let _authInstance = null;
+const AUTH_BOOTSTRAP_STORAGE_KEY = 'split-expense-auth-bootstrap-v1';
+
+function readCachedSignedInUser() {
+    try {
+        const cached = JSON.parse(window.localStorage.getItem(AUTH_BOOTSTRAP_STORAGE_KEY) || 'null');
+        return cached && typeof cached.uid === 'string' && cached.uid ? cached : null;
+    } catch (error) {
+        return null;
+    }
+}
+
+function cacheSignedInUser(user) {
+    try {
+        // Anonymous credentials are intentionally excluded: a stale guest must
+        // never be mistaken for a signed-in account during an offline launch.
+        if (user?.uid && !user.isAnonymous) {
+            window.localStorage.setItem(AUTH_BOOTSTRAP_STORAGE_KEY, JSON.stringify({ uid: user.uid }));
+        } else {
+            window.localStorage.removeItem(AUTH_BOOTSTRAP_STORAGE_KEY);
+        }
+    } catch (error) {
+        // localStorage can be unavailable in private/locked-down contexts.
+    }
+}
+
+function clearCachedSignedInUser() {
+    try {
+        window.localStorage.removeItem(AUTH_BOOTSTRAP_STORAGE_KEY);
+    } catch (error) {
+        // Nothing to clear when storage is unavailable.
+    }
+}
+
 function getFirebaseApp() {
     if (!_firebaseApp) {
         _firebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
@@ -2006,6 +2039,21 @@ async function _getStorage() {
               setDb(_db);
               setAuth(_auth);
 
+              // Safari may take roughly 30 seconds to finish Firebase Auth's
+              // IndexedDB restoration while offline. A previously verified
+              // signed-in account is enough to render its own locally cached
+              // book now; onAuthStateChanged below remains the authority that
+              // reconciles the account once Firebase is ready.
+              const initialUrl = new URL(window.location.href);
+              const hasExplicitSharedBook = initialUrl.pathname.includes('/g/') || initialUrl.searchParams.has('shareId');
+              const cachedSignedInUser = !hasExplicitSharedBook ? readCachedSignedInUser() : null;
+              if (cachedSignedInUser) {
+                setUserId(cachedSignedInUser.uid);
+                setIsGuest(false);
+                setCurrentCollectionId((prev) => prev || cachedSignedInUser.uid);
+                setAuthReady(true);
+              }
+
               const usersCollectionPath = `artifacts/${appId}/users`;
               const usersRef = collection(_db, usersCollectionPath);
 
@@ -2016,6 +2064,7 @@ async function _getStorage() {
                     const isAnon = user.isAnonymous; // NEW: 檢查是否為匿名用戶
                     setUserId(user.uid);
                     setIsGuest(isAnon); // NEW: 設定訪客狀態
+                    cacheSignedInUser(user);
 
                     // A signed-in user's own book is already known. Do not wait for any
                     // network read before rendering it: Safari can restore Firebase Auth from
@@ -2109,6 +2158,7 @@ async function _getStorage() {
                     setCurrentCollectionShortCode(targetShortCode);
                     
                   } else {
+                    clearCachedSignedInUser();
                     // User is signed out. Sign in anonymously for guest view.
                     // (TG Mini App 內跟瀏覽器一樣匿名看、登入用 email/password)
                     const anonUserCredential = await signInAnonymously(_auth);
@@ -2538,10 +2588,11 @@ async function _getStorage() {
 			const logout = useCallback(() => {
 			  if (!auth) return;
 
-			  const onConfirm = async () => {
-				closeConfirmModal();
-				try {
-				  await signOut(auth);
+				  const onConfirm = async () => {
+					closeConfirmModal();
+					try {
+					  clearCachedSignedInUser();
+					  await signOut(auth);
 				  // Note: signOut will trigger onAuthStateChanged to run the anonymous login fallback
 				  setExpenses([]);
 				  setCustomMembers([]);
@@ -2574,9 +2625,13 @@ async function _getStorage() {
             const expensesCollectionPath = getGroupExpensesPath(currentCollectionId);
 			const expensesRef = collection(db, expensesCollectionPath);
 
-            const unsubscribeExpenses = onSnapshot(expensesRef, { includeMetadataChanges: true }, (snapshot) => {
-              setHasPendingExpenseWrites(snapshot.metadata.hasPendingWrites);
-              const fetchedExpenses = snapshot.docs.map(docSnap => {
+			const unsubscribeExpenses = onSnapshot(expensesRef, { includeMetadataChanges: true }, (snapshot) => {
+			  setHasPendingExpenseWrites(snapshot.metadata.hasPendingWrites);
+			  // navigator.onLine is only an interface hint on Safari. Firestore
+			  // explicitly marks a cached-only snapshot, which is the reliable
+			  // state to show after an offline reload.
+			  setIsOnline(!snapshot.metadata.fromCache);
+			  const fetchedExpenses = snapshot.docs.map(docSnap => {
                 const data = docSnap.data();
                 const timestamp = data.timestamp ? data.timestamp.toDate() : null; 
                 
