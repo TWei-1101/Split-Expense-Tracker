@@ -2038,13 +2038,20 @@ async function _getStorage() {
               // URL. Only use the bootstrap cache for that exact previously
               // opened book; a different shared link must never briefly render
               // an unrelated cached book.
-              const cachedBookMatchesUrl = cachedSignedInUser && (
-                !requestedShortCode || requestedShortCode === cachedSignedInUser.shortCode
+              // The bootstrap cache is deliberately scoped to the signed-in
+              // user's own book.  It used to retain the most recently viewed
+              // shared-book collection ID, so an offline reload of the user's
+              // own /g/<short-code> URL could keep the correct URL while
+              // rendering that old shared book.
+              const requestedOwnBook = requestedShortCode
+                && requestedShortCode === cachedSignedInUser?.ownShortCode;
+              const cachedOwnBookMatchesUrl = cachedSignedInUser && (
+                !requestedShortCode || requestedOwnBook
               );
-              if (cachedBookMatchesUrl) {
+              if (cachedOwnBookMatchesUrl) {
                 setUserId(cachedSignedInUser.uid);
                 setIsGuest(false);
-                setCurrentCollectionId((prev) => prev || cachedSignedInUser.collectionId || cachedSignedInUser.uid);
+                setCurrentCollectionId((prev) => prev || cachedSignedInUser.uid);
                 setAuthReady(true);
               }
 
@@ -2159,8 +2166,10 @@ async function _getStorage() {
                     setCurrentCollectionId((prev) => prev || targetCollectionId);
                     setCurrentCollectionShortCode(targetShortCode);
                     cacheSignedInUser(user, {
-                      collectionId: targetCollectionId,
-                      shortCode: targetShortCode,
+                      // Never allow a shared-book visit to overwrite the
+                      // authenticated user's offline bootstrap target.
+                      collectionId: user.uid,
+                      shortCode: myShortCode,
                       ownShortCode: myShortCode,
                     });
                     

@@ -62,13 +62,20 @@ test('does not block a cached signed-in user from opening their own book offline
   assert.match(source, /const hasExplicitSharedBook = initialUrl\.pathname\.includes\('\/g\/'\)[\s\S]*?if \(!hasExplicitSharedBook\) \{\s*setCurrentCollectionId\(\(prev\) => prev \|\| user\.uid\);\s*setAuthReady\(true\);/);
 });
 
-test('boots a previously verified account before Safari finishes offline Auth restoration', async () => {
+test('boots a previously verified account into its own book before Safari finishes offline Auth restoration', async () => {
   const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
   assert.match(source, /const AUTH_BOOTSTRAP_STORAGE_KEY = 'split-expense-auth-bootstrap-v1'/);
-  assert.match(source, /const requestedShortCode = initialUrl\.pathname\.match\([\s\S]*?const cachedBookMatchesUrl = cachedSignedInUser[\s\S]*?requestedShortCode === cachedSignedInUser\.shortCode/);
-  assert.match(source, /setCurrentCollectionId\(\(prev\) => prev \|\| cachedSignedInUser\.collectionId \|\| cachedSignedInUser\.uid\);[\s\S]*?setAuthReady\(true\)/);
-  assert.match(source, /cacheSignedInUser\(user, \{[\s\S]*?collectionId: targetCollectionId,[\s\S]*?shortCode: targetShortCode,[\s\S]*?ownShortCode: myShortCode,/);
+  assert.match(source, /const requestedOwnBook = requestedShortCode[\s\S]*?requestedShortCode === cachedSignedInUser\?\.ownShortCode/);
+  assert.match(source, /const cachedOwnBookMatchesUrl = cachedSignedInUser[\s\S]*?!requestedShortCode \|\| requestedOwnBook/);
+  assert.match(source, /setCurrentCollectionId\(\(prev\) => prev \|\| cachedSignedInUser\.uid\);[\s\S]*?setAuthReady\(true\)/);
+  assert.match(source, /cacheSignedInUser\(user, \{[\s\S]*?collectionId: user\.uid,[\s\S]*?shortCode: myShortCode,[\s\S]*?ownShortCode: myShortCode,/);
   assert.match(source, /clearCachedSignedInUser\(\);\s*await signOut\(auth\)/);
+});
+
+test('never restores a last-viewed shared book for an offline own-book URL', async () => {
+  const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  assert.match(source, /bootstrap cache is deliberately scoped to the signed-in[\s\S]*?setCurrentCollectionId\(\(prev\) => prev \|\| cachedSignedInUser\.uid\)/);
+  assert.doesNotMatch(source, /collectionId: targetCollectionId,\s*shortCode: targetShortCode,\s*ownShortCode: myShortCode/);
 });
 
 test('returns to the own book using the same bare URL flow as a fresh launch', async () => {
