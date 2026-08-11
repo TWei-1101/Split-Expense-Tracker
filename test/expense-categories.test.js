@@ -6,6 +6,8 @@ import {
   inferExpenseCategory,
   resolveExpenseCategory,
   calculateMemberCategorySpending,
+  toggleExpenseCategoryFilter,
+  filterExpensesByCategory,
 } from '../src/lib/expense-categories.js';
 
 test('品項依中英日旅遊關鍵字自動分類，未命中歸其他', () => {
@@ -18,6 +20,21 @@ test('品項依中英日旅遊關鍵字自動分類，未命中歸其他', () =>
 test('新支出描述變更可重算分類，但使用者手動選擇後不被覆蓋', () => {
   assert.equal(resolveExpenseCategory({ description: '咖啡', categoryWasManuallySelected: false }), EXPENSE_CATEGORIES.FOOD);
   assert.equal(resolveExpenseCategory({ description: '咖啡', category: EXPENSE_CATEGORIES.TRANSPORT, categoryWasManuallySelected: true }), EXPENSE_CATEGORIES.TRANSPORT);
+});
+
+test('支出分類篩選可切換、再次點同類別取消，且舊資料歸其他', () => {
+  assert.equal(toggleExpenseCategoryFilter(null, EXPENSE_CATEGORIES.FOOD), EXPENSE_CATEGORIES.FOOD);
+  assert.equal(toggleExpenseCategoryFilter(EXPENSE_CATEGORIES.FOOD, EXPENSE_CATEGORIES.FOOD), null);
+  assert.equal(toggleExpenseCategoryFilter(EXPENSE_CATEGORIES.FOOD, EXPENSE_CATEGORIES.TRANSPORT), EXPENSE_CATEGORIES.TRANSPORT);
+
+  const expenses = [
+    { id: 'food', category: EXPENSE_CATEGORIES.FOOD },
+    { id: 'transport', category: EXPENSE_CATEGORIES.TRANSPORT },
+    { id: 'legacy' },
+  ];
+  assert.deepEqual(filterExpensesByCategory(expenses, EXPENSE_CATEGORIES.FOOD).map(expense => expense.id), ['food']);
+  assert.deepEqual(filterExpensesByCategory(expenses, EXPENSE_CATEGORIES.OTHER).map(expense => expense.id), ['legacy']);
+  assert.equal(filterExpensesByCategory(expenses, null), expenses);
 });
 
 test('各成員分類支出依份數分攤、使用保存的台幣金額，且舊資料歸其他', () => {

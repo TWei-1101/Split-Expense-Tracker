@@ -35,6 +35,17 @@ export function normalizeExpenseCategory(category) {
     : EXPENSE_CATEGORIES.OTHER;
 }
 
+export function toggleExpenseCategoryFilter(activeCategory, category) {
+  const nextCategory = normalizeExpenseCategory(category);
+  return activeCategory === nextCategory ? null : nextCategory;
+}
+
+export function filterExpensesByCategory(expenses = [], category = null) {
+  if (!category) return expenses;
+  const selectedCategory = normalizeExpenseCategory(category);
+  return expenses.filter(expense => normalizeExpenseCategory(expense?.category) === selectedCategory);
+}
+
 export function inferExpenseCategory(description) {
   const normalizedDescription = String(description || '').trim().toLocaleLowerCase();
   if (!normalizedDescription) return EXPENSE_CATEGORIES.OTHER;

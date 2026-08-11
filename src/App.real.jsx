@@ -49,6 +49,8 @@ import {
   EXPENSE_CATEGORY_OPTIONS,
   inferExpenseCategory,
   normalizeExpenseCategory,
+  toggleExpenseCategoryFilter,
+  filterExpensesByCategory,
   calculateMemberCategorySpending,
 } from './lib/expense-categories.js';
 import { expenseTimestampToDate, findDuplicateExpenses } from './lib/duplicate-expenses.js';
@@ -3976,9 +3978,13 @@ async function _getStorage() {
             // ✨ NEW: 點擊「每人花費」卡片 → 切換只顯示該付款人的支出
             // null = 全部；否則存 displayName 或 SELF_PAYER_KEY
             const [filterPayer, setFilterPayer] = useState(null);
+            const [filterCategory, setFilterCategory] = useState(null);
             const luggageById = useMemo(() => new Map(normalizeLuggageList(luggage).map((item) => [item.id, item.name])), [luggage]);
             const togglePayerFilter = (displayName) => {
                 setFilterPayer(prev => (prev === displayName ? null : displayName));
+            };
+            const toggleCategoryFilter = (category) => {
+                setFilterCategory(prev => toggleExpenseCategoryFilter(prev, category));
             };
             const sortedExpenses = useMemo(() => {
                 // 1. Sort by timestamp
@@ -3994,18 +4000,21 @@ async function _getStorage() {
                     ? sorted.filter(exp => (exp.description || '').toLowerCase().includes(kw))
                     : sorted;
 
-                // 3. Filter by filterPayer (AND with searchKeyword)
+                // 3. Filter by category. Legacy records without a category are treated as 「其他」.
+                const categoryFiltered = filterExpensesByCategory(kwFiltered, filterCategory);
+
+                // 4. Filter by filterPayer (AND with searchKeyword and category)
                 // 注意：歷史資料的 exp.payerName 可能是 userId 或 name 兩種形式混雜
                 // 兩邊都用 getDisplayName normalize 後再比對，才不會誤過濾
-                if (!filterPayer) return kwFiltered;
+                if (!filterPayer) return categoryFiltered;
                 if (filterPayer === SELF_PAYER_KEY) {
-                    return kwFiltered.filter(exp => exp.payerName === SELF_PAYER_KEY);
+                    return categoryFiltered.filter(exp => exp.payerName === SELF_PAYER_KEY);
                 }
                 // Per-person filter: include expenses where user paid out-of-pocket OR
                 // it is a 各自付款 expense AND user has shares > 0.
                 // (其他 expense — payer 不是 user，但他有份 — 不應該帶出來；
                 //  user 只是「成本有分攤」，實際沒有先付)
-                return kwFiltered.filter(exp => {
+                return categoryFiltered.filter(exp => {
                     // Case 1: user is the payer
                     if (getPayerLabel(exp.payerName) === filterPayer) return true;
                     // Case 2: 各自付款 + user has shares > 0
@@ -4018,7 +4027,7 @@ async function _getStorage() {
                     return false;
                 });
 
-            }, [expenses, searchKeyword, filterPayer, getPayerLabel]); // ✨ 依賴 filterPayer + getPayerLabel
+            }, [expenses, searchKeyword, filterCategory, filterPayer, getPayerLabel]); // ✨ 依賴篩選條件 + getPayerLabel
 
             // ✨ NEW: 計算每人分攤到的花費金額 (TWD)。不受 searchKeyword 影響。
             const memberSpending = useMemo(() => {
@@ -4057,7 +4066,7 @@ async function _getStorage() {
                 <div className="flex justify-between items-center mb-4">
                   <h2 className="text-2xl font-bold text-gray-800 flex items-center flex-wrap">
                     <CircleDollarSign className="w-7 h-7 mr-3 text-primaryColor-500" />
-                    所有支出 ({sortedExpenses.length}{filterPayer || searchKeyword ? ` / ${expenses.length}` : ''})
+                    所有支出 ({sortedExpenses.length}{filterPayer || filterCategory || searchKeyword ? ` / ${expenses.length}` : ''})
                   </h2>
                   
                   {/* 清除所有資料按鈕 */}
@@ -4086,12 +4095,33 @@ async function _getStorage() {
                       />
                       <Search className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 pointer-events-none" />
                     </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-2" aria-label="支出分類篩選">
+                      <span className="mr-1 text-sm font-medium text-gray-600">分類：</span>
+                      {EXPENSE_CATEGORY_OPTIONS.map(option => {
+                        const isActive = filterCategory === option.value;
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => toggleCategoryFilter(option.value)}
+                            aria-pressed={isActive}
+                            aria-label={isActive ? `取消${option.label}篩選` : `篩選${option.label}支出`}
+                            title={isActive ? `取消「${option.label}」篩選` : `只顯示「${option.label}」支出`}
+                            className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition-colors duration-150 active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-offset-1 ${isActive
+                              ? 'border-primaryColor-600 bg-primaryColor-600 text-white shadow-sm focus:ring-primaryColor-500'
+                              : 'border-gray-300 bg-white text-gray-700 hover:border-primaryColor-400 hover:bg-primaryColor-50 focus:ring-primaryColor-400'}`}
+                          >
+                            {option.label}
+                          </button>
+                        );
+                      })}
+                    </div>
                 </div>
                 
                 {/* 顯示搜尋結果數量提示 */}
-                {searchKeyword.trim() !== '' && expenses.length > sortedExpenses.length && (
+                {(searchKeyword.trim() !== '' || filterCategory) && expenses.length > sortedExpenses.length && (
                     <p className="text-sm text-gray-600 mb-4 italic p-2 bg-gray-100 rounded-lg">
-                        🔍 顯示 {sortedExpenses.length} 筆符合「{searchKeyword}」的結果 (總計 {expenses.length} 筆)。
+                        顯示 {sortedExpenses.length} 筆{searchKeyword.trim() ? `符合「${searchKeyword}」` : ''}{searchKeyword.trim() && filterCategory ? '且' : ''}{filterCategory ? `屬於「${EXPENSE_CATEGORY_OPTIONS.find(option => option.value === filterCategory)?.label}」` : ''}的結果 (總計 {expenses.length} 筆)。
                     </p>
                 )}
 
@@ -4290,6 +4320,8 @@ async function _getStorage() {
                       ? `找不到任何付款人為「${filterPayer}」且符合「${searchKeyword}」的支出記錄。`
                       : filterPayer
                         ? `「${filterPayer}」目前沒有任何支出記錄。`
+                        : filterCategory
+                          ? `目前沒有任何「${EXPENSE_CATEGORY_OPTIONS.find(option => option.value === filterCategory)?.label}」支出記錄。`
                         : searchKeyword.trim()
                           ? `找不到任何符合「${searchKeyword}」的支出記錄。`
                           : '目前沒有任何支出記錄。'}
