@@ -11,6 +11,9 @@ import {
 } from 'firebase/auth';
 import {
   getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   collection,
   doc,
   addDoc,
@@ -29,6 +32,7 @@ import {
   arrayUnion,
   arrayRemove,
 } from 'firebase/firestore';
+import { getOfflineSyncStatus } from './lib/offline-sync-status.js';
 import { detectTelegramMode } from './lib/tg-mode.js';
 import { createTaxRefund, getTaxRefundProfileByCountry, pendingTaxRefundTotalInTWD, TAX_REFUND_PROFILES } from './lib/tax-refund.js';
 import {
@@ -82,11 +86,33 @@ const firebaseConfig = {
 };
 
 let _firebaseApp = null;
+let _firestore = null;
 function getFirebaseApp() {
     if (!_firebaseApp) {
         _firebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
     }
     return _firebaseApp;
+}
+
+function getFirestoreWithPersistentCache(app) {
+    if (_firestore) return _firestore;
+
+    // Firestore owns the offline write queue: local writes are visible to
+    // listeners immediately and the SDK syncs them when connectivity returns.
+    if (typeof indexedDB === 'undefined') {
+        _firestore = getFirestore(app);
+        return _firestore;
+    }
+    try {
+        _firestore = initializeFirestore(app, {
+            localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+        });
+    } catch (error) {
+        // Private/locked-down browsers can reject IndexedDB. Keep online use working.
+        console.warn('無法啟用 Firestore 離線快取，將使用記憶體快取：', error);
+        _firestore = getFirestore(app);
+    }
+    return _firestore;
 }
 
 let _storagePromise = null;
@@ -590,7 +616,7 @@ async function _getStorage() {
 		/**
          * 支出 Modal (核心邏輯獨立)
          */
-        const ExpenseModal = memo(({ db, currentUserId, members, expenses, luggage, getInitialShares, state, onClose, getDisplayName, isReadOnly, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel}) => {
+        const ExpenseModal = memo(({ db, currentUserId, members, expenses, luggage, getInitialShares, state, onClose, getDisplayName, isReadOnly, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel, isOnline, onExpenseSaved}) => {
             const [newExpense, setNewExpense] = useState({
                 description: '',
                 originalAmount: '',
@@ -882,6 +908,11 @@ async function _getStorage() {
                 }
                 if (!db || !currentUserId) return;
 
+                if (!isOnline && imageFile) {
+                    setModalError('離線時無法上傳收據圖片；請先移除圖片，或恢復連線後再儲存。');
+                    return;
+                }
+
                 if (!newExpense.description.trim() || newExpense.originalAmount <= 0 || (newExpense.payerName !== SELF_PAYER_KEY && !newExpense.payerName)) {
                     setModalError('請輸入有效的品項、金額和付款人！');
                     return;
@@ -983,6 +1014,7 @@ async function _getStorage() {
                         await setDoc(docRef, expenseToSave);
                     }
 
+                    onExpenseSaved?.({ queued: !isOnline, isEditing });
                     onClose();
                 } catch (e) {
                     console.error("Error saving document: ", e);
@@ -1809,7 +1841,7 @@ async function _getStorage() {
 		    const groupRef = doc(_db, `artifacts/${appId}/groups/${groupId}`);
 		    const snap = await getDoc(groupRef);
 
-		    if (!snap.exists) {
+		    if (!snap.exists()) {
 			  await setDoc(groupRef, {
 			    owner: uid,
 			    members: [uid],
@@ -1847,7 +1879,7 @@ async function _getStorage() {
 		      if (!owned.length && !invited.length && currentCollectionId) {
 		        try {
 		          const currentSnap = await getDoc(doc(db, `artifacts/${appId}/groups/${currentCollectionId}`));
-		          if (currentSnap.exists) {
+		          if (currentSnap.exists()) {
 		            invited.push({ id: currentSnap.id, data: currentSnap.data() });
 		          }
 		        } catch (loadError) {
@@ -1892,6 +1924,9 @@ async function _getStorage() {
           const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
           const [isLoading, setIsLoading] = useState(false);
           const [error, setError] = useState(null);
+          const [isOnline, setIsOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine);
+          const [hasPendingExpenseWrites, setHasPendingExpenseWrites] = useState(false);
+          const offlineSyncStatus = getOfflineSyncStatus({ isOnline, hasPendingWrites: hasPendingExpenseWrites });
         
 		// 錯誤訊息自動消失
 		useEffect(() => {
@@ -1903,6 +1938,16 @@ async function _getStorage() {
 
 		  return () => clearTimeout(timer);
 		}, [error]);
+
+          useEffect(() => {
+            const updateOnlineStatus = () => setIsOnline(navigator.onLine);
+            window.addEventListener('online', updateOnlineStatus);
+            window.addEventListener('offline', updateOnlineStatus);
+            return () => {
+              window.removeEventListener('online', updateOnlineStatus);
+              window.removeEventListener('offline', updateOnlineStatus);
+            };
+          }, []);
 		
           // --- 1. Firebase 初始化與驗證（支援 /g/短代碼） ---
           useEffect(() => {
@@ -1915,7 +1960,7 @@ async function _getStorage() {
             try {
               const app = getFirebaseApp();
               const _auth = getAuth(app);
-              const _db = getFirestore(app);
+              const _db = getFirestoreWithPersistentCache(app);
 
               setDb(_db);
               setAuth(_auth);
@@ -1936,7 +1981,7 @@ async function _getStorage() {
                     try {
                       const myDocRef = doc(usersRef, user.uid);
                       const mySnap = await getDoc(myDocRef);
-                      if (mySnap.exists) {
+                      if (mySnap.exists()) {
                         const data = mySnap.data() || {};
                         myShortCode = data.shortCode || null;
                       }
@@ -2089,7 +2134,7 @@ async function _getStorage() {
 		  const unsub = onSnapshot(
 			groupDocRef,
 			(snap) => {
-			  if (snap.exists) {
+		  if (snap.exists()) {
 				const data = snap.data();
 				const owner = data.owner || null;
 				const members = Array.isArray(data.members) ? data.members : [];
@@ -2197,7 +2242,7 @@ async function _getStorage() {
 		  if (nextGroupId === userId) {
 		    try {
 		      const userSnap = await getDoc(doc(db, `artifacts/${appId}/users/${userId}`));
-		      setCurrentCollectionShortCode(userSnap.exists ? (userSnap.data()?.shortCode || null) : null);
+		      setCurrentCollectionShortCode(userSnap.exists() ? (userSnap.data()?.shortCode || null) : null);
 		    } catch (switchError) {
 		      console.warn('讀取預設帳本分享代碼失敗：', switchError);
 		    }
@@ -2478,7 +2523,8 @@ async function _getStorage() {
             const expensesCollectionPath = getGroupExpensesPath(currentCollectionId);
 			const expensesRef = collection(db, expensesCollectionPath);
 
-            const unsubscribeExpenses = onSnapshot(expensesRef, (snapshot) => {
+            const unsubscribeExpenses = onSnapshot(expensesRef, { includeMetadataChanges: true }, (snapshot) => {
+              setHasPendingExpenseWrites(snapshot.metadata.hasPendingWrites);
               const fetchedExpenses = snapshot.docs.map(docSnap => {
                 const data = docSnap.data();
                 const timestamp = data.timestamp ? data.timestamp.toDate() : null; 
@@ -2508,6 +2554,7 @@ async function _getStorage() {
                   setError(`資料同步失敗: ${err.message}`);
               }
               setExpenses([]);
+              setHasPendingExpenseWrites(false);
             });
 
 			const recycleBinPath = getGroupRecycleBinPath(currentCollectionId);
@@ -2519,7 +2566,7 @@ async function _getStorage() {
 			const membersDocRef = doc(db, membersDocPath);
 
             const unsubscribeMembers = onSnapshot(membersDocRef, (docSnap) => {
-                if (docSnap.exists) {
+                if (docSnap.exists()) {
                     const data = docSnap.data();
                     const list = Array.isArray(data.list) ? data.list : [];
                     const shares = data.defaultShares || {};
@@ -3408,7 +3455,7 @@ async function _getStorage() {
 
 				  let myShortCode = null;
 
-				  if (mySnap.exists) {
+			  if (mySnap.exists()) {
 					const data = mySnap.data() || {};
 					myShortCode = data.shortCode || null;
 				  }
@@ -3768,6 +3815,20 @@ async function _getStorage() {
                         <p className="text-sm">{error}</p>
                     </div>
                 )}
+
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className={`mt-4 inline-flex items-center rounded-full px-3 py-1.5 text-xs font-semibold ${offlineSyncStatus.kind === 'offline'
+                    ? 'bg-amber-100 text-amber-800'
+                    : offlineSyncStatus.kind === 'syncing'
+                      ? 'bg-blue-100 text-blue-800'
+                      : 'bg-emerald-100 text-emerald-800'}`}
+                  title={offlineSyncStatus.kind === 'synced' ? 'Firestore 已完成目前支出的同步' : offlineSyncStatus.label}
+                >
+                  <span className="mr-1.5" aria-hidden="true">{offlineSyncStatus.kind === 'offline' ? '⚠️' : offlineSyncStatus.kind === 'syncing' ? '↻' : '✓'}</span>
+                  {offlineSyncStatus.label}
+                </div>
                 
                 {/* NEW: 複製連結成功或失敗的訊息提示 (Toast 效果) - 保持全域，用於登入/登出/複製 */}
                 <AnimatedToast message={copyMessage} />
@@ -3862,6 +3923,10 @@ async function _getStorage() {
                     liveExchangeRates={liveExchangeRates}
 					defaultCurrency={defaultCurrency}
 					currentUserLabel={currentUserLabel}
+                    isOnline={isOnline}
+                    onExpenseSaved={({ queued, isEditing }) => setToastMessage(queued
+                      ? `📥 ${isEditing ? '修改' : '新增'}已儲存於本機，恢復連線後會自動同步。`
+                      : `✅ 支出${isEditing ? '修改' : '新增'}完成。`)}
                 />
                 <MemberManagementModal 
                     db={db}
