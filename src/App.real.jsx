@@ -105,12 +105,16 @@ function readCachedSignedInUser() {
     }
 }
 
-function cacheSignedInUser(user) {
+function cacheSignedInUser(user, { collectionId = user?.uid, shortCode = null } = {}) {
     try {
         // Anonymous credentials are intentionally excluded: a stale guest must
         // never be mistaken for a signed-in account during an offline launch.
         if (user?.uid && !user.isAnonymous) {
-            window.localStorage.setItem(AUTH_BOOTSTRAP_STORAGE_KEY, JSON.stringify({ uid: user.uid }));
+            window.localStorage.setItem(AUTH_BOOTSTRAP_STORAGE_KEY, JSON.stringify({
+                uid: user.uid,
+                collectionId: collectionId || user.uid,
+                shortCode: shortCode || null,
+            }));
         } else {
             window.localStorage.removeItem(AUTH_BOOTSTRAP_STORAGE_KEY);
         }
@@ -2045,12 +2049,19 @@ async function _getStorage() {
               // book now; onAuthStateChanged below remains the authority that
               // reconciles the account once Firebase is ready.
               const initialUrl = new URL(window.location.href);
-              const hasExplicitSharedBook = initialUrl.pathname.includes('/g/') || initialUrl.searchParams.has('shareId');
-              const cachedSignedInUser = !hasExplicitSharedBook ? readCachedSignedInUser() : null;
-              if (cachedSignedInUser) {
+              const requestedShortCode = initialUrl.pathname.match(/\/g\/([^/?#]+)/)?.[1] || null;
+              const cachedSignedInUser = readCachedSignedInUser();
+              // A signed-in account normally uses its canonical /g/<short-code>
+              // URL. Only use the bootstrap cache for that exact previously
+              // opened book; a different shared link must never briefly render
+              // an unrelated cached book.
+              const cachedBookMatchesUrl = cachedSignedInUser && (
+                !requestedShortCode || requestedShortCode === cachedSignedInUser.shortCode
+              );
+              if (cachedBookMatchesUrl) {
                 setUserId(cachedSignedInUser.uid);
                 setIsGuest(false);
-                setCurrentCollectionId((prev) => prev || cachedSignedInUser.uid);
+                setCurrentCollectionId((prev) => prev || cachedSignedInUser.collectionId || cachedSignedInUser.uid);
                 setAuthReady(true);
               }
 
@@ -2064,8 +2075,6 @@ async function _getStorage() {
                     const isAnon = user.isAnonymous; // NEW: 檢查是否為匿名用戶
                     setUserId(user.uid);
                     setIsGuest(isAnon); // NEW: 設定訪客狀態
-                    cacheSignedInUser(user);
-
                     // A signed-in user's own book is already known. Do not wait for any
                     // network read before rendering it: Safari can restore Firebase Auth from
                     // disk while its Firestore reads remain pending offline.
@@ -2156,6 +2165,10 @@ async function _getStorage() {
 
                     setCurrentCollectionId((prev) => prev || targetCollectionId);
                     setCurrentCollectionShortCode(targetShortCode);
+                    cacheSignedInUser(user, {
+                      collectionId: targetCollectionId,
+                      shortCode: targetShortCode,
+                    });
                     
                   } else {
                     clearCachedSignedInUser();

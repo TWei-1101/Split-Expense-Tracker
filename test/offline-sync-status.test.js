@@ -65,8 +65,9 @@ test('does not block a cached signed-in user from opening their own book offline
 test('boots a previously verified account before Safari finishes offline Auth restoration', async () => {
   const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
   assert.match(source, /const AUTH_BOOTSTRAP_STORAGE_KEY = 'split-expense-auth-bootstrap-v1'/);
-  assert.match(source, /const cachedSignedInUser = !hasExplicitSharedBook \? readCachedSignedInUser\(\) : null;[\s\S]*?setCurrentCollectionId\(\(prev\) => prev \|\| cachedSignedInUser\.uid\);[\s\S]*?setAuthReady\(true\)/);
-  assert.match(source, /cacheSignedInUser\(user\)/);
+  assert.match(source, /const requestedShortCode = initialUrl\.pathname\.match\([\s\S]*?const cachedBookMatchesUrl = cachedSignedInUser[\s\S]*?requestedShortCode === cachedSignedInUser\.shortCode/);
+  assert.match(source, /setCurrentCollectionId\(\(prev\) => prev \|\| cachedSignedInUser\.collectionId \|\| cachedSignedInUser\.uid\);[\s\S]*?setAuthReady\(true\)/);
+  assert.match(source, /cacheSignedInUser\(user, \{[\s\S]*?collectionId: targetCollectionId,[\s\S]*?shortCode: targetShortCode,/);
   assert.match(source, /clearCachedSignedInUser\(\);\s*await signOut\(auth\)/);
 });
 
