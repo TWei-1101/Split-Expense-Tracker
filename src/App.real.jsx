@@ -105,7 +105,7 @@ function readCachedSignedInUser() {
     }
 }
 
-function cacheSignedInUser(user, { collectionId = user?.uid, shortCode = null } = {}) {
+function cacheSignedInUser(user, { collectionId = user?.uid, shortCode = null, ownShortCode = null } = {}) {
     try {
         // Anonymous credentials are intentionally excluded: a stale guest must
         // never be mistaken for a signed-in account during an offline launch.
@@ -114,6 +114,7 @@ function cacheSignedInUser(user, { collectionId = user?.uid, shortCode = null } 
                 uid: user.uid,
                 collectionId: collectionId || user.uid,
                 shortCode: shortCode || null,
+                ownShortCode: ownShortCode || null,
             }));
         } else {
             window.localStorage.removeItem(AUTH_BOOTSTRAP_STORAGE_KEY);
@@ -2168,6 +2169,7 @@ async function _getStorage() {
                     cacheSignedInUser(user, {
                       collectionId: targetCollectionId,
                       shortCode: targetShortCode,
+                      ownShortCode: myShortCode,
                     });
                     
                   } else {
@@ -3567,6 +3569,18 @@ async function _getStorage() {
 				  setIsLoading(true);
 				  setError(null);
 
+				  // Returning to the user's own book is a local navigation. It must
+				  // not wait for Firestore: Safari can keep a recovered connection in
+				  // its retry window even though this book is already in local cache.
+				  const cachedSession = readCachedSignedInUser();
+				  const cachedOwnShortCode = cachedSession?.uid === userId
+					? cachedSession.ownShortCode
+					: null;
+				  setGroupOwner(null);
+				  setGroupMembers([]);
+				  setCurrentCollectionId(userId);
+				  setCurrentCollectionShortCode(cachedOwnShortCode || null);
+
 				  const usersCollectionPath = `artifacts/${appId}/users`;
 				  const usersRef = collection(db, usersCollectionPath);
 				  const myDocRef = doc(usersRef, userId);
@@ -3592,9 +3606,12 @@ async function _getStorage() {
 					);
 				  }
 
-				  // 切回自己的紀帳簿
-				  setCurrentCollectionId(userId);
 				  setCurrentCollectionShortCode(myShortCode);
+				  cacheSignedInUser({ uid: userId, isAnonymous: false }, {
+					collectionId: userId,
+					shortCode: myShortCode,
+					ownShortCode: myShortCode,
+				  });
 
 				  // 更新網址為 /g/自己的 shortCode（不重整頁面）
 				  const url = new URL(window.location.href);
@@ -3631,6 +3648,8 @@ async function _getStorage() {
 			  setError,
 			  setCurrentCollectionId,
 			  setCurrentCollectionShortCode,
+			  setGroupOwner,
+			  setGroupMembers,
 			]);
 
           if (!authReady) {

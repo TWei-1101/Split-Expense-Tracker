@@ -67,8 +67,15 @@ test('boots a previously verified account before Safari finishes offline Auth re
   assert.match(source, /const AUTH_BOOTSTRAP_STORAGE_KEY = 'split-expense-auth-bootstrap-v1'/);
   assert.match(source, /const requestedShortCode = initialUrl\.pathname\.match\([\s\S]*?const cachedBookMatchesUrl = cachedSignedInUser[\s\S]*?requestedShortCode === cachedSignedInUser\.shortCode/);
   assert.match(source, /setCurrentCollectionId\(\(prev\) => prev \|\| cachedSignedInUser\.collectionId \|\| cachedSignedInUser\.uid\);[\s\S]*?setAuthReady\(true\)/);
-  assert.match(source, /cacheSignedInUser\(user, \{[\s\S]*?collectionId: targetCollectionId,[\s\S]*?shortCode: targetShortCode,/);
+  assert.match(source, /cacheSignedInUser\(user, \{[\s\S]*?collectionId: targetCollectionId,[\s\S]*?shortCode: targetShortCode,[\s\S]*?ownShortCode: myShortCode,/);
   assert.match(source, /clearCachedSignedInUser\(\);\s*await signOut\(auth\)/);
+});
+
+test('returns to the own book before waiting on Firestore for its share code', async () => {
+  const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  const returnHandler = source.slice(source.indexOf('const handleReturnToOwn'));
+  assert.match(returnHandler, /const cachedOwnShortCode = cachedSession\?\.uid === userId[\s\S]*?setCurrentCollectionId\(userId\);[\s\S]*?const myDocRef = doc\(usersRef, userId\);/);
+  assert.match(returnHandler, /cacheSignedInUser\(\{ uid: userId, isAnonymous: false \}, \{[\s\S]*?ownShortCode: myShortCode,/);
 });
 
 test('uses Firestore cached snapshots rather than Safari navigator.onLine to show offline status', async () => {
