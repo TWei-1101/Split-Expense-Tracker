@@ -2143,6 +2143,16 @@ async function _getStorage() {
                     // NEW: 只有非匿名用戶才確保預設群組存在
                     if (!isAnon && targetCollectionId === user.uid) {
                         await ensureDefaultGroup(_db, user.uid);
+                        // Returning via the bare site URL is deliberately used
+                        // to avoid re-registering listeners. Once Auth has
+                        // resolved the user's own short code, restore the
+                        // canonical share URL without a navigation.
+                        if (!shortCodeFromPath && !shareId && myShortCode) {
+                          const rootPath = (url.pathname || '/').endsWith('/')
+                            ? (url.pathname || '/')
+                            : `${url.pathname}/`;
+                          window.history.replaceState(null, '', `${rootPath}g/${myShortCode}`);
+                        }
                     }
 
 

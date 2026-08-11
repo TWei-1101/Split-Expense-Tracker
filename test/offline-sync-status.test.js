@@ -78,6 +78,11 @@ test('returns to the own book using the same bare URL flow as a fresh launch', a
   assert.doesNotMatch(returnHandler, /getDoc\(|setCurrentCollectionId\(|cacheSignedInUser\(/);
 });
 
+test('restores the canonical own-book share URL after a bare URL return', async () => {
+  const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  assert.match(source, /if \(!shortCodeFromPath && !shareId && myShortCode\) \{[\s\S]*?window\.history\.replaceState\(null, '', `\$\{rootPath\}g\/\$\{myShortCode\}`\)/);
+});
+
 test('uses Firestore cached snapshots rather than Safari navigator.onLine to show offline status', async () => {
   const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
   assert.match(source, /onSnapshot\(expensesRef, \{ includeMetadataChanges: true \}, \(snapshot\) => \{[\s\S]*?setIsOnline\(!snapshot\.metadata\.fromCache\)/);
