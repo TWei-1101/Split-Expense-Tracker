@@ -4561,9 +4561,13 @@ async function _getStorage() {
                 {sortedExpenses.length === 0 ? (
                   <p className="text-gray-500 italic p-4 bg-white rounded-xl shadow-inner">
                     {filterPayer && searchKeyword.trim()
-                      ? `找不到任何付款人為「${filterPayer}」且符合「${searchKeyword}」的支出記錄。`
+                      ? filterPayer === SELF_PAYER_KEY
+                        ? `找不到任何符合「${searchKeyword}」的支出記錄。`
+                        : `找不到任何付款人為「${filterPayer}」且符合「${searchKeyword}」的支出記錄。`
                       : filterPayer
-                        ? `「${filterPayer}」目前沒有任何支出記錄。`
+                        ? filterPayer === SELF_PAYER_KEY
+                          ? '目前沒有任何支出記錄。'
+                          : `「${filterPayer}」目前沒有任何支出記錄。`
                         : filterCategory
                           ? `目前沒有任何「${EXPENSE_CATEGORY_OPTIONS.find(option => option.value === filterCategory)?.label}」支出記錄。`
                         : searchKeyword.trim()

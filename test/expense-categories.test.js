@@ -75,3 +75,8 @@ test('支出表單提供分類手動調整，所有支出提供分類篩選', ()
   assert.match(appSource, /setCategoryWasManuallySelected\(true\)/);
   assert.match(appSource, /aria-label="支出分類篩選"/);
 });
+
+test('各自付款篩選沒有結果時不洩漏內部付款人 key', () => {
+  const appSource = readFileSync(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  assert.match(appSource, /filterPayer === SELF_PAYER_KEY\s*\?\s*'目前沒有任何支出記錄。'/);
+});
