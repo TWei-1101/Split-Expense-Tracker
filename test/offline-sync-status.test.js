@@ -118,6 +118,17 @@ test('hydrates only the verified canonical own-book expenses directly from Index
   assert.match(source, /groupSnapshotCollectionId === currentCollectionId \|\| hasVerifiedOwnBookExpenses/);
 });
 
+test('starts an offline own-book cache read before registering the delayed Auth listener', async () => {
+  const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  const appBody = source.slice(source.indexOf('const App = () => {'));
+
+  // Firestore's local cache read and its Auth restoration share the SDK async
+  // queue. Auth must therefore be initialized after the first cache-query turn.
+  assert.match(appBody, /const \[auth, setAuth\] = useState\(null\)/);
+  assert.match(appBody, /if \(ownBookBootstrap\) \{[\s\S]*?authInitializationTimer = window\.setTimeout\(\(\) => \{[\s\S]*?authInitializationFollowupTimer = window\.setTimeout\(startAuthAfterCacheBootstrap, 0\)/);
+  assert.match(appBody, /if \(canHydrateVerifiedOwnBookFromCache\) \{[\s\S]*?getDocsFromCache\(expensesRef\)\.then\(applyExpensesSnapshot\)/);
+});
+
 test('never restores a last-viewed shared book for an offline own-book URL', async () => {
   const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
   assert.match(source, /bootstrap cache is deliberately scoped to the signed-in[\s\S]*?setCurrentCollectionId\(\(prev\) => prev \|\| cachedSignedInUser\.uid\)/);

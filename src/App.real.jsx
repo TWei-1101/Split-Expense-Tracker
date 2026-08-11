@@ -1859,7 +1859,12 @@ async function _getStorage() {
           const ownBookBootstrap = canonicalizeCachedOwnBookUrl();
           // --- 應用程式狀態 ---
           const [db, setDb] = useState(() => ownBookBootstrap ? getFirestoreWithPersistentCache(getFirebaseApp()) : null);
-          const [auth, setAuth] = useState(() => ownBookBootstrap ? getFirebaseAuthWithPersistentCache(getFirebaseApp()) : null);
+          // Do not construct Auth synchronously for an offline own-book boot.
+          // Firestore serializes its local-cache read on the same AsyncQueue as
+          // FirebaseAuthCredentialsProvider's initial Auth-state callback. On
+          // Safari, restoring that callback while offline can take ~20 seconds,
+          // which otherwise puts getDocsFromCache behind it.
+          const [auth, setAuth] = useState(null);
           const [userId, setUserId] = useState(() => ownBookBootstrap?.uid || null);
           const [authReady, setAuthReady] = useState(() => Boolean(ownBookBootstrap));
           const [isGuest, setIsGuest] = useState(false); // NEW: 追蹤是否為匿名訪客
@@ -2055,11 +2060,9 @@ async function _getStorage() {
 
             try {
               const app = getFirebaseApp();
-              const _auth = getFirebaseAuthWithPersistentCache(app);
               const _db = getFirestoreWithPersistentCache(app);
 
               setDb(_db);
-              setAuth(_auth);
 
               // Safari may take roughly 30 seconds to finish Firebase Auth's
               // IndexedDB restoration while offline. A previously verified
@@ -2090,10 +2093,20 @@ async function _getStorage() {
                 setAuthReady(true);
               }
 
-              const usersCollectionPath = `artifacts/${appId}/users`;
-              const usersRef = collection(_db, usersCollectionPath);
+              let unsubscribe = () => {};
+              let authInitializationTimer = null;
+              let authInitializationFollowupTimer = null;
+              const startAuthAfterCacheBootstrap = () => {
+                // This is intentionally a macrotask, rather than a microtask.
+                // getDocsFromCache below configures Firestore first and its Auth
+                // provider observes that Auth is not initialized yet, allowing
+                // its IndexedDB-only query to run before Auth restoration.
+                const _auth = getFirebaseAuthWithPersistentCache(app);
+                setAuth(_auth);
+                const usersCollectionPath = `artifacts/${appId}/users`;
+                const usersRef = collection(_db, usersCollectionPath);
 
-              const unsubscribe = onAuthStateChanged(_auth, async (user) => {
+                unsubscribe = onAuthStateChanged(_auth, async (user) => {
                 try {
                   if (user) {
                     // Persistent user (email/password) or a converted anonymous user
@@ -2268,9 +2281,26 @@ async function _getStorage() {
                 } finally {
                   setAuthReady(true);
                 }
-              });
+                });
+              };
 
-              return () => unsubscribe();
+              if (ownBookBootstrap) {
+                // The data-loading effect runs later in this same commit. Give it
+                // one event-loop turn to configure Firestore and enqueue the
+                // IndexedDB query before registering Firebase Auth. A second
+                // zero-delay task is sequencing, not a user-visible timeout.
+                authInitializationTimer = window.setTimeout(() => {
+                  authInitializationFollowupTimer = window.setTimeout(startAuthAfterCacheBootstrap, 0);
+                }, 0);
+              } else {
+                startAuthAfterCacheBootstrap();
+              }
+
+              return () => {
+                if (authInitializationTimer !== null) window.clearTimeout(authInitializationTimer);
+                if (authInitializationFollowupTimer !== null) window.clearTimeout(authInitializationFollowupTimer);
+                unsubscribe();
+              };
             } catch (e) {
               setError(`Firebase initialization failed: ${e.message}`);
               setAuthReady(true);
