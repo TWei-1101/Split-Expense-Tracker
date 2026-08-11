@@ -45,13 +45,8 @@ input[type='number']::-webkit-outer-spin-button {
 .app-modal-backdrop--exit,
 .app-modal-surface--exit { opacity: 0; }
 .app-modal-surface--exit { transform: scale(.96); }
-
-@starting-style {
-  .app-modal-backdrop { opacity: 0; }
-  .app-modal-surface { opacity: 0; transform: scale(.96); }
-  .app-toast { opacity: 0; transform: translate(-50%, -8px); }
-  .app-popover { opacity: 0; transform: translateY(-4px) scale(.98); }
-}
+.app-modal-backdrop--enter { opacity: 0; }
+.app-modal-surface--enter { opacity: 0; transform: scale(.96); }
 
 .app-toast {
   position: fixed;
@@ -69,6 +64,7 @@ input[type='number']::-webkit-outer-spin-button {
   will-change: transform, opacity;
 }
 .app-toast--exit { opacity: 0; transform: translate(-50%, -8px); }
+.app-toast--enter { opacity: 0; transform: translate(-50%, -8px); }
 
 .app-popover {
   transform-origin: top left;
@@ -78,6 +74,7 @@ input[type='number']::-webkit-outer-spin-button {
   will-change: transform, opacity;
 }
 .app-popover--exit { opacity: 0; transform: translateY(-4px) scale(.98); }
+.app-popover--enter { opacity: 0; transform: translateY(-4px) scale(.98); }
 
 .recycle-bin-card {
   opacity: 1;
@@ -92,7 +89,10 @@ input[type='number']::-webkit-outer-spin-button {
   .app-toast,
   .app-popover { transition-duration: 150ms; }
   .app-modal-surface--exit { transform: none; }
+  .app-modal-surface--enter { transform: none; }
   .app-toast--exit { transform: translate(-50%, 0); }
+  .app-toast--enter { transform: translate(-50%, 0); }
   .app-popover--exit { transform: none; }
+  .app-popover--enter { transform: none; }
   .recycle-bin-card--exiting { transform: none; }
 }

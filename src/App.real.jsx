@@ -338,30 +338,41 @@ async function _getStorage() {
         // Keep the DOM mounted through the exit transition so closing a dialog never teleports away.
         const useAnimatedPresence = (isOpen, duration = MOTION_EXIT_MS) => {
             const [isPresent, setIsPresent] = useState(isOpen);
+            const [isEntering, setIsEntering] = useState(isOpen);
             const [isExiting, setIsExiting] = useState(false);
 
             useEffect(() => {
+                let frame;
                 let timer;
                 let exitTimer;
                 if (isOpen) {
                     timer = window.setTimeout(() => {
                         setIsPresent(true);
                         setIsExiting(false);
+                        setIsEntering(true);
+                        // Mount in the initial state, then transition on the next frame.
+                        // This works in Safari/WebKit too, unlike relying only on @starting-style.
+                        frame = window.requestAnimationFrame(() => setIsEntering(false));
                     }, 0);
                 } else if (isPresent) {
                     timer = window.setTimeout(() => {
+                        setIsEntering(false);
                         setIsExiting(true);
                         exitTimer = window.setTimeout(() => setIsPresent(false), duration);
                     }, 0);
                 }
-                return () => { window.clearTimeout(timer); window.clearTimeout(exitTimer); };
+                return () => {
+                    window.clearTimeout(timer);
+                    window.cancelAnimationFrame(frame);
+                    window.clearTimeout(exitTimer);
+                };
             }, [isOpen, isPresent, duration]);
 
-            return { isPresent, isExiting };
+            return { isPresent, isEntering, isExiting };
         };
 
         const AnimatedModalFrame = ({ isOpen, onClose, children, contentClassName = '', ariaLabel }) => {
-            const { isPresent, isExiting } = useAnimatedPresence(isOpen);
+            const { isPresent, isEntering, isExiting } = useAnimatedPresence(isOpen);
 
             useEffect(() => {
                 if (!isPresent || !isOpen) return undefined;
@@ -375,10 +386,10 @@ async function _getStorage() {
             if (!isPresent) return null;
             return (
                 <div
-                    className={`app-modal-backdrop ${isExiting ? 'app-modal-backdrop--exit' : ''}`}
+                    className={`app-modal-backdrop ${isEntering ? 'app-modal-backdrop--enter' : ''} ${isExiting ? 'app-modal-backdrop--exit' : ''}`}
                     onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}
                 >
-                    <div role="dialog" aria-modal="true" aria-label={ariaLabel} className={`app-modal-surface ${isExiting ? 'app-modal-surface--exit' : ''} ${contentClassName}`}>
+                    <div role="dialog" aria-modal="true" aria-label={ariaLabel} className={`app-modal-surface ${isEntering ? 'app-modal-surface--enter' : ''} ${isExiting ? 'app-modal-surface--exit' : ''} ${contentClassName}`}>
                         {children}
                     </div>
                 </div>
@@ -386,19 +397,19 @@ async function _getStorage() {
         };
 
         const AnimatedToast = ({ message }) => {
-            const { isPresent, isExiting } = useAnimatedPresence(Boolean(message), 250);
+            const { isPresent, isEntering, isExiting } = useAnimatedPresence(Boolean(message), 250);
             const [lastMessage, setLastMessage] = useState(message);
             useEffect(() => {
                 if (message) window.setTimeout(() => setLastMessage(message), 0);
             }, [message]);
             if (!isPresent) return null;
-            return <div className={`app-toast ${isExiting ? 'app-toast--exit' : ''}`} role="status"><p className="font-semibold text-sm">{lastMessage}</p></div>;
+            return <div className={`app-toast ${isEntering ? 'app-toast--enter' : ''} ${isExiting ? 'app-toast--exit' : ''}`} role="status"><p className="font-semibold text-sm">{lastMessage}</p></div>;
         };
 
         const AnimatedPopover = ({ isOpen, children, className = '' }) => {
-            const { isPresent, isExiting } = useAnimatedPresence(isOpen, 180);
+            const { isPresent, isEntering, isExiting } = useAnimatedPresence(isOpen, 180);
             if (!isPresent) return null;
-            return <div className={`app-popover ${isExiting ? 'app-popover--exit' : ''} ${className}`}>{children}</div>;
+            return <div className={`app-popover ${isEntering ? 'app-popover--enter' : ''} ${isExiting ? 'app-popover--exit' : ''} ${className}`}>{children}</div>;
         };
 
         /**
@@ -600,7 +611,7 @@ async function _getStorage() {
             const [modalError, setModalError] = useState(null);
             const [uploadStatus, setUploadStatus] = useState('');
             const [duplicateCandidates, setDuplicateCandidates] = useState([]);
-            const { isPresent: isExpenseModalPresent, isExiting: isExpenseModalExiting } = useAnimatedPresence(state.isOpen);
+            const { isPresent: isExpenseModalPresent, isEntering: isExpenseModalEntering, isExiting: isExpenseModalExiting } = useAnimatedPresence(state.isOpen);
 
             const isEditing = state.isEditing;
             const expenseToEdit = state.editingExpense;
@@ -986,11 +997,11 @@ async function _getStorage() {
               // 應用 force-gpu 到背景層
               <div 
                 key={isEditing && expenseToEdit ? expenseToEdit.id : 'add-new'} 
-                className={`app-modal-backdrop items-start overflow-y-auto ${isExpenseModalExiting ? 'app-modal-backdrop--exit' : ''}`}
+                className={`app-modal-backdrop items-start overflow-y-auto ${isExpenseModalEntering ? 'app-modal-backdrop--enter' : ''} ${isExpenseModalExiting ? 'app-modal-backdrop--exit' : ''}`}
                 onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}
               >
                 {/* 修正：新增 h-full 和 flex flex-col 讓內容可以獨立滾動 */}
-                <div role="dialog" aria-modal="true" aria-label={modalTitle} className={`app-modal-surface bg-white rounded-xl w-full max-w-lg shadow-2xl my-4 h-full sm:h-auto sm:max-h-[95vh] flex flex-col force-gpu ${isExpenseModalExiting ? 'app-modal-surface--exit' : ''}`}>
+                <div role="dialog" aria-modal="true" aria-label={modalTitle} className={`app-modal-surface bg-white rounded-xl w-full max-w-lg shadow-2xl my-4 h-full sm:h-auto sm:max-h-[95vh] flex flex-col force-gpu ${isExpenseModalEntering ? 'app-modal-surface--enter' : ''} ${isExpenseModalExiting ? 'app-modal-surface--exit' : ''}`}>
                   
                   {/* 頂部：固定標題 (flex-shrink-0) */}
                   <div className="p-6 border-b flex justify-between items-center flex-shrink-0">
@@ -1468,14 +1479,14 @@ async function _getStorage() {
                 setIsMemberModalOpen(false); // 遷移成功後關閉整個 Modal
             };
 
-            const { isPresent: isMemberModalPresent, isExiting: isMemberModalExiting } = useAnimatedPresence(isMemberModalOpen);
+            const { isPresent: isMemberModalPresent, isEntering: isMemberModalEntering, isExiting: isMemberModalExiting } = useAnimatedPresence(isMemberModalOpen);
             if (!isMemberModalPresent) return null;
 
             return (
               // 應用 force-gpu 到背景層
-              <div className={`app-modal-backdrop items-start overflow-y-auto ${isMemberModalExiting ? 'app-modal-backdrop--exit' : ''}`} onMouseDown={(event) => { if (event.target === event.currentTarget) setIsMemberModalOpen(false); }}>
+              <div className={`app-modal-backdrop items-start overflow-y-auto ${isMemberModalEntering ? 'app-modal-backdrop--enter' : ''} ${isMemberModalExiting ? 'app-modal-backdrop--exit' : ''}`} onMouseDown={(event) => { if (event.target === event.currentTarget) setIsMemberModalOpen(false); }}>
                   {/* 修正：將 max-w-2xl 的 max-h 改為 h-full，並確保 flex-col 垂直佈局 */}
-                  <div role="dialog" aria-modal="true" aria-label="管理分帳成員與預設份數" className={`app-modal-surface bg-white rounded-xl w-full max-w-2xl shadow-2xl my-4 h-full sm:h-auto sm:max-h-[95vh] flex flex-col force-gpu ${isMemberModalExiting ? 'app-modal-surface--exit' : ''}`}>
+                  <div role="dialog" aria-modal="true" aria-label="管理分帳成員與預設份數" className={`app-modal-surface bg-white rounded-xl w-full max-w-2xl shadow-2xl my-4 h-full sm:h-auto sm:max-h-[95vh] flex flex-col force-gpu ${isMemberModalEntering ? 'app-modal-surface--enter' : ''} ${isMemberModalExiting ? 'app-modal-surface--exit' : ''}`}>
                       {/* 頂部：固定標題 (flex-shrink-0) */}
                       <div className="p-6 border-b flex justify-between items-center flex-shrink-0">
                           <h3 className="text-xl font-bold text-gray-800">
