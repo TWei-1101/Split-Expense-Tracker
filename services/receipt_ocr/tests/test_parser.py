@@ -61,7 +61,7 @@ nanaco支
 """)
 
         self.assertEqual(result, {
-            "description": "千代田店",
+            "description": "7-Eleven",
             "originalAmount": 1161,
             "currency": "JPY",
             "occurredAt": "2019-10-01T08:45",

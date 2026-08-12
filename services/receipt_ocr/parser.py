@@ -20,7 +20,9 @@ TIME = re.compile(r"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)")
 # travel-relevant terms, use that term as the expense name.  The web form then
 # derives its existing four-way category from the same keyword.
 ITEM_KEYWORDS = (
-    ("7-Eleven", ("7-eleven", "seven eleven", "セブンイレブン")),
+    # nanaco is the 7-Eleven Japan payment programme.  On narrow receipts the
+    # logo itself is frequently unreadable, while this marker survives OCR.
+    ("7-Eleven", ("7-eleven", "seven eleven", "セブンイレブン", "nanaco")),
     ("全家", ("全家", "familymart", "ファミリーマート")),
     ("拉麵", ("拉麵", "ラーメン", "ramen")),
     ("壽司", ("壽司", "寿司", "sushi")),
