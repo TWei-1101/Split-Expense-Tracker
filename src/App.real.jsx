@@ -146,7 +146,6 @@ function SwipeDeleteRow({ children, onDelete, disabled = false, label }) {
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerEnd}
       onPointerCancel={() => { dragRef.current = null; resetPosition(); }}
-      onLostPointerCapture={() => { dragRef.current = null; resetPosition(); }}
       onKeyDown={(event) => {
         if (!disabled && (event.key === 'Delete' || event.key === 'Backspace')) {
           event.preventDefault();

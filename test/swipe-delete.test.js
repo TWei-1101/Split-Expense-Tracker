@@ -19,6 +19,12 @@ test('左滑手勢容許自然的斜向移動，只有垂直位移較大才視�
   assert.doesNotMatch(source, /Math\.abs\(yDistance\) > Math\.abs\(xDistance\) \/ 1\.5/);
 });
 
+test('取得 pointer capture 後不會因 Safari 的 capture 交接而重設正在進行的左滑', async () => {
+  const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  assert.match(source, /onPointerCancel=\{\(\) => \{ dragRef\.current = null; resetPosition\(\); \}\}/);
+  assert.doesNotMatch(source, /onLostPointerCapture/);
+});
+
 test('刪除底色只存在右側的滑動揭露區，靜止時由內容層完整遮住', async () => {
   const css = await readFile(new URL('../src/index.css', import.meta.url), 'utf8');
   assert.match(css, /\.swipe-delete-row__action\s*\{[\s\S]*top: 1px;[\s\S]*bottom: 1px;[\s\S]*border-radius: 0 \.75rem \.75rem 0;/);
