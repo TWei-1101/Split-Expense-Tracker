@@ -75,7 +75,7 @@ import {
   sortRecycleBinRecordsNewestFirst,
 } from './lib/expense-recycle-bin.js';
 import { shouldTriggerSwipeDelete } from './lib/swipe-delete.js';
-import { normalizeReceiptOcrResult } from './lib/receipt-ocr.js';
+import { normalizeReceiptOcrResult, mergeReceiptOcrIntoExpense } from './lib/receipt-ocr.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
@@ -782,7 +782,7 @@ async function _getStorage() {
 		/**
          * 支出 Modal (核心邏輯獨立)
          */
-        const ExpenseModal = memo(({ db, auth, currentUserId, members, expenses, luggage, getInitialShares, state, onClose, getDisplayName, isReadOnly, canManageMembers, onManageMembers, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel, isOnline, onExpenseSaved, onExpenseSaveFailed }) => {
+        const ExpenseModal = memo(({ db, auth, currentUserId, members, expenses, luggage, getInitialShares, state, onClose, getDisplayName, isReadOnly, canManageMembers, onManageMembers, onManageLuggage, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel, isOnline, onExpenseSaved, onExpenseSaveFailed }) => {
             const [newExpense, setNewExpense] = useState({
                 description: '',
                 originalAmount: '',
@@ -992,13 +992,15 @@ async function _getStorage() {
                     if (!response.ok) throw new Error(payload.error || '辨識服務暫時無法使用。');
                     const fields = normalizeReceiptOcrResult(payload);
                     if (!Object.keys(fields).length) throw new Error('沒有辨識到可預填的欄位，請手動輸入。');
-                    setNewExpense((previous) => ({
-                        ...previous,
-                        ...fields,
-                        category: fields.description && !categoryWasManuallySelected
-                          ? inferExpenseCategory(fields.description)
-                          : previous.category,
-                    }));
+                    setNewExpense((previous) => {
+                        const nextExpense = mergeReceiptOcrIntoExpense(previous, payload);
+                        return {
+                          ...nextExpense,
+                          category: fields.description && !categoryWasManuallySelected
+                            ? inferExpenseCategory(fields.description)
+                            : previous.category,
+                        };
+                    });
                     setReceiptOcrStatus('已預填辨識結果，請確認後再儲存。');
                 } catch (error) {
                     setReceiptOcrStatus(`收據未能自動辨識：${error.message}`);
@@ -1422,7 +1424,17 @@ async function _getStorage() {
                     </div>
 
                     <div>
-                      <label htmlFor="expense-luggage" className="block text-sm font-medium text-gray-700">放入行李箱</label>
+                      <div className="flex items-center justify-between gap-3">
+                        <label htmlFor="expense-luggage" className="block text-sm font-medium text-gray-700">放入行李箱</label>
+                        <button
+                          type="button"
+                          onClick={onManageLuggage}
+                          disabled={isReadOnly}
+                          className="text-sm font-medium text-primaryColor-600 hover:text-primaryColor-800 disabled:cursor-not-allowed disabled:text-gray-400"
+                        >
+                          管理行李箱
+                        </button>
+                      </div>
                       <select
                         id="expense-luggage"
                         value={newExpense.luggageId || ''}
@@ -4238,46 +4250,30 @@ async function _getStorage() {
                 <AnimatedToast message={copyMessage} />
                 
                 
-                {/* 主要功能區塊 */}
-                <div className="mt-6 flex flex-wrap gap-3">
-                  <button
-                    onClick={startAdd}
-                    disabled={isReadOnly}
-                    className={
-                      "min-w-0 flex-1 flex items-center justify-center px-4 py-3 rounded-xl text-white transition duration-300 shadow-xl hover:scale-[1.03] transform disabled:bg-gray-400 disabled:cursor-not-allowed " +
-                      (isReadOnly ? "bg-gray-400" : "bg-primaryColor-500 hover:bg-primaryColor-600 focus:ring-4 focus:ring-primaryColor-300")
-                    }
-                  >
-                    <Plus className="w-6 h-6 mr-2" />
-                    新增支出 {isReadOnly && '(唯讀)'}
-                  </button>
-			  <button
-				onClick={() => setIsLuggageModalOpen(true)}
-				disabled={isReadOnly}
-				className="px-4 py-3 border text-lg font-bold rounded-xl bg-white focus:outline-none focus:ring-4 transition duration-300 shadow-xl hover:scale-[1.03] transform disabled:border-gray-400 disabled:text-gray-400 disabled:cursor-not-allowed focus:ring-primaryColor-300 border-primaryColor-500 text-primaryColor-600 hover:bg-primaryColor-50"
-				aria-label="管理退稅行李箱"
-				title={isReadOnly ? '唯讀模式下無法管理行李箱' : '管理退稅行李箱'}
-			  >🧳</button>
-		  <button onClick={() => setIsRecycleBinModalOpen(true)} className="px-4 py-3 border text-lg font-bold rounded-xl bg-white focus:outline-none focus:ring-4 transition duration-300 shadow-xl hover:scale-[1.03] transform focus:ring-primaryColor-300 border-primaryColor-500 text-primaryColor-600 hover:bg-primaryColor-50" aria-label="開啟支出回收桶" title="支出回收桶">♻️</button>
-		  <button
-				type="button"
-				onClick={startReceiptOcr}
-				disabled={isReadOnly}
-				className={
-				  "px-4 py-3 border text-lg font-bold rounded-xl bg-white focus:outline-none focus:ring-4 transition duration-300 shadow-xl hover:scale-[1.03] transform disabled:cursor-not-allowed " +
-				  (isReadOnly
-					? "border-gray-300 bg-gray-100 text-gray-400"
-					: "focus:ring-primaryColor-300 border-primaryColor-500 text-primaryColor-700 hover:bg-primaryColor-50")
-				}
-				aria-label="拍照或選取收據並自動辨識"
-				title={isReadOnly ? '唯讀模式下無法新增支出' : '拍照或選取收據，自動預填支出欄位'}
-		  >
-			<svg aria-hidden="true" className="h-6 w-6" {...IconProps} viewBox="0 0 24 24">
-			  <path d="M4 7h3l1.5-2h7L17 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
-			  <circle cx="12" cy="13" r="3.5" />
-			</svg>
-		  </button>
-                </div>
+
+                <button
+                  type="button"
+                  onClick={startAdd}
+                  disabled={isReadOnly}
+                  className={"fixed bottom-6 right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full text-white shadow-2xl transition hover:scale-105 focus:outline-none focus:ring-4 focus:ring-primaryColor-300 disabled:cursor-not-allowed disabled:bg-gray-400 sm:bottom-8 sm:right-8 " + (isReadOnly ? 'bg-gray-400' : 'bg-primaryColor-500 hover:bg-primaryColor-600')}
+                  aria-label={isReadOnly ? '唯讀模式下無法新增支出' : '新增支出'}
+                  title={isReadOnly ? '唯讀模式下無法新增支出' : '新增支出'}
+                >
+                  <Plus className="h-7 w-7" />
+                </button>
+                <button
+                  type="button"
+                  onClick={startReceiptOcr}
+                  disabled={isReadOnly}
+                  className={"fixed bottom-6 right-[5.5rem] z-30 flex h-12 w-12 items-center justify-center rounded-full border bg-white shadow-xl transition hover:scale-105 focus:outline-none focus:ring-4 focus:ring-primaryColor-300 disabled:cursor-not-allowed sm:bottom-9 sm:right-24 " + (isReadOnly ? 'border-gray-300 bg-gray-100 text-gray-400' : 'border-primaryColor-500 text-primaryColor-700 hover:bg-primaryColor-50')}
+                  aria-label="拍照或選取收據並自動辨識"
+                  title={isReadOnly ? '唯讀模式下無法新增支出' : '拍照或選取收據，自動預填支出欄位'}
+                >
+                  <svg aria-hidden="true" className="h-6 w-6" {...IconProps} viewBox="0 0 24 24">
+                    <path d="M4 7h3l1.5-2h7L17 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
+                    <circle cx="12" cy="13" r="3.5" />
+                  </svg>
+                </button>
                 <input
                     ref={receiptOcrInputRef}
                     type="file"
@@ -4314,6 +4310,7 @@ async function _getStorage() {
                     // ✨ 新增搜尋相關 props
                     searchKeyword={searchKeyword}
                     setSearchKeyword={setSearchKeyword}
+                    onOpenRecycleBin={() => setIsRecycleBinModalOpen(true)}
                 />
 
                 {/* Modal 區塊 */}
@@ -4335,6 +4332,9 @@ async function _getStorage() {
                       if (!isOwner) return;
                       setIsMemberModalOpen(true);
                       setError(null);
+                    }}
+                    onManageLuggage={() => {
+                      if (!isReadOnly) setIsLuggageModalOpen(true);
                     }}
                     collectionId={currentCollectionId}
                     liveExchangeRates={liveExchangeRates}
@@ -4443,7 +4443,7 @@ async function _getStorage() {
         };
         
         // --- 獨立的列表和總結組件 ---
-        const ExpenseList = memo(({ expenses, luggage, deleteExpense, startEdit, isLoading, getDisplayName, getPayerLabel, formatTimestamp, isReadOnly, clearAllExpenses, searchKeyword, setSearchKeyword }) => { // ✨ 接受搜尋相關 props
+        const ExpenseList = memo(({ expenses, luggage, deleteExpense, startEdit, isLoading, getDisplayName, getPayerLabel, formatTimestamp, isReadOnly, clearAllExpenses, searchKeyword, setSearchKeyword, onOpenRecycleBin }) => { // ✨ 接受搜尋相關 props
             const [previewImage, setPreviewImage] = useState(null);
             // 切換金額顯示狀態：用 expenseId 記錄目前要顯示 TWD 的卡片
             const [showTwdExpenseIds, setShowTwdExpenseIds] = useState(() => new Set());
@@ -4599,6 +4599,7 @@ async function _getStorage() {
                           </button>
                         );
                       })}
+                      <button type="button" onClick={onOpenRecycleBin} className="ml-auto inline-flex h-10 w-10 items-center justify-center rounded-full border border-primaryColor-500 bg-white text-lg text-primaryColor-700 transition hover:bg-primaryColor-50 focus:outline-none focus:ring-2 focus:ring-primaryColor-400" aria-label="開啟支出回收桶" title="支出回收桶">♻️</button>
                     </div>
                 </div>
                 

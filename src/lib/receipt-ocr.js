@@ -36,3 +36,19 @@ export function normalizeReceiptOcrResult(result = {}) {
   if (occurredAt) normalized.occurredAt = occurredAt;
   return normalized;
 }
+
+// Keep form state in the same shape produced by a native number input: its
+// value is a string while the user is editing.  In particular, do not rely on
+// React coercing a numeric OCR value for a controlled <input type="number">.
+// That coercion was the last ambiguous hop between the API response and the
+// visible field on iOS.
+export function mergeReceiptOcrIntoExpense(expense = {}, result = {}) {
+  const fields = normalizeReceiptOcrResult(result);
+  return {
+    ...expense,
+    ...fields,
+    ...(fields.originalAmount !== undefined
+      ? { originalAmount: String(fields.originalAmount) }
+      : {}),
+  };
+}

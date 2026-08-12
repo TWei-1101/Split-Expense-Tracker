@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeReceiptOcrResult } from '../src/lib/receipt-ocr.js';
+import { mergeReceiptOcrIntoExpense, normalizeReceiptOcrResult } from '../src/lib/receipt-ocr.js';
 import fs from 'node:fs';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 
 const appSource = fs.readFileSync(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
 
@@ -29,6 +31,21 @@ test('收據辨識金額接受 OCR 常見的千分位、全形逗號與相容欄
   assert.deepEqual(normalizeReceiptOcrResult({ originalAmount: '￥1，161' }), { originalAmount: 1161 });
   assert.deepEqual(normalizeReceiptOcrResult({ amount: 'NT$ 1,250.50' }), { originalAmount: 1250.5 });
   assert.deepEqual(normalizeReceiptOcrResult({ originalAmount: '總計 1,161' }), {});
+});
+
+test('OCR 回傳的 1161 會直接成為受控金額欄位可顯示的字串值', () => {
+  const expense = mergeReceiptOcrIntoExpense({ description: '', originalAmount: '', currency: 'TWD' }, {
+    description: '千代田店', originalAmount: 1161, currency: 'JPY', occurredAt: '2019-10-01T08:45',
+  });
+  assert.deepEqual(expense, {
+    description: '千代田店', originalAmount: '1161', currency: 'JPY', occurredAt: '2019-10-01T08:45',
+  });
+  const renderedAmountInput = renderToStaticMarkup(React.createElement('input', {
+    type: 'number', id: 'originalAmount', value: expense.originalAmount, readOnly: true,
+  }));
+  assert.match(renderedAmountInput, /value="1161"/);
+  assert.match(appSource, /value=\{newExpense\.originalAmount\}/);
+  assert.match(appSource, /mergeReceiptOcrIntoExpense\(previous, payload\)/);
 });
 
 test('主畫面的收據入口是單一相機按鈕，直接呼叫原生圖片選擇器並帶 Firebase 身分憑證呼叫本地 OCR', () => {
@@ -62,14 +79,25 @@ test('一般新增支出上傳照片不會觸發收據辨識', () => {
   assert.match(appSource, /\{isReceiptOcrEntry && \(/);
 });
 
-test('相機入口與主要功能列同排，管理分帳入口位於新增支出的分帳設定內', () => {
-  const actionBarStart = appSource.indexOf('主要功能區塊');
-  const actionBarEnd = appSource.indexOf('</div>', actionBarStart);
-  const receiptEntry = appSource.indexOf('onClick={startReceiptOcr}', actionBarStart);
+test('相機與新增支出為右下角懸浮操作，管理分帳入口位於新增支出的分帳設定內', () => {
+  const receiptEntry = appSource.indexOf('onClick={startReceiptOcr}');
+  const floatingAddEntry = appSource.indexOf('onClick={startAdd}');
   const memberEntry = appSource.indexOf('[管理分帳成員]');
   const sharesLabel = appSource.indexOf('分帳份數');
   const averageEntry = appSource.indexOf('[設為平均分配]');
-  assert.ok(receiptEntry > actionBarStart && receiptEntry < actionBarEnd);
+  assert.ok(receiptEntry > floatingAddEntry);
+  assert.match(appSource, /fixed bottom-6 right-5/);
+  assert.match(appSource, /fixed bottom-6 right-\[5\.5rem\]/);
   assert.ok(memberEntry > sharesLabel && memberEntry < averageEntry);
   assert.doesNotMatch(appSource, /<Users className="w-6 h-6" \/>/);
+});
+
+test('行李箱設定在新增支出欄位旁，回收桶在分類列最右側', () => {
+  const luggageLabel = appSource.indexOf('放入行李箱');
+  const luggageManage = appSource.indexOf('管理行李箱', luggageLabel);
+  const categoryFilter = appSource.indexOf('aria-label="支出分類篩選"');
+  const recycleEntry = appSource.indexOf('aria-label="開啟支出回收桶"', categoryFilter);
+  assert.ok(luggageManage > luggageLabel);
+  assert.ok(recycleEntry > categoryFilter);
+  assert.match(appSource, /ml-auto inline-flex h-10 w-10/);
 });
