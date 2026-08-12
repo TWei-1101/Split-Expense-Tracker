@@ -782,7 +782,7 @@ async function _getStorage() {
 		/**
          * 支出 Modal (核心邏輯獨立)
          */
-        const ExpenseModal = memo(({ db, auth, currentUserId, members, expenses, luggage, getInitialShares, state, onClose, getDisplayName, isReadOnly, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel, isOnline, onExpenseSaved, onExpenseSaveFailed }) => {
+        const ExpenseModal = memo(({ db, auth, currentUserId, members, expenses, luggage, getInitialShares, state, onClose, getDisplayName, isReadOnly, canManageMembers, onManageMembers, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel, isOnline, onExpenseSaved, onExpenseSaveFailed }) => {
             const [newExpense, setNewExpense] = useState({
                 description: '',
                 originalAmount: '',
@@ -1570,6 +1570,15 @@ async function _getStorage() {
                     <div className="pt-4 border-t border-gray-100">
                       <div className="flex justify-between items-center mb-3">
                         <label className="text-lg font-bold text-gray-700">分帳份數</label>
+                        <button
+                          onClick={onManageMembers}
+                          type="button"
+                          className="text-sm text-primaryColor-600 hover:text-primaryColor-800 font-medium disabled:text-gray-400 disabled:cursor-not-allowed"
+                          disabled={!canManageMembers}
+                          title={canManageMembers ? '管理分帳成員與預設份數' : '只有記帳簿擁有者可以操作'}
+                        >
+                          [管理分帳成員]
+                        </button>
                         <button
                           onClick={setToAverageSplit}
                           type="button"
@@ -4242,27 +4251,6 @@ async function _getStorage() {
                     <Plus className="w-6 h-6 mr-2" />
                     新增支出 {isReadOnly && '(唯讀)'}
                   </button>
-                  <button
-					onClick={() => {
-					   if (!isOwner) {
-					     setError('只有記帳簿擁有者可以管理分帳成員及共享權限。');
-					     return;
-					   }
-					   setIsMemberModalOpen(true);
-					   setError(null);
-					 }}
-					 disabled={!isOwner}
-					 className={
-					   "px-4 py-3 border text-lg font-bold rounded-xl bg-white focus:outline-none focus:ring-4 transition duration-300 shadow-xl hover:scale-[1.03] transform disabled:border-gray-400 disabled:text-gray-400 disabled:cursor-not-allowed " +
-					   (!isOwner
-					     ? "border-gray-400 text-gray-400"
-					     : "focus:ring-primaryColor-300 border-primaryColor-500 text-primaryColor-600 hover:bg-primaryColor-50")
-					 }
-					 aria-label="管理成員與預設份數"
-					 title={!isOwner ? "只有記帳簿擁有者可以操作" : "管理分帳成員與共享權限"}
-                  >
-			     <Users className="w-6 h-6" />
-                  </button>
 			  <button
 				onClick={() => setIsLuggageModalOpen(true)}
 				disabled={isReadOnly}
@@ -4270,28 +4258,27 @@ async function _getStorage() {
 				aria-label="管理退稅行李箱"
 				title={isReadOnly ? '唯讀模式下無法管理行李箱' : '管理退稅行李箱'}
 			  >🧳</button>
-			  <button onClick={() => setIsRecycleBinModalOpen(true)} className="px-4 py-3 border text-lg font-bold rounded-xl bg-white focus:outline-none focus:ring-4 transition duration-300 shadow-xl hover:scale-[1.03] transform focus:ring-primaryColor-300 border-primaryColor-500 text-primaryColor-600 hover:bg-primaryColor-50" aria-label="開啟支出回收桶" title="支出回收桶">♻️</button>
+		  <button onClick={() => setIsRecycleBinModalOpen(true)} className="px-4 py-3 border text-lg font-bold rounded-xl bg-white focus:outline-none focus:ring-4 transition duration-300 shadow-xl hover:scale-[1.03] transform focus:ring-primaryColor-300 border-primaryColor-500 text-primaryColor-600 hover:bg-primaryColor-50" aria-label="開啟支出回收桶" title="支出回收桶">♻️</button>
+		  <button
+				type="button"
+				onClick={startReceiptOcr}
+				disabled={isReadOnly}
+				className={
+				  "px-4 py-3 border text-lg font-bold rounded-xl bg-white focus:outline-none focus:ring-4 transition duration-300 shadow-xl hover:scale-[1.03] transform disabled:cursor-not-allowed " +
+				  (isReadOnly
+					? "border-gray-300 bg-gray-100 text-gray-400"
+					: "focus:ring-primaryColor-300 border-primaryColor-500 text-primaryColor-700 hover:bg-primaryColor-50")
+				}
+				aria-label="拍照或選取收據並自動辨識"
+				title={isReadOnly ? '唯讀模式下無法新增支出' : '拍照或選取收據，自動預填支出欄位'}
+		  >
+			<svg aria-hidden="true" className="h-6 w-6" {...IconProps} viewBox="0 0 24 24">
+			  <path d="M4 7h3l1.5-2h7L17 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
+			  <circle cx="12" cy="13" r="3.5" />
+			</svg>
+		  </button>
                 </div>
-                <div className="mt-3">
-                  <button
-                    type="button"
-                    onClick={startReceiptOcr}
-                    disabled={isReadOnly}
-                    className={
-                      "flex h-12 w-12 items-center justify-center rounded-xl border transition duration-300 shadow-lg hover:scale-[1.03] transform focus:ring-4 disabled:cursor-not-allowed " +
-                      (isReadOnly
-                        ? "border-gray-300 bg-gray-100 text-gray-400"
-                        : "border-primaryColor-500 bg-white text-primaryColor-700 hover:bg-primaryColor-50 focus:ring-primaryColor-300")
-                    }
-                    aria-label="拍照或選取收據並自動辨識"
-                    title={isReadOnly ? '唯讀模式下無法新增支出' : '拍照或選取收據，自動預填支出欄位'}
-                  >
-                    <svg aria-hidden="true" className="h-6 w-6" {...IconProps} viewBox="0 0 24 24">
-                      <path d="M4 7h3l1.5-2h7L17 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
-                      <circle cx="12" cy="13" r="3.5" />
-                    </svg>
-                  </button>
-                  <input
+                <input
                     ref={receiptOcrInputRef}
                     type="file"
                     id="receipt-ocr-image"
@@ -4299,8 +4286,7 @@ async function _getStorage() {
                     accept="image/*"
                     className="sr-only"
                     onChange={handleReceiptImageSelected}
-                  />
-                </div>
+                />
 
                 {/* 總結與列表 */}
                 <BalanceSummary 
@@ -4344,6 +4330,12 @@ async function _getStorage() {
                     onClose={closeExpenseModal}
                     getDisplayName={getDisplayName} 
                     isReadOnly={isReadOnly}
+                    canManageMembers={isOwner}
+                    onManageMembers={() => {
+                      if (!isOwner) return;
+                      setIsMemberModalOpen(true);
+                      setError(null);
+                    }}
                     collectionId={currentCollectionId}
                     liveExchangeRates={liveExchangeRates}
 					defaultCurrency={defaultCurrency}

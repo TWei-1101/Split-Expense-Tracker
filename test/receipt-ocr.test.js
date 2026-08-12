@@ -62,9 +62,14 @@ test('一般新增支出上傳照片不會觸發收據辨識', () => {
   assert.match(appSource, /\{isReceiptOcrEntry && \(/);
 });
 
-test('收據入口位於主要功能列下方，避免與新增支出及管理按鈕擠在同一列', () => {
-  const actionBarEnd = appSource.indexOf('</div>\n                <div className="mt-3">', appSource.indexOf('主要功能區塊'));
-  const receiptEntry = appSource.indexOf('onClick={startReceiptOcr}', actionBarEnd);
-  assert.ok(actionBarEnd >= 0);
-  assert.ok(receiptEntry > actionBarEnd);
+test('相機入口與主要功能列同排，管理分帳入口位於新增支出的分帳設定內', () => {
+  const actionBarStart = appSource.indexOf('主要功能區塊');
+  const actionBarEnd = appSource.indexOf('</div>', actionBarStart);
+  const receiptEntry = appSource.indexOf('onClick={startReceiptOcr}', actionBarStart);
+  const memberEntry = appSource.indexOf('[管理分帳成員]');
+  const sharesLabel = appSource.indexOf('分帳份數');
+  const averageEntry = appSource.indexOf('[設為平均分配]');
+  assert.ok(receiptEntry > actionBarStart && receiptEntry < actionBarEnd);
+  assert.ok(memberEntry > sharesLabel && memberEntry < averageEntry);
+  assert.doesNotMatch(appSource, /<Users className="w-6 h-6" \/>/);
 });
