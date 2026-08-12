@@ -8,11 +8,28 @@ function toDateTimeLocal(value) {
   return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
 }
 
+function toPositiveAmount(value) {
+  if (typeof value === 'number') return Number.isFinite(value) && value > 0 ? value : undefined;
+  if (typeof value !== 'string') return undefined;
+
+  // OCR commonly returns currency symbols and locale-specific thousands
+  // separators (for example, \"￥1，161\").  Accept only a complete monetary
+  // value after removing those presentation characters, never a number
+  // embedded in arbitrary text.
+  const normalized = value
+    .trim()
+    .replace(/[\s,，]/g, '')
+    .replace(/^(?:NT\$|TWD|USD|JPY|CNY|HKD|THB|EUR|CAD|VND|IDR|KRW|AUD|NOK|[¥￥$€£])/i, '');
+  if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) return undefined;
+  const amount = Number(normalized);
+  return Number.isFinite(amount) && amount > 0 ? amount : undefined;
+}
+
 export function normalizeReceiptOcrResult(result = {}) {
   const normalized = {};
   if (typeof result.description === 'string' && result.description.trim()) normalized.description = result.description.trim();
-  const amount = Number(result.originalAmount);
-  if (Number.isFinite(amount) && amount > 0) normalized.originalAmount = amount;
+  const amount = toPositiveAmount(result.originalAmount ?? result.amount);
+  if (amount !== undefined) normalized.originalAmount = amount;
   const currency = typeof result.currency === 'string' ? result.currency.toUpperCase() : '';
   if (SUPPORTED_CURRENCIES.has(currency)) normalized.currency = currency;
   const occurredAt = toDateTimeLocal(result.occurredAt);

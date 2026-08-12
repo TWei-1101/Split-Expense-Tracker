@@ -25,6 +25,12 @@ test('收據辨識的不可信欄位不覆寫表單', () => {
   }), {});
 });
 
+test('收據辨識金額接受 OCR 常見的千分位、全形逗號與相容欄位名稱', () => {
+  assert.deepEqual(normalizeReceiptOcrResult({ originalAmount: '￥1，161' }), { originalAmount: 1161 });
+  assert.deepEqual(normalizeReceiptOcrResult({ amount: 'NT$ 1,250.50' }), { originalAmount: 1250.5 });
+  assert.deepEqual(normalizeReceiptOcrResult({ originalAmount: '總計 1,161' }), {});
+});
+
 test('主畫面的收據入口會先開啟圖片來源選擇，並帶 Firebase 身分憑證呼叫本地 OCR', () => {
   assert.match(appSource, /getIdToken\(\)/);
   assert.match(appSource, /RECEIPT_OCR_ENDPOINT/);
@@ -37,6 +43,8 @@ test('主畫面的收據入口會先開啟圖片來源選擇，並帶 Firebase �
   assert.match(appSource, /新增收據/);
   assert.match(appSource, /capture="environment"/);
   assert.match(appSource, /上傳照片/);
+  assert.match(appSource, /ref=\{receiptUploadInputRef\}/);
+  assert.match(appSource, /receiptUploadInputRef\.current\?\.click\(\)/);
   assert.match(appSource, /onChange=\{handleReceiptImageSelected\}/);
   assert.match(appSource, /receiptImageFile: file/);
   assert.match(appSource, /isReceiptOcrEntry/);

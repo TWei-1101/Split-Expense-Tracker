@@ -2095,6 +2095,7 @@ async function _getStorage() {
           );
           const [isRecycleBinModalOpen, setIsRecycleBinModalOpen] = useState(false);
 		  const [isReceiptPickerOpen, setIsReceiptPickerOpen] = useState(false);
+		  const receiptUploadInputRef = useRef(null);
 		  const [pendingRecycleBinExpenseIds, setPendingRecycleBinExpenseIds] = useState(() => new Set());
           const [luggage, setLuggage] = useState([]);
           const [isLuggageModalOpen, setIsLuggageModalOpen] = useState(false);
@@ -4333,18 +4334,23 @@ async function _getStorage() {
                           onChange={handleReceiptImageSelected}
                         />
                       </label>
-                      <label htmlFor="receipt-upload-image" className="flex min-h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-primaryColor-200 bg-primaryColor-50 px-3 py-4 text-center font-semibold text-primaryColor-800 transition hover:border-primaryColor-500 hover:bg-primaryColor-100 focus-within:ring-4 focus-within:ring-primaryColor-300">
+                      <button
+                        type="button"
+                        onClick={() => receiptUploadInputRef.current?.click()}
+                        className="flex min-h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-primaryColor-200 bg-primaryColor-50 px-3 py-4 text-center font-semibold text-primaryColor-800 transition hover:border-primaryColor-500 hover:bg-primaryColor-100 focus:ring-4 focus:ring-primaryColor-300"
+                      >
                         <span aria-hidden="true" className="text-2xl">🖼️</span>
                         <span>上傳照片</span>
-                        <input
-                          type="file"
-                          id="receipt-upload-image"
-                          name="receipt-upload-image"
-                          accept="image/*"
-                          className="sr-only"
-                          onChange={handleReceiptImageSelected}
-                        />
-                      </label>
+                      </button>
+                      <input
+                        ref={receiptUploadInputRef}
+                        type="file"
+                        id="receipt-upload-image"
+                        name="receipt-upload-image"
+                        accept="image/*"
+                        className="sr-only"
+                        onChange={handleReceiptImageSelected}
+                      />
                     </div>
                     <button
                       type="button"
