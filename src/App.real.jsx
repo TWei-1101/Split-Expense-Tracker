@@ -109,7 +109,10 @@ function SwipeDeleteRow({ children, onDelete, disabled = false, label }) {
     if (!drag.active) {
       // iOS reports a few pixels of sideways jitter while the page is scrolling.
       // Only take over once this is clearly a deliberate left swipe.
-      if (Math.abs(yDistance) > Math.abs(xDistance) / 1.5 || xDistance >= 0) { dragRef.current = null; return; }
+      // Let an intended left swipe tolerate a natural diagonal.  The previous
+      // 1.5 ratio classified even a shallow diagonal as scrolling and reset
+      // the row immediately after the drag began.
+      if (Math.abs(yDistance) > Math.abs(xDistance) || xDistance >= 0) { dragRef.current = null; return; }
       if (Math.abs(xDistance) < 14) return;
       drag.active = true;
       event.currentTarget.setPointerCapture(event.pointerId);
