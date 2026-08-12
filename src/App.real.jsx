@@ -2437,7 +2437,14 @@ async function _getStorage() {
                     }
 
 
-                    setCurrentCollectionId((prev) => prev || targetCollectionId);
+                    // Auth can replace an anonymous guest while they are
+                    // viewing a shared link.  At this point the URL has been
+                    // resolved for the newly signed-in user, so retaining the
+                    // previous guest collection creates a split state: the
+                    // address points at the user's own /g/<code>, while the
+                    // UI still renders the old shared book.  The resolved
+                    // target is authoritative after a successful sign-in.
+                    setCurrentCollectionId(targetCollectionId);
                     setCurrentCollectionShortCode(targetShortCode);
                     cacheSignedInUser(user, {
                       // Never allow a shared-book visit to overwrite the

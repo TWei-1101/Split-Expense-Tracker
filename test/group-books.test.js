@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   buildGroupBookList,
   createNewGroupBook,
@@ -66,6 +67,12 @@ test('登入者回到 UID 對應的預設帳本時，不必等待群組 owner sn
     groupOwner: null,
     isGuest: true,
   }), false);
+});
+
+test('登入完成後以已解析的 URL 目標覆寫匿名訪客先前的帳本狀態', () => {
+  const appSource = readFileSync(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
+  assert.match(appSource, /setCurrentCollectionId\(targetCollectionId\);/);
+  assert.doesNotMatch(appSource, /setCurrentCollectionId\(\(prev\) => prev \|\| targetCollectionId\);/);
 });
 
 test('帳本改名成功後會立即更新帳本選擇清單並維持排序', () => {
