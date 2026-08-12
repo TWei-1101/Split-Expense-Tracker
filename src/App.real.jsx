@@ -89,11 +89,19 @@ function SwipeDeleteRow({ children, onDelete, disabled = false, label }) {
   const actionRef = useRef(null);
   const dragRef = useRef(null);
   const didSwipeRef = useRef(false);
+  const [isActionOpen, setIsActionOpen] = useState(false);
 
   const resetPosition = useCallback(() => {
     const element = contentRef.current;
     if (element) element.style.transform = 'translateX(0)';
     if (actionRef.current) actionRef.current.style.opacity = '0';
+    setIsActionOpen(false);
+  }, []);
+
+  const openAction = useCallback(() => {
+    if (contentRef.current) contentRef.current.style.transform = 'translateX(-112px)';
+    if (actionRef.current) actionRef.current.style.opacity = '1';
+    setIsActionOpen(true);
   }, []);
 
   const handlePointerDown = useCallback((event) => {
@@ -105,15 +113,12 @@ function SwipeDeleteRow({ children, onDelete, disabled = false, label }) {
     const drag = dragRef.current;
     if (!drag || drag.id !== event.pointerId) return;
     const xDistance = event.clientX - drag.startX;
-    const yDistance = event.clientY - drag.startY;
     if (!drag.active) {
-      // iOS reports a few pixels of sideways jitter while the page is scrolling.
-      // Only take over once this is clearly a deliberate left swipe.
-      // Let an intended left swipe tolerate a natural diagonal.  The previous
-      // 1.5 ratio classified even a shallow diagonal as scrolling and reset
-      // the row immediately after the drag began.
-      if (Math.abs(yDistance) > Math.abs(xDistance) || xDistance >= 0) { dragRef.current = null; return; }
-      if (Math.abs(xDistance) < 14) return;
+      // Directional intent is decided by actual leftward progress, not the
+      // angle. A natural one-handed swipe on iPhone is often diagonal, and
+      // comparing X/Y made those swipes get treated as page scrolling.
+      if (xDistance >= 0) return;
+      if (Math.abs(xDistance) < 8) return;
       drag.active = true;
       event.currentTarget.setPointerCapture(event.pointerId);
     }
@@ -131,11 +136,9 @@ function SwipeDeleteRow({ children, onDelete, disabled = false, label }) {
     const distance = event.clientX - drag.startX;
     didSwipeRef.current = true;
     window.setTimeout(() => { didSwipeRef.current = false; }, 0);
-    if (shouldTriggerSwipeDelete({ distance, durationMs: Date.now() - drag.startedAt })) {
-      onDelete();
-    }
-    resetPosition();
-  }, [onDelete, resetPosition]);
+    if (shouldTriggerSwipeDelete({ distance, durationMs: Date.now() - drag.startedAt })) openAction();
+    else resetPosition();
+  }, [openAction, resetPosition]);
 
   return (
     <div
@@ -153,7 +156,16 @@ function SwipeDeleteRow({ children, onDelete, disabled = false, label }) {
         }
       }}
     >
-      <div ref={actionRef} className="swipe-delete-row__action" aria-hidden="true">刪除</div>
+      <button
+        ref={actionRef}
+        type="button"
+        className="swipe-delete-row__action"
+        tabIndex={isActionOpen && !disabled ? 0 : -1}
+        aria-label={`刪除：${label}`}
+        onClick={() => { if (!disabled) { resetPosition(); onDelete(); } }}
+      >
+        刪除
+      </button>
       <div
         ref={contentRef}
         className="swipe-delete-row__content"
@@ -2437,7 +2449,14 @@ async function _getStorage() {
                     }
 
 
-                    setCurrentCollectionId((prev) => prev || targetCollectionId);
+                    // Auth can replace an anonymous guest while they are
+                    // viewing a shared link.  At this point the URL has been
+                    // resolved for the newly signed-in user, so retaining the
+                    // previous guest collection creates a split state: the
+                    // address points at the user's own /g/<code>, while the
+                    // UI still renders the old shared book.  The resolved
+                    // target is authoritative after a successful sign-in.
+                    setCurrentCollectionId(targetCollectionId);
                     setCurrentCollectionShortCode(targetShortCode);
                     cacheSignedInUser(user, {
                       // Never allow a shared-book visit to overwrite the

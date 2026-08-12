@@ -111,12 +111,15 @@ input[type='number']::-webkit-outer-spin-button {
   font-size: .875rem;
   font-weight: 700;
   background: rgb(220 38 38);
+  border: 0;
   border-radius: 0 .75rem .75rem 0;
   /* Keep the destructive layer completely absent until a real left drag begins. */
   opacity: 0;
   transition: opacity 80ms linear;
   pointer-events: none;
 }
+
+.swipe-delete-row__action[tabindex="0"] { pointer-events: auto; cursor: pointer; }
 
 .swipe-delete-row__content {
   position: relative;
