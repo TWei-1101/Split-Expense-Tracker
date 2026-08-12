@@ -808,6 +808,9 @@ async function _getStorage() {
             const [receiptOcrStatus, setReceiptOcrStatus] = useState('');
             const [duplicateCandidates, setDuplicateCandidates] = useState([]);
             const handledReceiptFileRef = useRef(null);
+            // The OCR response is asynchronous.  Do not reset the form on a
+            // harmless parent re-render while it is arriving.
+            const initializedModalKeyRef = useRef(null);
             const { isPresent: isExpenseModalPresent, isEntering: isExpenseModalEntering, isExiting: isExpenseModalExiting } = useAnimatedPresence(state.isOpen);
 
             const isEditing = state.isEditing;
@@ -829,6 +832,15 @@ async function _getStorage() {
 
 
             useEffect(() => {
+                if (!state.isOpen) {
+                    initializedModalKeyRef.current = null;
+                    return;
+                }
+
+                const modalKey = isEditing && expenseToEdit ? `edit-${expenseToEdit.id}` : 'new';
+                if (initializedModalKeyRef.current === modalKey) return;
+                initializedModalKeyRef.current = modalKey;
+
                 if (state.isOpen) {
                     if (isEditing && expenseToEdit) {
                         const initialShares = members.reduce((acc, name) => ({ 
@@ -2095,7 +2107,6 @@ async function _getStorage() {
           );
           const [isRecycleBinModalOpen, setIsRecycleBinModalOpen] = useState(false);
 		  const [isReceiptPickerOpen, setIsReceiptPickerOpen] = useState(false);
-		  const receiptUploadInputRef = useRef(null);
 		  const [pendingRecycleBinExpenseIds, setPendingRecycleBinExpenseIds] = useState(() => new Set());
           const [luggage, setLuggage] = useState([]);
           const [isLuggageModalOpen, setIsLuggageModalOpen] = useState(false);
@@ -4321,7 +4332,7 @@ async function _getStorage() {
                       <p className="mt-1 text-sm text-gray-500">選擇圖片來源後，會自動辨識並開啟新增支出。</p>
                     </div>
                     <div className="mt-6 grid grid-cols-2 gap-3">
-                      <label htmlFor="receipt-camera-image" className="flex min-h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-primaryColor-200 bg-primaryColor-50 px-3 py-4 text-center font-semibold text-primaryColor-800 transition hover:border-primaryColor-500 hover:bg-primaryColor-100 focus-within:ring-4 focus-within:ring-primaryColor-300">
+                      <label htmlFor="receipt-camera-image" className="relative flex min-h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-primaryColor-200 bg-primaryColor-50 px-3 py-4 text-center font-semibold text-primaryColor-800 transition hover:border-primaryColor-500 hover:bg-primaryColor-100 focus-within:ring-4 focus-within:ring-primaryColor-300">
                         <span aria-hidden="true" className="text-2xl">📷</span>
                         <span>拍照</span>
                         <input
@@ -4330,27 +4341,25 @@ async function _getStorage() {
                           name="receipt-camera-image"
                           accept="image/*"
                           capture="environment"
-                          className="sr-only"
+                          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
                           onChange={handleReceiptImageSelected}
                         />
                       </label>
-                      <button
-                        type="button"
-                        onClick={() => receiptUploadInputRef.current?.click()}
-                        className="flex min-h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-primaryColor-200 bg-primaryColor-50 px-3 py-4 text-center font-semibold text-primaryColor-800 transition hover:border-primaryColor-500 hover:bg-primaryColor-100 focus:ring-4 focus:ring-primaryColor-300"
+                      <label
+                        htmlFor="receipt-upload-image"
+                        className="relative flex min-h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-primaryColor-200 bg-primaryColor-50 px-3 py-4 text-center font-semibold text-primaryColor-800 transition hover:border-primaryColor-500 hover:bg-primaryColor-100 focus-within:ring-4 focus-within:ring-primaryColor-300"
                       >
                         <span aria-hidden="true" className="text-2xl">🖼️</span>
                         <span>上傳照片</span>
-                      </button>
-                      <input
-                        ref={receiptUploadInputRef}
-                        type="file"
-                        id="receipt-upload-image"
-                        name="receipt-upload-image"
-                        accept="image/*"
-                        className="sr-only"
-                        onChange={handleReceiptImageSelected}
-                      />
+                        <input
+                          type="file"
+                          id="receipt-upload-image"
+                          name="receipt-upload-image"
+                          accept="image/*"
+                          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                          onChange={handleReceiptImageSelected}
+                        />
+                      </label>
                     </div>
                     <button
                       type="button"

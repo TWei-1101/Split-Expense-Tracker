@@ -43,14 +43,22 @@ test('主畫面的收據入口會先開啟圖片來源選擇，並帶 Firebase �
   assert.match(appSource, /新增收據/);
   assert.match(appSource, /capture="environment"/);
   assert.match(appSource, /上傳照片/);
-  assert.match(appSource, /ref=\{receiptUploadInputRef\}/);
-  assert.match(appSource, /receiptUploadInputRef\.current\?\.click\(\)/);
+  assert.match(appSource, /htmlFor="receipt-upload-image"/);
+  assert.match(appSource, /id="receipt-upload-image"/);
+  assert.match(appSource, /className="absolute inset-0 h-full w-full cursor-pointer opacity-0"/);
   assert.match(appSource, /onChange=\{handleReceiptImageSelected\}/);
   assert.match(appSource, /receiptImageFile: file/);
   assert.match(appSource, /isReceiptOcrEntry/);
   assert.match(appSource, /const file = state\.receiptImageFile/);
   assert.match(appSource, /if \(isReceiptOcrEntry\) \{\s*recognizeReceipt\(file\);/);
   assert.match(appSource, /不會自動儲存/);
+});
+
+test('OCR 非同步回應抵達時不會被 modal 初始化的重渲染清空', () => {
+  assert.match(appSource, /const initializedModalKeyRef = useRef\(null\)/);
+  assert.match(appSource, /if \(initializedModalKeyRef\.current === modalKey\) return;/);
+  assert.match(appSource, /initializedModalKeyRef\.current = modalKey;/);
+  assert.match(appSource, /initializedModalKeyRef\.current = null;/);
 });
 
 test('一般新增支出上傳照片不會觸發收據辨識', () => {
