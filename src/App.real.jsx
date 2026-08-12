@@ -41,6 +41,7 @@ import { createTaxRefund, getTaxRefundProfileByCountry, pendingTaxRefundTotalInT
 import {
   buildGroupBookList,
   createNewGroupBook,
+  isViewingOwnGroupBook,
   mergeGroupBookSnapshot,
   renameGroupBookInList,
 } from './lib/group-books.js';
@@ -60,6 +61,7 @@ import {
   filterExpensesByCategory,
 } from './lib/expense-categories.js';
 import { expenseTimestampToDate, findDuplicateExpenses } from './lib/duplicate-expenses.js';
+import { formatExpenseDateTimeLocal, parseExpenseDateTimeLocal } from './lib/expense-date-time.js';
 import {
   buildLuggageDeletionPlan,
   createLuggageItem,
@@ -72,12 +74,86 @@ import {
   createRecycleBinRecord,
   sortRecycleBinRecordsNewestFirst,
 } from './lib/expense-recycle-bin.js';
+import { shouldTriggerSwipeDelete } from './lib/swipe-delete.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
 // --- Firebase 設定（從 CDN 版 hardcode，沿用同一份，避免 query 跑到 default-app-id）---
 const appId = 'YOUR_APP_ID';
 const SELF_PAYER_KEY = '__self__';
+
+function SwipeDeleteRow({ children, onDelete, disabled = false, label }) {
+  const contentRef = useRef(null);
+  const dragRef = useRef(null);
+  const didSwipeRef = useRef(false);
+
+  const resetPosition = useCallback(() => {
+    const element = contentRef.current;
+    if (element) element.style.transform = 'translateX(0)';
+  }, []);
+
+  const handlePointerDown = useCallback((event) => {
+    if (disabled || event.pointerType === 'mouse' || event.target.closest('button, input, select, textarea, a')) return;
+    dragRef.current = { id: event.pointerId, startX: event.clientX, startY: event.clientY, startedAt: Date.now(), active: false };
+  }, [disabled]);
+
+  const handlePointerMove = useCallback((event) => {
+    const drag = dragRef.current;
+    if (!drag || drag.id !== event.pointerId) return;
+    const xDistance = event.clientX - drag.startX;
+    const yDistance = event.clientY - drag.startY;
+    if (!drag.active) {
+      if (Math.abs(yDistance) > Math.abs(xDistance)) { dragRef.current = null; return; }
+      if (Math.abs(xDistance) < 8) return;
+      drag.active = true;
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+    const dampedDistance = Math.max(-112, Math.min(0, xDistance * 0.85));
+    if (contentRef.current) contentRef.current.style.transform = `translateX(${dampedDistance}px)`;
+    event.preventDefault();
+  }, []);
+
+  const handlePointerEnd = useCallback((event) => {
+    const drag = dragRef.current;
+    if (!drag || drag.id !== event.pointerId) return;
+    dragRef.current = null;
+    if (!drag.active) return;
+    const distance = event.clientX - drag.startX;
+    didSwipeRef.current = true;
+    window.setTimeout(() => { didSwipeRef.current = false; }, 0);
+    if (shouldTriggerSwipeDelete({ distance, durationMs: Date.now() - drag.startedAt })) {
+      onDelete();
+    }
+    resetPosition();
+  }, [onDelete, resetPosition]);
+
+  return (
+    <div
+      className="swipe-delete-row"
+      aria-label={label}
+      tabIndex={disabled ? -1 : 0}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerEnd}
+      onPointerCancel={() => { dragRef.current = null; resetPosition(); }}
+      onKeyDown={(event) => {
+        if (!disabled && (event.key === 'Delete' || event.key === 'Backspace')) {
+          event.preventDefault();
+          onDelete();
+        }
+      }}
+    >
+      <div className="swipe-delete-row__action" aria-hidden="true">刪除</div>
+      <div
+        ref={contentRef}
+        className="swipe-delete-row__content"
+        onClick={(event) => { if (didSwipeRef.current) event.preventDefault(); }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
 const firebaseConfig = {
   apiKey: "AIzaSyB8l7Od781kGHyI9pXMLBXvzt7NuuIyq8c",
   authDomain: "splite-expense-tracker.firebaseapp.com",
@@ -718,6 +794,7 @@ async function _getStorage() {
                 category: EXPENSE_CATEGORIES.OTHER,
                 luggageId: '',
                 taxRefund: { eligible: false, status: 'pending' },
+                occurredAt: formatExpenseDateTimeLocal(),
             });
             const [categoryWasManuallySelected, setCategoryWasManuallySelected] = useState(false);
             const [imageFile, setImageFile] = useState(null);
@@ -766,6 +843,7 @@ async function _getStorage() {
                             category: normalizeExpenseCategory(expenseToEdit.category),
                             luggageId: getExpenseLuggageId(expenseToEdit),
                             taxRefund: expenseToEdit.taxRefund || { eligible: false, status: 'pending' },
+                            occurredAt: formatExpenseDateTimeLocal(expenseToEdit.timestamp),
                         });
                         setCategoryWasManuallySelected(true);
                         setImagePreviewUrl(expenseToEdit.imageUrl || expenseToEdit.imageDataUrl || '');
@@ -815,6 +893,7 @@ async function _getStorage() {
                         category: EXPENSE_CATEGORIES.OTHER,
                         luggageId: '',
                         taxRefund: { eligible: false, status: 'pending' },
+                        occurredAt: formatExpenseDateTimeLocal(),
 					  });
                       setCategoryWasManuallySelected(false);
                       setImagePreviewUrl('');
@@ -1005,13 +1084,18 @@ async function _getStorage() {
                     setModalError('請輸入有效的品項、金額和付款人！');
                     return;
                 }
+                const occurredAt = parseExpenseDateTimeLocal(newExpense.occurredAt);
+                if (!occurredAt) {
+                    setModalError('請設定有效的建立日期與時間。');
+                    return;
+                }
 
                 if (!skipDuplicateCheck) {
                     const matches = findDuplicateExpenses({
                         expense: {
                             ...newExpense,
                             id: isEditing ? expenseToEdit?.id : undefined,
-                            timestamp: isEditing ? expenseToEdit?.timestamp : new Date(),
+                            timestamp: occurredAt,
                         },
                         expenses,
                         excludeExpenseId: isEditing ? expenseToEdit?.id : undefined,
@@ -1091,7 +1175,8 @@ async function _getStorage() {
                             if (share > 0) acc[name] = share;
                             return acc;
                         }, {}),
-                        ...(isEditing ? {} : { timestamp: serverTimestamp(), creatorId: currentUserId }),
+                        timestamp: occurredAt,
+                        ...(isEditing ? {} : { creatorId: currentUserId }),
                         appId: appId,
                         ...imageFields,
                     };
@@ -1226,6 +1311,19 @@ async function _getStorage() {
                            </p>
                         )}
                       </div>
+                    </div>
+
+                    <div>
+                      <label htmlFor="expense-occurred-at" className="block text-sm font-medium text-gray-700">建立日期與時間</label>
+                      <input
+                        id="expense-occurred-at"
+                        name="occurredAt"
+                        type="datetime-local"
+                        value={newExpense.occurredAt}
+                        onChange={handleInputChange}
+                        className="mt-1 block w-full max-w-64 rounded-lg border border-gray-300 p-3 shadow-sm focus:border-primaryColor-500 focus:ring-primaryColor-500 sm:max-w-none"
+                        disabled={isReadOnly}
+                      />
                     </div>
 
                     <div>
@@ -1716,32 +1814,19 @@ async function _getStorage() {
 								{groupMembers && groupMembers.length === 0 ? (
 								  <p className="text-gray-400">尚無成員（只有你自己）。</p>
 								) : (
-								  <div className="flex flex-wrap gap-2">
+								  <div className="space-y-2">
 									{groupMembers && groupMembers.map((uid) => (
-									  <div
+									  <SwipeDeleteRow
 										key={uid}
-										className="flex items-center px-2 py-1 bg-white border border-gray-300 rounded-lg text-sm"
+										label={`左滑移除 ${getDisplayName(uid)}`}
+										disabled={isReadOnly || uid === groupOwner}
+										onDelete={() => removeGroupMember(uid, setModalMessage)}
 									  >
-										<span>
+										<div className="flex items-center rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm">
 										  {getDisplayName(uid)}
-										  {uid === groupOwner && (
-											<span className="ml-1 text-[11px] text-primaryColor-600 font-semibold">
-											  （擁有者）
-											</span>
-										  )}
-										</span>
-
-										{!isReadOnly && uid !== groupOwner && (
-										  <button
-											type="button"
-											onClick={() => removeGroupMember(uid, setModalMessage)} // 傳遞 setModalMessage
-											className="ml-2 px-2 py-0.5 text-[11px] rounded-md border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50"
-                                            disabled={isReadOnly}
-										  >
-											移除
-										  </button>
-										)}
-									  </div>
+										  {uid === groupOwner && <span className="ml-1 text-[11px] font-semibold text-primaryColor-600">（擁有者）</span>}
+										</div>
+									  </SwipeDeleteRow>
 									))}
 								  </div>
 								)}
@@ -1761,7 +1846,13 @@ async function _getStorage() {
                                       const isCustomName = member !== currentUserId && !groupMembers.includes(member) && member.length < 20;
                                       
 										return (
-                                          <div key={member} className="grid grid-cols-[1fr_auto] gap-4 items-center p-3 rounded-lg border border-gray-200 bg-white shadow-sm">
+                                          <SwipeDeleteRow
+                                            key={member}
+                                            label={`左滑刪除 ${getDisplayName(member)}`}
+                                            disabled={isLoading || isReadOnly || member === currentUserId}
+                                            onDelete={() => handleMemberDeleteWrapper(member)}
+                                          >
+                                          <div className="grid grid-cols-[1fr_auto] gap-4 items-center rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
                                               <span 
                                                   className={`font-medium truncate ${member === currentUserId ? 'text-primaryColor-700' : 'text-gray-800'} 
                                                     ${isCustomName && !isReadOnly ? 'cursor-pointer hover:text-red-600 hover:underline' : ''}` // ✨ NEW: 增加樣式指示可點擊
@@ -1811,18 +1902,9 @@ async function _getStorage() {
                                                 
                                                 <span className="text-gray-500">份</span>
                                                
-                                                {member !== currentUserId && (
-                                                    <button
-                                                        onClick={() => handleMemberDeleteWrapper(member)}
-                                                        className="p-1 text-red-500 hover:bg-red-100 rounded-full transition hover:scale-110 transform ml-auto disabled:opacity-50"
-                                                        disabled={isLoading || isReadOnly}
-                                                        aria-label="刪除成員"
-                                                    >
-                                                        <UserMinus className="w-5 h-5" />
-                                                    </button>
-                                                )}
                                               </div>
                                           </div>
+                                          </SwipeDeleteRow>
                                       );
                                   })}
                               </div>
@@ -3611,7 +3693,12 @@ async function _getStorage() {
 
 			// --- 渲染 ---
 			const currentUserLabel = userId ? getDisplayName(userId) : '';
-			const isViewingOwn = groupOwner === userId && !isGuest; // 使用者擁有的任何帳本都不顯示「返回自己的記帳簿」
+			const isViewingOwn = isViewingOwnGroupBook({
+			  userId,
+			  currentCollectionId,
+			  groupOwner,
+			  isGuest,
+			}); // 使用者的預設帳本不必等待 group snapshot 才能判定
 
 			// 複製分享連結（移到 header 使用）
 			const handleCopyShareLink = useCallback(() => {
@@ -4468,14 +4555,20 @@ async function _getStorage() {
                 {/* ✨ NEW: 每人花費金額摘要 - 搜尋欄下方，與「結餘總結」計算一致 */}
                 {(memberSpending.length > 0 || selfPaidSummary.count > 0) && (
                     <div className="mb-5 p-4 sm:p-5 bg-gradient-to-br from-white via-white to-primaryColor-50/60 rounded-2xl border border-gray-100 shadow-sm">
-                        <div className="flex items-center justify-between mb-3 flex-wrap gap-y-1">
+                        <div className="mb-3">
                             <h3 className="text-sm font-semibold text-gray-700 flex items-center">
                                 <Wallet className="w-4 h-4 mr-1.5 text-primaryColor-600" />
                                 每人花費金額
                             </h3>
-                            <span className="text-xs text-gray-400">
-                                {filterCategory ? `${EXPENSE_CATEGORY_OPTIONS.find(option => option.value === filterCategory)?.label} ${spendingExpenses.length} 筆` : `全部 ${expenses.length} 筆`} · 合計 TWD {totalSpending.toFixed(0)}
-                            </span>
+                        </div>
+                        <div className="mb-3 flex items-center rounded-xl border border-primaryColor-100 bg-primaryColor-50/70 p-3">
+                            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-primaryColor-600 text-sm font-bold text-white">總</div>
+                            <div className="ml-3 min-w-0 flex-1">
+                                <p className="text-sm font-medium text-primaryColor-800">總金額</p>
+                                <p className="text-lg font-bold leading-tight text-primaryColor-700">
+                                    TWD {totalSpending.toFixed(0)}
+                                </p>
+                            </div>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
                             {memberSpending.map((m) => {

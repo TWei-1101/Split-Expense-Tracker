@@ -83,6 +83,37 @@ input[type='number']::-webkit-outer-spin-button {
 }
 .recycle-bin-card--exiting { opacity: 0; transform: translateX(8px); }
 
+.swipe-delete-row {
+  position: relative;
+  overflow: hidden;
+  border-radius: .5rem;
+  touch-action: pan-y;
+}
+
+.swipe-delete-row:focus-visible {
+  outline: 2px solid rgb(37 99 235);
+  outline-offset: 2px;
+}
+
+.swipe-delete-row__action {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 1.25rem;
+  color: white;
+  font-size: .875rem;
+  font-weight: 700;
+  background: rgb(220 38 38);
+}
+
+.swipe-delete-row__content {
+  position: relative;
+  transition: transform 180ms var(--motion-ease-out);
+  will-change: transform;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .app-modal-backdrop,
   .app-modal-surface,
@@ -95,4 +126,5 @@ input[type='number']::-webkit-outer-spin-button {
   .app-popover--exit { transform: none; }
   .app-popover--enter { transform: none; }
   .recycle-bin-card--exiting { transform: none; }
+  .swipe-delete-row__content { transition-duration: 120ms; }
 }

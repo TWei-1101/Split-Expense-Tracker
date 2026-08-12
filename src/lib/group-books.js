@@ -71,3 +71,11 @@ export function createNewGroupBook(name, userId) {
   if (!trimmedName || !userId) return null;
   return { name: trimmedName, owner: userId, members: [userId] };
 }
+
+// A user's default book is stored under their UID.  That identity is available
+// immediately after Auth resolves, while the group document snapshot can arrive
+// later (or be unavailable offline).
+export function isViewingOwnGroupBook({ userId, currentCollectionId, groupOwner, isGuest }) {
+  if (isGuest || !userId) return false;
+  return currentCollectionId === userId || groupOwner === userId;
+}

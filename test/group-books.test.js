@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildGroupBookList,
   createNewGroupBook,
+  isViewingOwnGroupBook,
   renameGroupBookInList,
   mergeGroupBookSnapshot,
 } from '../src/lib/group-books.js';
@@ -44,6 +45,27 @@ test('建立新帳本模型會修剪名稱並維持獨立 owner/members 結構',
     members: ['u1'],
   });
   assert.equal(createNewGroupBook('   ', 'u1'), null);
+});
+
+test('登入者回到 UID 對應的預設帳本時，不必等待群組 owner snapshot 也會視為自己的帳本', () => {
+  assert.equal(isViewingOwnGroupBook({
+    userId: 'u1',
+    currentCollectionId: 'u1',
+    groupOwner: null,
+    isGuest: false,
+  }), true);
+  assert.equal(isViewingOwnGroupBook({
+    userId: 'u1',
+    currentCollectionId: 'shared',
+    groupOwner: null,
+    isGuest: false,
+  }), false);
+  assert.equal(isViewingOwnGroupBook({
+    userId: 'u1',
+    currentCollectionId: 'u1',
+    groupOwner: null,
+    isGuest: true,
+  }), false);
 });
 
 test('帳本改名成功後會立即更新帳本選擇清單並維持排序', () => {
