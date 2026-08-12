@@ -811,6 +811,7 @@ async function _getStorage() {
             const [receiptOcrDiagnostic, setReceiptOcrDiagnostic] = useState(null);
             const [duplicateCandidates, setDuplicateCandidates] = useState([]);
             const handledReceiptFileRef = useRef(null);
+            const imageInputRef = useRef(null);
             // The OCR response is asynchronous.  Do not reset the form on a
             // harmless parent re-render while it is arriving.
             const initializedModalKeyRef = useRef(null);
@@ -1130,6 +1131,10 @@ async function _getStorage() {
                 if (imagePreviewUrl && imagePreviewUrl.startsWith('blob:')) {
                     URL.revokeObjectURL(imagePreviewUrl);
                 }
+                // React state alone does not clear Safari's native file control.
+                // Reset it as well, otherwise its small selected-image indicator
+                // remains after the user has removed the attachment.
+                if (imageInputRef.current) imageInputRef.current.value = '';
                 setImageFile(null);
                 setImagePreviewUrl('');
                 setRemoveExistingImage(Boolean(newExpense.imageUrl || newExpense.imageDataUrl));
@@ -1525,6 +1530,7 @@ async function _getStorage() {
                       </label>
                       <div className="mt-2 flex flex-col sm:flex-row gap-3 sm:items-center">
                         <input
+                          ref={imageInputRef}
                           type="file"
                           id="expenseImage"
                           name="expenseImage"
@@ -4855,7 +4861,13 @@ async function _getStorage() {
                       const canToggle = !isTwd;
 
                       return (
-                        <div key={exp.id} className="bg-white p-4 rounded-xl shadow-lg border-l-4 border-primaryColor-400 transition duration-150 hover:shadow-xl">
+                        <SwipeDeleteRow
+                          key={exp.id}
+                          label={`左滑移至回收桶：${exp.description}`}
+                          disabled={isLoading || isReadOnly}
+                          onDelete={() => deleteExpense(exp)}
+                        >
+                        <div className="bg-white p-4 rounded-xl shadow-lg border-l-4 border-primaryColor-400 transition duration-150 hover:shadow-xl">
                           <div className="flex gap-3 justify-between items-start">
                             <div className="min-w-0 flex-grow">
                               <p className="font-semibold text-lg text-gray-800">{exp.description}</p>
@@ -4903,15 +4915,6 @@ async function _getStorage() {
                                 >
                                   <Pencil className="w-5 h-5" />
                                 </button>
-                                <button
-                                  onClick={() => deleteExpense(exp)}
-                                  disabled={isLoading || isReadOnly}
-                                  className="p-2 text-red-500 bg-white hover:bg-blue-50 rounded-full transition duration-150 hover:scale-110 transform border border-transparent hover:border-red-300 shadow-md disabled:cursor-not-allowed"
-                                  aria-label="刪除支出"
-                                  title={isReadOnly ? "唯讀模式下無法刪除" : "刪除支出"}
-                                >
-                                  <Trash2 className="w-5 h-5" />
-                                </button>
                               </div>
                               {expenseImageSrc && (
                                 <button
@@ -4931,6 +4934,7 @@ async function _getStorage() {
                             </div>
                           </div>
                         </div>
+                        </SwipeDeleteRow>
                       );
                     })}
                   </div>

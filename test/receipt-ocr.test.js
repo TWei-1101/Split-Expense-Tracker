@@ -113,3 +113,19 @@ test('行李箱設定在新增支出欄位旁，回收桶在分類列最右側',
   assert.match(appSource, /aria-label="開啟支出回收桶"[^>]*><Trash2 className="h-5 w-5"/);
   assert.match(appSource, /aria-label="關閉回收桶"><X className="h-6 w-6"/);
 });
+
+test('移除照片會清空原生檔案選擇器與預覽，但保留既有圖片的儲存時移除語義', () => {
+  assert.match(appSource, /const imageInputRef = useRef\(null\)/);
+  assert.match(appSource, /ref=\{imageInputRef\}/);
+  assert.match(appSource, /imageInputRef\.current\.value = ''/);
+  assert.match(appSource, /setImagePreviewUrl\(''\)/);
+  assert.match(appSource, /setRemoveExistingImage\(Boolean\(newExpense\.imageUrl \|\| newExpense\.imageDataUrl\)\)/);
+});
+
+test('所有支出以左滑移至回收桶，保留編輯但不顯示每筆垃圾桶按鈕', () => {
+  const expenseListSource = appSource.slice(appSource.indexOf('const ExpenseList = memo'));
+  assert.match(expenseListSource, /<SwipeDeleteRow\s+key=\{exp\.id\}\s+label=\{`左滑移至回收桶：\$\{exp\.description\}`\}/);
+  assert.match(expenseListSource, /onDelete=\{\(\) => deleteExpense\(exp\)\}/);
+  assert.match(expenseListSource, /disabled=\{isLoading \|\| isReadOnly\}/);
+  assert.doesNotMatch(expenseListSource, /aria-label="刪除支出"/);
+});
