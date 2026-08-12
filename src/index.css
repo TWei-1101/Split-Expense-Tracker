@@ -110,6 +110,10 @@ input[type='number']::-webkit-outer-spin-button {
 
 .swipe-delete-row__content {
   position: relative;
+  width: 100%;
+  box-sizing: border-box;
+  /* Cover the delete action at rest, including around a rounded child card. */
+  background: white;
   transition: transform 180ms var(--motion-ease-out);
   will-change: transform;
 }
