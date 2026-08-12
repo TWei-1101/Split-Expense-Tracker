@@ -4280,11 +4280,11 @@ async function _getStorage() {
                   type="button"
                   onClick={startReceiptOcr}
                   disabled={isReadOnly}
-                  className={"fixed bottom-6 right-[5.5rem] z-30 flex h-12 w-12 items-center justify-center rounded-full border bg-white shadow-xl transition hover:scale-105 focus:outline-none focus:ring-4 focus:ring-primaryColor-300 disabled:cursor-not-allowed sm:bottom-9 sm:right-24 " + (isReadOnly ? 'border-gray-300 bg-gray-100 text-gray-400' : 'border-primaryColor-500 text-primaryColor-700 hover:bg-primaryColor-50')}
+                  className={"fixed bottom-[5.5rem] right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full text-white shadow-2xl transition hover:scale-105 focus:outline-none focus:ring-4 focus:ring-primaryColor-300 disabled:cursor-not-allowed sm:bottom-24 sm:right-8 " + (isReadOnly ? 'bg-gray-400' : 'bg-primaryColor-500 hover:bg-primaryColor-600')}
                   aria-label="拍照或選取收據並自動辨識"
                   title={isReadOnly ? '唯讀模式下無法新增支出' : '拍照或選取收據，自動預填支出欄位'}
                 >
-                  <svg aria-hidden="true" className="h-6 w-6" {...IconProps} viewBox="0 0 24 24">
+                  <svg aria-hidden="true" className="h-7 w-7" {...IconProps} viewBox="0 0 24 24">
                     <path d="M4 7h3l1.5-2h7L17 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
                     <circle cx="12" cy="13" r="3.5" />
                   </svg>
@@ -4388,7 +4388,7 @@ async function _getStorage() {
                 />
 
 				<AnimatedModalFrame isOpen={isRecycleBinModalOpen} onClose={() => setIsRecycleBinModalOpen(false)} ariaLabel="支出回收桶" contentClassName="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white shadow-2xl">
-					  <div className="flex items-center justify-between border-b p-5"><div><h2 className="text-xl font-bold text-gray-800">♻️ 支出回收桶</h2><p className="mt-1 text-sm text-gray-500">項目會保留 30 天，之後自動永久清除。</p></div><button onClick={() => setIsRecycleBinModalOpen(false)} className="rounded-full p-2 text-gray-500 hover:bg-gray-100" aria-label="關閉回收桶">✕</button></div>
+					  <div className="flex items-center justify-between border-b p-5"><div><h2 className="text-xl font-bold text-gray-800">♻️ 支出回收桶</h2><p className="mt-1 text-sm text-gray-500">項目會保留 30 天，之後自動永久清除。</p></div><button onClick={() => setIsRecycleBinModalOpen(false)} className="rounded-full p-1 text-gray-600 transition hover:scale-110 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-primaryColor-400" aria-label="關閉回收桶"><X className="h-6 w-6" /></button></div>
 					  <div className="space-y-3 p-5">
 						{sortedRecycleBinExpenses.length === 0 ? <p className="text-sm text-gray-500">回收桶目前是空的。</p> : sortedRecycleBinExpenses.map(record => {
 						  const expense = record.expense || {};
@@ -4614,7 +4614,7 @@ async function _getStorage() {
                           </button>
                         );
                       })}
-                      <button type="button" onClick={onOpenRecycleBin} className="ml-auto inline-flex h-10 w-10 items-center justify-center rounded-full border border-primaryColor-500 bg-white text-lg text-primaryColor-700 transition hover:bg-primaryColor-50 focus:outline-none focus:ring-2 focus:ring-primaryColor-400" aria-label="開啟支出回收桶" title="支出回收桶">♻️</button>
+                      <button type="button" onClick={onOpenRecycleBin} className="ml-auto inline-flex h-11 w-11 items-center justify-center text-primaryColor-700 transition hover:text-primaryColor-900 focus:outline-none focus:ring-2 focus:ring-primaryColor-400" aria-label="開啟支出回收桶" title="支出回收桶"><Trash2 className="h-5 w-5" /></button>
                     </div>
                 </div>
                 

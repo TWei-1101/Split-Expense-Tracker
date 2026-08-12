@@ -96,7 +96,8 @@ test('相機與新增支出為右下角懸浮操作，管理分帳入口位於�
   const averageEntry = appSource.indexOf('[設為平均分配]');
   assert.ok(receiptEntry > floatingAddEntry);
   assert.match(appSource, /fixed bottom-6 right-5/);
-  assert.match(appSource, /fixed bottom-6 right-\[5\.5rem\]/);
+  assert.match(appSource, /fixed bottom-\[5\.5rem\] right-5/);
+  assert.match(appSource, /h-14 w-14 items-center justify-center rounded-full text-white shadow-2xl/);
   assert.ok(memberEntry > sharesLabel && memberEntry < averageEntry);
   assert.doesNotMatch(appSource, /<Users className="w-6 h-6" \/>/);
 });
@@ -108,5 +109,7 @@ test('行李箱設定在新增支出欄位旁，回收桶在分類列最右側',
   const recycleEntry = appSource.indexOf('aria-label="開啟支出回收桶"', categoryFilter);
   assert.ok(luggageManage > luggageLabel);
   assert.ok(recycleEntry > categoryFilter);
-  assert.match(appSource, /ml-auto inline-flex h-10 w-10/);
+  assert.match(appSource, /ml-auto inline-flex h-11 w-11 items-center justify-center text-primaryColor-700/);
+  assert.match(appSource, /aria-label="開啟支出回收桶"[^>]*><Trash2 className="h-5 w-5"/);
+  assert.match(appSource, /aria-label="關閉回收桶"><X className="h-6 w-6"/);
 });
