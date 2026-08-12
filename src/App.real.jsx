@@ -89,19 +89,11 @@ function SwipeDeleteRow({ children, onDelete, disabled = false, label }) {
   const actionRef = useRef(null);
   const dragRef = useRef(null);
   const didSwipeRef = useRef(false);
-  const [isActionOpen, setIsActionOpen] = useState(false);
 
   const resetPosition = useCallback(() => {
     const element = contentRef.current;
     if (element) element.style.transform = 'translateX(0)';
     if (actionRef.current) actionRef.current.style.opacity = '0';
-    setIsActionOpen(false);
-  }, []);
-
-  const openAction = useCallback(() => {
-    if (contentRef.current) contentRef.current.style.transform = 'translateX(-112px)';
-    if (actionRef.current) actionRef.current.style.opacity = '1';
-    setIsActionOpen(true);
   }, []);
 
   const handlePointerDown = useCallback((event) => {
@@ -136,9 +128,9 @@ function SwipeDeleteRow({ children, onDelete, disabled = false, label }) {
     const distance = event.clientX - drag.startX;
     didSwipeRef.current = true;
     window.setTimeout(() => { didSwipeRef.current = false; }, 0);
-    if (shouldTriggerSwipeDelete({ distance, durationMs: Date.now() - drag.startedAt })) openAction();
-    else resetPosition();
-  }, [openAction, resetPosition]);
+    if (shouldTriggerSwipeDelete({ distance, durationMs: Date.now() - drag.startedAt })) onDelete();
+    resetPosition();
+  }, [onDelete, resetPosition]);
 
   return (
     <div
@@ -156,16 +148,7 @@ function SwipeDeleteRow({ children, onDelete, disabled = false, label }) {
         }
       }}
     >
-      <button
-        ref={actionRef}
-        type="button"
-        className="swipe-delete-row__action"
-        tabIndex={isActionOpen && !disabled ? 0 : -1}
-        aria-label={`刪除：${label}`}
-        onClick={() => { if (!disabled) { resetPosition(); onDelete(); } }}
-      >
-        刪除
-      </button>
+      <div ref={actionRef} className="swipe-delete-row__action" aria-hidden="true">刪除</div>
       <div
         ref={contentRef}
         className="swipe-delete-row__content"
