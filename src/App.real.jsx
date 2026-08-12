@@ -806,6 +806,9 @@ async function _getStorage() {
             const [modalError, setModalError] = useState(null);
             const [uploadStatus, setUploadStatus] = useState('');
             const [receiptOcrStatus, setReceiptOcrStatus] = useState('');
+            // 暫時保留 OCR 金額資料流，讓行動裝置可直接辨別是服務沒回傳、
+            // 前端沒接受，或是受控欄位沒有渲染。只顯示金額，不顯示收據文字。
+            const [receiptOcrDiagnostic, setReceiptOcrDiagnostic] = useState(null);
             const [duplicateCandidates, setDuplicateCandidates] = useState([]);
             const handledReceiptFileRef = useRef(null);
             // The OCR response is asynchronous.  Do not reset the form on a
@@ -921,6 +924,7 @@ async function _getStorage() {
                     setModalError(null);
                     setUploadStatus('');
                     setReceiptOcrStatus('');
+                    setReceiptOcrDiagnostic(null);
                     setDuplicateCandidates([]);
                     handledReceiptFileRef.current = null;
                 }
@@ -992,6 +996,11 @@ async function _getStorage() {
                     if (!response.ok) throw new Error(payload.error || '辨識服務暫時無法使用。');
                     const fields = normalizeReceiptOcrResult(payload);
                     if (!Object.keys(fields).length) throw new Error('沒有辨識到可預填的欄位，請手動輸入。');
+                    setReceiptOcrDiagnostic({
+                        receivedAmount: payload.originalAmount ?? payload.amount ?? '（服務未回傳）',
+                        normalizedAmount: fields.originalAmount === undefined ? '（無法解析）' : String(fields.originalAmount),
+                        build: 'ocr-trace-2026-08-12-1408',
+                    });
                     setNewExpense((previous) => {
                         const nextExpense = mergeReceiptOcrIntoExpense(previous, payload);
                         return {
@@ -1003,6 +1012,7 @@ async function _getStorage() {
                     });
                     setReceiptOcrStatus('已預填辨識結果，請確認後再儲存。');
                 } catch (error) {
+                    setReceiptOcrDiagnostic(null);
                     setReceiptOcrStatus(`收據未能自動辨識：${error.message}`);
                 }
             };
@@ -1542,6 +1552,11 @@ async function _getStorage() {
                       {isReceiptOcrEntry && (
                         <p className="mt-1 text-xs text-primaryColor-700" role="status" aria-live="polite">
                           {receiptOcrStatus || '選取收據後會自動辨識並預填品項、金額、日期與幣別；不會自動儲存。'}
+                        </p>
+                      )}
+                      {isReceiptOcrEntry && receiptOcrDiagnostic && (
+                        <p className="mt-2 rounded-md bg-amber-50 p-2 text-xs text-amber-900" data-testid="receipt-ocr-amount-diagnostic">
+                          OCR 金額診斷（暫時）｜服務回傳：{receiptOcrDiagnostic.receivedAmount}；解析後：{receiptOcrDiagnostic.normalizedAmount}；金額欄目前：{newExpense.originalAmount || '（空白）'}；版本：{receiptOcrDiagnostic.build}
                         </p>
                       )}
                       {imagePreviewUrl && (

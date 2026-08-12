@@ -74,6 +74,15 @@ test('OCR 非同步回應抵達時不會被 modal 初始化的重渲染清空', 
   assert.match(appSource, /initializedModalKeyRef\.current = null;/);
 });
 
+test('OCR 回應後會顯示非敏感的金額資料流診斷，供行動裝置追查欄位未預填問題', () => {
+  assert.match(appSource, /receiptOcrDiagnostic/);
+  assert.match(appSource, /data-testid="receipt-ocr-amount-diagnostic"/);
+  assert.match(appSource, /服務回傳：\{receiptOcrDiagnostic\.receivedAmount\}/);
+  assert.match(appSource, /解析後：\{receiptOcrDiagnostic\.normalizedAmount\}/);
+  assert.match(appSource, /金額欄目前：\{newExpense\.originalAmount/);
+  assert.match(appSource, /ocr-trace-2026-08-12-1408/);
+});
+
 test('一般新增支出上傳照片不會觸發收據辨識', () => {
   assert.match(appSource, /\{isReceiptOcrEntry \? '拍照／選取收據' : '上傳照片'\}/);
   assert.match(appSource, /\{isReceiptOcrEntry && \(/);
