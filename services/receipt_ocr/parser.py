@@ -10,6 +10,7 @@ import re
 
 TOTAL_LABEL = re.compile(r"(?:總(?:計|額)|合計|應付(?:金額)?|TOTAL|AMOUNT\s+DUE)", re.I)
 AMOUNT = re.compile(r"(?<!\d)(\d{1,3}(?:,\d{3})+|\d+(?:\.\d{1,2})?)(?!\d)")
+YEN_AMOUNT = re.compile(r"(?:￥|¥|JPY\s*)(\d{1,3}(?:[，,]\d{3})+|\d+(?:\.\d{1,2})?)", re.I)
 DATE = re.compile(
     r"(?<!\d)(\d{4})(?:[/-]|年)(\d{1,2})(?:[/-]|月)(\d{1,2})(?:日)?(?!\d)"
 )
@@ -28,7 +29,10 @@ def _currency(text: str) -> str:
 
 
 def _amount(line: str) -> int | float | None:
-    matches = AMOUNT.findall(line)
+    # RapidOCR can emit fullwidth punctuation on a Japanese receipt.  Normalize
+    # only numeric separators here, so a total such as ￥1，161 remains one
+    # amount rather than two unrelated numbers (1 and 161).
+    matches = AMOUNT.findall(line.replace("，", ","))
     if not matches:
         return None
     value = float(matches[-1].replace(",", ""))
@@ -54,15 +58,37 @@ def _description(lines: list[str]) -> str | None:
 
 def _total(lines: list[str]) -> int | float | None:
     """Return a labeled total, including Japanese receipts split across lines."""
-    candidates = [_amount(line) for line in lines if TOTAL_LABEL.search(line)]
+    def compact(line: str) -> str:
+        return re.sub(r"[\s\u3000]+", "", line)
+
+    candidates = [_amount(line) for line in lines if TOTAL_LABEL.search(compact(line))]
 
     for index, line in enumerate(lines):
-        # RapidOCR can split 「計」 and its value onto two lines. Restrict this
-        # to a standalone label so 小計 is never mistaken for the final total.
-        if line == "計" and index + 1 < len(lines):
+        # RapidOCR can split a final-total label and its value onto two lines,
+        # sometimes inserting spaces inside 合計.  Restrict this to explicit
+        # final-total labels so 小計 is never mistaken for the final total.
+        if compact(line).upper() in {"計", "合計", "總計", "總額", "TOTAL", "AMOUNTDUE"} and index + 1 < len(lines):
             candidates.append(_amount(lines[index + 1]))
 
-    return next((value for value in reversed(candidates) if value is not None), None)
+    labeled_total = next((value for value in reversed(candidates) if value is not None), None)
+    if labeled_total is not None:
+        return labeled_total
+
+    # The Japanese RapidOCR model occasionally loses the single-character
+    # final-total label (計) on narrow, phone-uploaded receipts.  In that
+    # specific situation, use the largest *yen-marked* charge instead of an
+    # arbitrary number: line-item prices, taxes and the later nanaco payment
+    # are all smaller on the 7-Eleven format.  Keep this as a last resort and
+    # exclude payment/refund rows, so it cannot replace a normal labeled total.
+    yen_candidates = []
+    for line in lines:
+        compact_line = compact(line)
+        if re.search(r"(?:支払|支|還元|返金|値引|割引)", compact_line):
+            continue
+        for raw_value in YEN_AMOUNT.findall(line.replace("，", ",")):
+            value = float(raw_value.replace(",", ""))
+            yen_candidates.append(int(value) if value.is_integer() else value)
+    return max(yen_candidates, default=None)
 
 
 def parse_receipt_text(text: str) -> dict:

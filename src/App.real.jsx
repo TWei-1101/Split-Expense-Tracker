@@ -75,7 +75,7 @@ import {
   sortRecycleBinRecordsNewestFirst,
 } from './lib/expense-recycle-bin.js';
 import { shouldTriggerSwipeDelete } from './lib/swipe-delete.js';
-import { normalizeReceiptOcrResult } from './lib/receipt-ocr.js';
+import { normalizeReceiptOcrResult, mergeReceiptOcrIntoExpense } from './lib/receipt-ocr.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
@@ -86,12 +86,14 @@ const RECEIPT_OCR_ENDPOINT = import.meta.env.VITE_RECEIPT_OCR_ENDPOINT || 'https
 
 function SwipeDeleteRow({ children, onDelete, disabled = false, label }) {
   const contentRef = useRef(null);
+  const actionRef = useRef(null);
   const dragRef = useRef(null);
   const didSwipeRef = useRef(false);
 
   const resetPosition = useCallback(() => {
     const element = contentRef.current;
     if (element) element.style.transform = 'translateX(0)';
+    if (actionRef.current) actionRef.current.style.opacity = '0';
   }, []);
 
   const handlePointerDown = useCallback((event) => {
@@ -105,13 +107,19 @@ function SwipeDeleteRow({ children, onDelete, disabled = false, label }) {
     const xDistance = event.clientX - drag.startX;
     const yDistance = event.clientY - drag.startY;
     if (!drag.active) {
-      if (Math.abs(yDistance) > Math.abs(xDistance)) { dragRef.current = null; return; }
-      if (Math.abs(xDistance) < 8) return;
+      // iOS reports a few pixels of sideways jitter while the page is scrolling.
+      // Only take over once this is clearly a deliberate left swipe.
+      // Let an intended left swipe tolerate a natural diagonal.  The previous
+      // 1.5 ratio classified even a shallow diagonal as scrolling and reset
+      // the row immediately after the drag began.
+      if (Math.abs(yDistance) > Math.abs(xDistance) || xDistance >= 0) { dragRef.current = null; return; }
+      if (Math.abs(xDistance) < 14) return;
       drag.active = true;
       event.currentTarget.setPointerCapture(event.pointerId);
     }
     const dampedDistance = Math.max(-112, Math.min(0, xDistance * 0.85));
     if (contentRef.current) contentRef.current.style.transform = `translateX(${dampedDistance}px)`;
+    if (actionRef.current) actionRef.current.style.opacity = dampedDistance < -1 ? '1' : '0';
     event.preventDefault();
   }, []);
 
@@ -145,7 +153,7 @@ function SwipeDeleteRow({ children, onDelete, disabled = false, label }) {
         }
       }}
     >
-      <div className="swipe-delete-row__action" aria-hidden="true">刪除</div>
+      <div ref={actionRef} className="swipe-delete-row__action" aria-hidden="true">刪除</div>
       <div
         ref={contentRef}
         className="swipe-delete-row__content"
@@ -782,7 +790,7 @@ async function _getStorage() {
 		/**
          * 支出 Modal (核心邏輯獨立)
          */
-        const ExpenseModal = memo(({ db, auth, currentUserId, members, expenses, luggage, getInitialShares, state, onClose, getDisplayName, isReadOnly, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel, isOnline, onExpenseSaved, onExpenseSaveFailed }) => {
+        const ExpenseModal = memo(({ db, auth, currentUserId, members, expenses, luggage, getInitialShares, state, onClose, getDisplayName, isReadOnly, canManageMembers, onManageMembers, onManageLuggage, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel, isOnline, onExpenseSaved, onExpenseSaveFailed }) => {
             const [newExpense, setNewExpense] = useState({
                 description: '',
                 originalAmount: '',
@@ -806,12 +814,21 @@ async function _getStorage() {
             const [modalError, setModalError] = useState(null);
             const [uploadStatus, setUploadStatus] = useState('');
             const [receiptOcrStatus, setReceiptOcrStatus] = useState('');
+            // 暫時保留 OCR 金額資料流，讓行動裝置可直接辨別是服務沒回傳、
+            // 前端沒接受，或是受控欄位沒有渲染。只顯示金額，不顯示收據文字。
+            const [receiptOcrDiagnostic, setReceiptOcrDiagnostic] = useState(null);
             const [duplicateCandidates, setDuplicateCandidates] = useState([]);
+            const handledReceiptFileRef = useRef(null);
+            const imageInputRef = useRef(null);
+            // The OCR response is asynchronous.  Do not reset the form on a
+            // harmless parent re-render while it is arriving.
+            const initializedModalKeyRef = useRef(null);
             const { isPresent: isExpenseModalPresent, isEntering: isExpenseModalEntering, isExiting: isExpenseModalExiting } = useAnimatedPresence(state.isOpen);
 
             const isEditing = state.isEditing;
             const expenseToEdit = state.editingExpense;
-            const modalTitle = isEditing ? '編輯支出記錄' : '新增支出記錄';
+            const isReceiptOcrEntry = Boolean(state.isReceiptOcr) && !isEditing;
+            const modalTitle = isEditing ? '編輯支出記錄' : (isReceiptOcrEntry ? '拍照／選取收據' : '新增支出記錄');
             const submitText = isEditing ? '儲存修改' : '確認新增支出';
             
             const currentExchangeRate = liveExchangeRates[newExpense.currency] || DEFAULT_EXCHANGE_RATES[newExpense.currency] || 1.0;
@@ -827,6 +844,15 @@ async function _getStorage() {
 
 
             useEffect(() => {
+                if (!state.isOpen) {
+                    initializedModalKeyRef.current = null;
+                    return;
+                }
+
+                const modalKey = isEditing && expenseToEdit ? `edit-${expenseToEdit.id}` : 'new';
+                if (initializedModalKeyRef.current === modalKey) return;
+                initializedModalKeyRef.current = modalKey;
+
                 if (state.isOpen) {
                     if (isEditing && expenseToEdit) {
                         const initialShares = members.reduce((acc, name) => ({ 
@@ -907,7 +933,9 @@ async function _getStorage() {
                     setModalError(null);
                     setUploadStatus('');
                     setReceiptOcrStatus('');
+                    setReceiptOcrDiagnostic(null);
                     setDuplicateCandidates([]);
+                    handledReceiptFileRef.current = null;
                 }
             }, [state.isOpen, isEditing, expenseToEdit, members, currentUserId, getInitialShares, currentUserLabel, getDisplayName, defaultCurrency]);
 
@@ -977,15 +1005,23 @@ async function _getStorage() {
                     if (!response.ok) throw new Error(payload.error || '辨識服務暫時無法使用。');
                     const fields = normalizeReceiptOcrResult(payload);
                     if (!Object.keys(fields).length) throw new Error('沒有辨識到可預填的欄位，請手動輸入。');
-                    setNewExpense((previous) => ({
-                        ...previous,
-                        ...fields,
-                        category: fields.description && !categoryWasManuallySelected
-                          ? inferExpenseCategory(fields.description)
-                          : previous.category,
-                    }));
+                    setReceiptOcrDiagnostic({
+                        receivedAmount: payload.originalAmount ?? payload.amount ?? '（服務未回傳）',
+                        normalizedAmount: fields.originalAmount === undefined ? '（無法解析）' : String(fields.originalAmount),
+                        build: 'ocr-trace-2026-08-12-1408',
+                    });
+                    setNewExpense((previous) => {
+                        const nextExpense = mergeReceiptOcrIntoExpense(previous, payload);
+                        return {
+                          ...nextExpense,
+                          category: fields.description && !categoryWasManuallySelected
+                            ? inferExpenseCategory(fields.description)
+                            : previous.category,
+                        };
+                    });
                     setReceiptOcrStatus('已預填辨識結果，請確認後再儲存。');
                 } catch (error) {
+                    setReceiptOcrDiagnostic(null);
                     setReceiptOcrStatus(`收據未能自動辨識：${error.message}`);
                 }
             };
@@ -1008,8 +1044,31 @@ async function _getStorage() {
                 setImagePreviewUrl(URL.createObjectURL(file));
                 setRemoveExistingImage(false);
                 setModalError(null);
-                recognizeReceipt(file);
+                if (isReceiptOcrEntry) {
+                    recognizeReceipt(file);
+                }
             };
+
+            // 收據入口先選擇「拍照」或「上傳照片」；選好檔案才開啟此 modal。
+            // 用 ref 確保 OCR 預填後的 state 更新不會重複送出同一張照片。
+            useEffect(() => {
+                const file = state.receiptImageFile;
+                if (!isReceiptOcrEntry || !file || handledReceiptFileRef.current === file) return;
+                handledReceiptFileRef.current = file;
+                if (!file.type.startsWith('image/')) {
+                    setModalError('請選擇圖片檔。');
+                    return;
+                }
+                if (file.size > 20 * 1024 * 1024) {
+                    setModalError('圖片檔案請小於 20MB。');
+                    return;
+                }
+                setImageFile(file);
+                setImagePreviewUrl(URL.createObjectURL(file));
+                setRemoveExistingImage(false);
+                setModalError(null);
+                recognizeReceipt(file);
+            }, [isReceiptOcrEntry, state.receiptImageFile]);
 
             const compressImage = (file) => new Promise((resolve, reject) => {
                 const imageUrl = URL.createObjectURL(file);
@@ -1080,6 +1139,10 @@ async function _getStorage() {
                 if (imagePreviewUrl && imagePreviewUrl.startsWith('blob:')) {
                     URL.revokeObjectURL(imagePreviewUrl);
                 }
+                // React state alone does not clear Safari's native file control.
+                // Reset it as well, otherwise its small selected-image indicator
+                // remains after the user has removed the attachment.
+                if (imageInputRef.current) imageInputRef.current.value = '';
                 setImageFile(null);
                 setImagePreviewUrl('');
                 setRemoveExistingImage(Boolean(newExpense.imageUrl || newExpense.imageDataUrl));
@@ -1384,7 +1447,17 @@ async function _getStorage() {
                     </div>
 
                     <div>
-                      <label htmlFor="expense-luggage" className="block text-sm font-medium text-gray-700">放入行李箱</label>
+                      <div className="flex items-center justify-between gap-3">
+                        <label htmlFor="expense-luggage" className="block text-sm font-medium text-gray-700">放入行李箱</label>
+                        <button
+                          type="button"
+                          onClick={onManageLuggage}
+                          disabled={isReadOnly}
+                          className="text-sm font-medium text-primaryColor-600 hover:text-primaryColor-800 disabled:cursor-not-allowed disabled:text-gray-400"
+                        >
+                          管理行李箱
+                        </button>
+                      </div>
                       <select
                         id="expense-luggage"
                         value={newExpense.luggageId || ''}
@@ -1458,13 +1531,17 @@ async function _getStorage() {
                       )}
                     </div>
 
-                    {/* 2. 收據 / 圖片 */}
+                    {/* 收據辨識從主畫面獨立入口進入；一般新增支出只上傳附件圖片。 */}
                     <div className="pt-4 border-t border-gray-100">
-                      <label htmlFor="expenseImage" className="block text-sm font-medium text-gray-700">收據 / 圖片</label>
+                      <label htmlFor="expenseImage" className="block text-sm font-medium text-gray-700">
+                        {isReceiptOcrEntry ? '拍照／選取收據' : '上傳照片'}
+                      </label>
                       <div className="mt-2 flex flex-col sm:flex-row gap-3 sm:items-center">
                         <input
+                          ref={imageInputRef}
                           type="file"
                           id="expenseImage"
+                          name="expenseImage"
                           accept="image/*"
                           onChange={handleImageChange}
                           className="block w-full text-sm text-gray-600 file:mr-4 file:rounded-full file:border-0 file:bg-primaryColor-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-primaryColor-700 hover:file:bg-primaryColor-100 disabled:opacity-50"
@@ -1481,15 +1558,29 @@ async function _getStorage() {
                           </button>
                         )}
                       </div>
-                      <p className="mt-1 text-xs text-gray-500">支援圖片檔，原圖上限 20MB；儲存前會自動壓縮。</p>
-                      <p className="mt-1 text-xs text-primaryColor-700" role="status" aria-live="polite">
-                        {receiptOcrStatus || '選取收據後會自動辨識並預填品項、金額、日期與幣別；不會自動儲存。'}
+                      <p className="mt-1 text-xs text-gray-500">
+                        {isReceiptOcrEntry
+                          ? '可拍照或選取收據圖片（上限 20MB）；辨識結果會預填欄位，確認後才會儲存。'
+                          : '支援圖片檔，原圖上限 20MB；儲存前會自動壓縮。'}
                       </p>
+                      {isReceiptOcrEntry && (
+                        <p className="mt-1 text-xs text-primaryColor-700" role="status" aria-live="polite">
+                          {receiptOcrStatus || '選取收據後會自動辨識並預填品項、金額、日期與幣別；不會自動儲存。'}
+                        </p>
+                      )}
+                      {isReceiptOcrEntry && receiptOcrDiagnostic && (
+                        <p className="mt-2 rounded-md bg-amber-50 p-2 text-xs text-amber-900" data-testid="receipt-ocr-amount-diagnostic">
+                          OCR 金額診斷（暫時）｜服務回傳：{receiptOcrDiagnostic.receivedAmount}；解析後：{receiptOcrDiagnostic.normalizedAmount}；金額欄目前：{newExpense.originalAmount || '（空白）'}；版本：{receiptOcrDiagnostic.build}
+                        </p>
+                      )}
                       {imagePreviewUrl && (
                         <div className="mt-3">
                           <img
                             src={imagePreviewUrl}
                             alt="支出圖片預覽"
+                            width="128"
+                            height="128"
+                            loading="lazy"
                             className="h-32 w-32 rounded-lg object-cover border border-gray-200 shadow-sm"
                           />
                         </div>
@@ -1520,6 +1611,15 @@ async function _getStorage() {
                     <div className="pt-4 border-t border-gray-100">
                       <div className="flex justify-between items-center mb-3">
                         <label className="text-lg font-bold text-gray-700">分帳份數</label>
+                        <button
+                          onClick={onManageMembers}
+                          type="button"
+                          className="text-sm text-primaryColor-600 hover:text-primaryColor-800 font-medium disabled:text-gray-400 disabled:cursor-not-allowed"
+                          disabled={!canManageMembers}
+                          title={canManageMembers ? '管理分帳成員與預設份數' : '只有記帳簿擁有者可以操作'}
+                        >
+                          [管理分帳成員]
+                        </button>
                         <button
                           onClick={setToAverageSplit}
                           type="button"
@@ -2056,6 +2156,7 @@ async function _getStorage() {
             [recycleBinExpenses],
           );
           const [isRecycleBinModalOpen, setIsRecycleBinModalOpen] = useState(false);
+		  const receiptOcrInputRef = useRef(null);
 		  const [pendingRecycleBinExpenseIds, setPendingRecycleBinExpenseIds] = useState(() => new Set());
           const [luggage, setLuggage] = useState([]);
           const [isLuggageModalOpen, setIsLuggageModalOpen] = useState(false);
@@ -2144,6 +2245,8 @@ async function _getStorage() {
               isOpen: false,
               editingExpense: null,
               isEditing: false,
+              isReceiptOcr: false,
+			  receiptImageFile: null,
           });
           
           const [confirmModalState, setConfirmModalState] = useState({
@@ -3045,8 +3148,40 @@ async function _getStorage() {
                 isOpen: true,
                 editingExpense: null,
                 isEditing: false,
+                isReceiptOcr: false,
+				receiptImageFile: null,
             });
           }, [isReadOnly]);
+
+          const startReceiptOcr = useCallback(() => {
+            if (isReadOnly) {
+                setError('您正在瀏覽共享紀錄簿，無法進行修改。請切換回您的私有紀錄簿。');
+                return;
+            }
+            receiptOcrInputRef.current?.click();
+          }, [isReadOnly]);
+
+          const handleReceiptImageSelected = useCallback((event) => {
+            const file = event.target.files?.[0];
+            // 讓使用者取消後或下一次選相同圖片時，仍能正確觸發 change。
+            event.target.value = '';
+            if (!file) return;
+            if (!file.type.startsWith('image/')) {
+              setError('請選擇圖片檔。');
+              return;
+            }
+            if (file.size > 20 * 1024 * 1024) {
+              setError('圖片檔案請小於 20MB。');
+              return;
+            }
+            setExpenseModalState({
+                isOpen: true,
+                editingExpense: null,
+                isEditing: false,
+                isReceiptOcr: true,
+                receiptImageFile: file,
+            });
+          }, []);
           
           const startEdit = useCallback((expense) => {
              if (isReadOnly) {
@@ -3057,6 +3192,8 @@ async function _getStorage() {
                 isOpen: true,
                 editingExpense: expense,
                 isEditing: true,
+                isReceiptOcr: false,
+				receiptImageFile: null,
              });
           }, [isReadOnly]);
 
@@ -3065,6 +3202,8 @@ async function _getStorage() {
                 isOpen: false,
                 editingExpense: null,
                 isEditing: false,
+                isReceiptOcr: false,
+				receiptImageFile: null,
             });
             setError(null);
           }, []);
@@ -4140,49 +4279,39 @@ async function _getStorage() {
                 <AnimatedToast message={copyMessage} />
                 
                 
-                {/* 主要功能區塊 */}
-                <div className="mt-6 flex space-x-4">
-                  <button
-                    onClick={startAdd}
-                    disabled={isReadOnly}
-                    className={
-                      "flex-1 flex items-center justify-center px-4 py-3 rounded-xl text-white transition duration-300 shadow-xl hover:scale-[1.03] transform disabled:bg-gray-400 disabled:cursor-not-allowed " +
-                      (isReadOnly ? "bg-gray-400" : "bg-primaryColor-500 hover:bg-primaryColor-600 focus:ring-4 focus:ring-primaryColor-300")
-                    }
-                  >
-                    <Plus className="w-6 h-6 mr-2" />
-                    新增支出 {isReadOnly && '(唯讀)'}
-                  </button>
-                  <button
-					onClick={() => {
-					   if (!isOwner) {
-					     setError('只有記帳簿擁有者可以管理分帳成員及共享權限。');
-					     return;
-					   }
-					   setIsMemberModalOpen(true);
-					   setError(null);
-					 }}
-					 disabled={!isOwner}
-					 className={
-					   "px-4 py-3 border text-lg font-bold rounded-xl bg-white focus:outline-none focus:ring-4 transition duration-300 shadow-xl hover:scale-[1.03] transform disabled:border-gray-400 disabled:text-gray-400 disabled:cursor-not-allowed " +
-					   (!isOwner
-					     ? "border-gray-400 text-gray-400"
-					     : "focus:ring-primaryColor-300 border-primaryColor-500 text-primaryColor-600 hover:bg-primaryColor-50")
-					 }
-					 aria-label="管理成員與預設份數"
-					 title={!isOwner ? "只有記帳簿擁有者可以操作" : "管理分帳成員與共享權限"}
-                  >
-			     <Users className="w-6 h-6" />
-                  </button>
-			  <button
-				onClick={() => setIsLuggageModalOpen(true)}
-				disabled={isReadOnly}
-				className="px-4 py-3 border text-lg font-bold rounded-xl bg-white focus:outline-none focus:ring-4 transition duration-300 shadow-xl hover:scale-[1.03] transform disabled:border-gray-400 disabled:text-gray-400 disabled:cursor-not-allowed focus:ring-primaryColor-300 border-primaryColor-500 text-primaryColor-600 hover:bg-primaryColor-50"
-				aria-label="管理退稅行李箱"
-				title={isReadOnly ? '唯讀模式下無法管理行李箱' : '管理退稅行李箱'}
-			  >🧳</button>
-			  <button onClick={() => setIsRecycleBinModalOpen(true)} className="px-4 py-3 border text-lg font-bold rounded-xl bg-white focus:outline-none focus:ring-4 transition duration-300 shadow-xl hover:scale-[1.03] transform focus:ring-primaryColor-300 border-primaryColor-500 text-primaryColor-600 hover:bg-primaryColor-50" aria-label="開啟支出回收桶" title="支出回收桶">♻️</button>
-                </div>
+
+                <button
+                  type="button"
+                  onClick={startAdd}
+                  disabled={isReadOnly}
+                  className={"fixed bottom-6 right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full text-white shadow-2xl transition hover:scale-105 focus:outline-none focus:ring-4 focus:ring-primaryColor-300 disabled:cursor-not-allowed disabled:bg-gray-400 sm:bottom-8 sm:right-8 " + (isReadOnly ? 'bg-gray-400' : 'bg-primaryColor-500 hover:bg-primaryColor-600')}
+                  aria-label={isReadOnly ? '唯讀模式下無法新增支出' : '新增支出'}
+                  title={isReadOnly ? '唯讀模式下無法新增支出' : '新增支出'}
+                >
+                  <Plus className="h-7 w-7" />
+                </button>
+                <button
+                  type="button"
+                  onClick={startReceiptOcr}
+                  disabled={isReadOnly}
+                  className={"fixed bottom-[5.5rem] right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full text-white shadow-2xl transition hover:scale-105 focus:outline-none focus:ring-4 focus:ring-primaryColor-300 disabled:cursor-not-allowed sm:bottom-24 sm:right-8 " + (isReadOnly ? 'bg-gray-400' : 'bg-primaryColor-500 hover:bg-primaryColor-600')}
+                  aria-label="拍照或選取收據並自動辨識"
+                  title={isReadOnly ? '唯讀模式下無法新增支出' : '拍照或選取收據，自動預填支出欄位'}
+                >
+                  <svg aria-hidden="true" className="h-7 w-7" {...IconProps} viewBox="0 0 24 24">
+                    <path d="M4 7h3l1.5-2h7L17 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
+                    <circle cx="12" cy="13" r="3.5" />
+                  </svg>
+                </button>
+                <input
+                    ref={receiptOcrInputRef}
+                    type="file"
+                    id="receipt-ocr-image"
+                    name="receipt-ocr-image"
+                    accept="image/*"
+                    className="sr-only"
+                    onChange={handleReceiptImageSelected}
+                />
 
                 {/* 總結與列表 */}
                 <BalanceSummary 
@@ -4210,6 +4339,7 @@ async function _getStorage() {
                     // ✨ 新增搜尋相關 props
                     searchKeyword={searchKeyword}
                     setSearchKeyword={setSearchKeyword}
+                    onOpenRecycleBin={() => setIsRecycleBinModalOpen(true)}
                 />
 
                 {/* Modal 區塊 */}
@@ -4226,6 +4356,15 @@ async function _getStorage() {
                     onClose={closeExpenseModal}
                     getDisplayName={getDisplayName} 
                     isReadOnly={isReadOnly}
+                    canManageMembers={isOwner}
+                    onManageMembers={() => {
+                      if (!isOwner) return;
+                      setIsMemberModalOpen(true);
+                      setError(null);
+                    }}
+                    onManageLuggage={() => {
+                      if (!isReadOnly) setIsLuggageModalOpen(true);
+                    }}
                     collectionId={currentCollectionId}
                     liveExchangeRates={liveExchangeRates}
 					defaultCurrency={defaultCurrency}
@@ -4263,7 +4402,7 @@ async function _getStorage() {
                 />
 
 				<AnimatedModalFrame isOpen={isRecycleBinModalOpen} onClose={() => setIsRecycleBinModalOpen(false)} ariaLabel="支出回收桶" contentClassName="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white shadow-2xl">
-					  <div className="flex items-center justify-between border-b p-5"><div><h2 className="text-xl font-bold text-gray-800">♻️ 支出回收桶</h2><p className="mt-1 text-sm text-gray-500">項目會保留 30 天，之後自動永久清除。</p></div><button onClick={() => setIsRecycleBinModalOpen(false)} className="rounded-full p-2 text-gray-500 hover:bg-gray-100" aria-label="關閉回收桶">✕</button></div>
+					  <div className="flex items-center justify-between border-b p-5"><div><h2 className="text-xl font-bold text-gray-800">♻️ 支出回收桶</h2><p className="mt-1 text-sm text-gray-500">項目會保留 30 天，之後自動永久清除。</p></div><button onClick={() => setIsRecycleBinModalOpen(false)} className="rounded-full p-1 text-gray-600 transition hover:scale-110 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-primaryColor-400" aria-label="關閉回收桶"><X className="h-6 w-6" /></button></div>
 					  <div className="space-y-3 p-5">
 						{sortedRecycleBinExpenses.length === 0 ? <p className="text-sm text-gray-500">回收桶目前是空的。</p> : sortedRecycleBinExpenses.map(record => {
 						  const expense = record.expense || {};
@@ -4333,7 +4472,7 @@ async function _getStorage() {
         };
         
         // --- 獨立的列表和總結組件 ---
-        const ExpenseList = memo(({ expenses, luggage, deleteExpense, startEdit, isLoading, getDisplayName, getPayerLabel, formatTimestamp, isReadOnly, clearAllExpenses, searchKeyword, setSearchKeyword }) => { // ✨ 接受搜尋相關 props
+        const ExpenseList = memo(({ expenses, luggage, deleteExpense, startEdit, isLoading, getDisplayName, getPayerLabel, formatTimestamp, isReadOnly, clearAllExpenses, searchKeyword, setSearchKeyword, onOpenRecycleBin }) => { // ✨ 接受搜尋相關 props
             const [previewImage, setPreviewImage] = useState(null);
             // 切換金額顯示狀態：用 expenseId 記錄目前要顯示 TWD 的卡片
             const [showTwdExpenseIds, setShowTwdExpenseIds] = useState(() => new Set());
@@ -4489,6 +4628,7 @@ async function _getStorage() {
                           </button>
                         );
                       })}
+                      <button type="button" onClick={onOpenRecycleBin} className="ml-auto inline-flex h-11 w-11 items-center justify-center text-primaryColor-700 transition hover:text-primaryColor-900 focus:outline-none focus:ring-2 focus:ring-primaryColor-400" aria-label="開啟支出回收桶" title="支出回收桶"><Trash2 className="h-5 w-5" /></button>
                     </div>
                 </div>
                 
@@ -4729,7 +4869,13 @@ async function _getStorage() {
                       const canToggle = !isTwd;
 
                       return (
-                        <div key={exp.id} className="bg-white p-4 rounded-xl shadow-lg border-l-4 border-primaryColor-400 transition duration-150 hover:shadow-xl">
+                        <SwipeDeleteRow
+                          key={exp.id}
+                          label={`左滑移至回收桶：${exp.description}`}
+                          disabled={isLoading || isReadOnly}
+                          onDelete={() => deleteExpense(exp)}
+                        >
+                        <div className="bg-white p-4 rounded-xl shadow-lg border-l-4 border-primaryColor-400 transition duration-150 hover:shadow-xl">
                           <div className="flex gap-3 justify-between items-start">
                             <div className="min-w-0 flex-grow">
                               <p className="font-semibold text-lg text-gray-800">{exp.description}</p>
@@ -4777,15 +4923,6 @@ async function _getStorage() {
                                 >
                                   <Pencil className="w-5 h-5" />
                                 </button>
-                                <button
-                                  onClick={() => deleteExpense(exp)}
-                                  disabled={isLoading || isReadOnly}
-                                  className="p-2 text-red-500 bg-white hover:bg-blue-50 rounded-full transition duration-150 hover:scale-110 transform border border-transparent hover:border-red-300 shadow-md disabled:cursor-not-allowed"
-                                  aria-label="刪除支出"
-                                  title={isReadOnly ? "唯讀模式下無法刪除" : "刪除支出"}
-                                >
-                                  <Trash2 className="w-5 h-5" />
-                                </button>
                               </div>
                               {expenseImageSrc && (
                                 <button
@@ -4805,6 +4942,7 @@ async function _getStorage() {
                             </div>
                           </div>
                         </div>
+                        </SwipeDeleteRow>
                       );
                     })}
                   </div>
