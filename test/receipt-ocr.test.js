@@ -25,10 +25,19 @@ test('收據辨識的不可信欄位不覆寫表單', () => {
   }), {});
 });
 
-test('選取收據後會帶 Firebase 身分憑證呼叫本地 OCR，並只預填不自動儲存', () => {
+test('主畫面的獨立收據入口會帶 Firebase 身分憑證呼叫本地 OCR，並只預填不自動儲存', () => {
   assert.match(appSource, /getIdToken\(\)/);
   assert.match(appSource, /RECEIPT_OCR_ENDPOINT/);
   assert.match(appSource, /normalizeReceiptOcrResult/);
   assert.match(appSource, /'Content-Type': file\.type/);
+  assert.match(appSource, /const startReceiptOcr = useCallback/);
+  assert.match(appSource, /onClick=\{startReceiptOcr\}/);
+  assert.match(appSource, /isReceiptOcrEntry/);
+  assert.match(appSource, /if \(isReceiptOcrEntry\) \{\s*recognizeReceipt\(file\);/);
   assert.match(appSource, /不會自動儲存/);
+});
+
+test('一般新增支出上傳照片不會觸發收據辨識', () => {
+  assert.match(appSource, /\{isReceiptOcrEntry \? '拍照／選取收據' : '上傳照片'\}/);
+  assert.match(appSource, /\{isReceiptOcrEntry && \(/);
 });

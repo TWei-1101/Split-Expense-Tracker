@@ -811,7 +811,8 @@ async function _getStorage() {
 
             const isEditing = state.isEditing;
             const expenseToEdit = state.editingExpense;
-            const modalTitle = isEditing ? '編輯支出記錄' : '新增支出記錄';
+            const isReceiptOcrEntry = Boolean(state.isReceiptOcr) && !isEditing;
+            const modalTitle = isEditing ? '編輯支出記錄' : (isReceiptOcrEntry ? '拍照／選取收據' : '新增支出記錄');
             const submitText = isEditing ? '儲存修改' : '確認新增支出';
             
             const currentExchangeRate = liveExchangeRates[newExpense.currency] || DEFAULT_EXCHANGE_RATES[newExpense.currency] || 1.0;
@@ -1008,7 +1009,9 @@ async function _getStorage() {
                 setImagePreviewUrl(URL.createObjectURL(file));
                 setRemoveExistingImage(false);
                 setModalError(null);
-                recognizeReceipt(file);
+                if (isReceiptOcrEntry) {
+                    recognizeReceipt(file);
+                }
             };
 
             const compressImage = (file) => new Promise((resolve, reject) => {
@@ -1458,13 +1461,16 @@ async function _getStorage() {
                       )}
                     </div>
 
-                    {/* 2. 收據 / 圖片 */}
+                    {/* 收據辨識從主畫面獨立入口進入；一般新增支出只上傳附件圖片。 */}
                     <div className="pt-4 border-t border-gray-100">
-                      <label htmlFor="expenseImage" className="block text-sm font-medium text-gray-700">收據 / 圖片</label>
+                      <label htmlFor="expenseImage" className="block text-sm font-medium text-gray-700">
+                        {isReceiptOcrEntry ? '拍照／選取收據' : '上傳照片'}
+                      </label>
                       <div className="mt-2 flex flex-col sm:flex-row gap-3 sm:items-center">
                         <input
                           type="file"
                           id="expenseImage"
+                          name="expenseImage"
                           accept="image/*"
                           onChange={handleImageChange}
                           className="block w-full text-sm text-gray-600 file:mr-4 file:rounded-full file:border-0 file:bg-primaryColor-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-primaryColor-700 hover:file:bg-primaryColor-100 disabled:opacity-50"
@@ -1481,15 +1487,24 @@ async function _getStorage() {
                           </button>
                         )}
                       </div>
-                      <p className="mt-1 text-xs text-gray-500">支援圖片檔，原圖上限 20MB；儲存前會自動壓縮。</p>
-                      <p className="mt-1 text-xs text-primaryColor-700" role="status" aria-live="polite">
-                        {receiptOcrStatus || '選取收據後會自動辨識並預填品項、金額、日期與幣別；不會自動儲存。'}
+                      <p className="mt-1 text-xs text-gray-500">
+                        {isReceiptOcrEntry
+                          ? '可拍照或選取收據圖片（上限 20MB）；辨識結果會預填欄位，確認後才會儲存。'
+                          : '支援圖片檔，原圖上限 20MB；儲存前會自動壓縮。'}
                       </p>
+                      {isReceiptOcrEntry && (
+                        <p className="mt-1 text-xs text-primaryColor-700" role="status" aria-live="polite">
+                          {receiptOcrStatus || '選取收據後會自動辨識並預填品項、金額、日期與幣別；不會自動儲存。'}
+                        </p>
+                      )}
                       {imagePreviewUrl && (
                         <div className="mt-3">
                           <img
                             src={imagePreviewUrl}
                             alt="支出圖片預覽"
+                            width="128"
+                            height="128"
+                            loading="lazy"
                             className="h-32 w-32 rounded-lg object-cover border border-gray-200 shadow-sm"
                           />
                         </div>
@@ -2144,6 +2159,7 @@ async function _getStorage() {
               isOpen: false,
               editingExpense: null,
               isEditing: false,
+              isReceiptOcr: false,
           });
           
           const [confirmModalState, setConfirmModalState] = useState({
@@ -3045,6 +3061,20 @@ async function _getStorage() {
                 isOpen: true,
                 editingExpense: null,
                 isEditing: false,
+                isReceiptOcr: false,
+            });
+          }, [isReadOnly]);
+
+          const startReceiptOcr = useCallback(() => {
+            if (isReadOnly) {
+                setError('您正在瀏覽共享紀錄簿，無法進行修改。請切換回您的私有紀錄簿。');
+                return;
+            }
+            setExpenseModalState({
+                isOpen: true,
+                editingExpense: null,
+                isEditing: false,
+                isReceiptOcr: true,
             });
           }, [isReadOnly]);
           
@@ -3057,6 +3087,7 @@ async function _getStorage() {
                 isOpen: true,
                 editingExpense: expense,
                 isEditing: true,
+                isReceiptOcr: false,
              });
           }, [isReadOnly]);
 
@@ -3065,6 +3096,7 @@ async function _getStorage() {
                 isOpen: false,
                 editingExpense: null,
                 isEditing: false,
+                isReceiptOcr: false,
             });
             setError(null);
           }, []);
@@ -4141,17 +4173,32 @@ async function _getStorage() {
                 
                 
                 {/* 主要功能區塊 */}
-                <div className="mt-6 flex space-x-4">
+                <div className="mt-6 flex flex-wrap gap-3">
                   <button
                     onClick={startAdd}
                     disabled={isReadOnly}
                     className={
-                      "flex-1 flex items-center justify-center px-4 py-3 rounded-xl text-white transition duration-300 shadow-xl hover:scale-[1.03] transform disabled:bg-gray-400 disabled:cursor-not-allowed " +
+                      "min-w-0 flex-1 flex items-center justify-center px-4 py-3 rounded-xl text-white transition duration-300 shadow-xl hover:scale-[1.03] transform disabled:bg-gray-400 disabled:cursor-not-allowed " +
                       (isReadOnly ? "bg-gray-400" : "bg-primaryColor-500 hover:bg-primaryColor-600 focus:ring-4 focus:ring-primaryColor-300")
                     }
                   >
                     <Plus className="w-6 h-6 mr-2" />
                     新增支出 {isReadOnly && '(唯讀)'}
+                  </button>
+                  <button
+                    onClick={startReceiptOcr}
+                    disabled={isReadOnly}
+                    className={
+                      "flex items-center justify-center gap-2 rounded-xl border px-4 py-3 font-semibold transition duration-300 shadow-xl hover:scale-[1.03] transform focus:ring-4 disabled:cursor-not-allowed " +
+                      (isReadOnly
+                        ? "border-gray-300 bg-gray-100 text-gray-400"
+                        : "border-primaryColor-500 bg-white text-primaryColor-700 hover:bg-primaryColor-50 focus:ring-primaryColor-300")
+                    }
+                    aria-label="拍照或選取收據並自動辨識"
+                    title={isReadOnly ? '唯讀模式下無法新增支出' : '拍照或選取收據，自動預填支出欄位'}
+                  >
+                    <span aria-hidden="true" className="text-lg">📷</span>
+                    <span>拍照／選取收據</span>
                   </button>
                   <button
 					onClick={() => {
