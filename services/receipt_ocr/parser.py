@@ -16,6 +16,26 @@ DATE = re.compile(
 )
 TIME = re.compile(r"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)")
 
+# Keep receipt prefills intentionally simple: when OCR sees one of these
+# travel-relevant terms, use that term as the expense name.  The web form then
+# derives its existing four-way category from the same keyword.
+ITEM_KEYWORDS = (
+    ("7-Eleven", ("7-eleven", "seven eleven", "セブンイレブン")),
+    ("全家", ("全家", "familymart", "ファミリーマート")),
+    ("拉麵", ("拉麵", "ラーメン", "ramen")),
+    ("壽司", ("壽司", "寿司", "sushi")),
+    ("咖啡", ("咖啡", "カフェ", "coffee", "cafe")),
+    ("機票", ("機票", "flight", "airline", "飛行機")),
+    ("纜車", ("纜車", "cable car", "ropeway", "ロープウェイ")),
+    ("租車", ("租車", "rental car", "レンタカー")),
+    ("計程車", ("計程車", "taxi", "タクシー")),
+    ("地鐵", ("地鐵", "捷運", "metro", "subway", "地下鉄")),
+    ("巴士", ("巴士", "公車", "bus", "バス")),
+    ("火車", ("火車", "train", "jr", "電車", "新幹線")),
+    ("飯店", ("飯店", "hotel", "ホテル")),
+    ("旅館", ("旅館", "民宿", "hostel", "ryokan", "宿泊")),
+)
+
 
 def _currency(text: str) -> str:
     upper = text.upper()
@@ -40,6 +60,11 @@ def _amount(line: str) -> int | float | None:
 
 
 def _description(lines: list[str]) -> str | None:
+    receipt_text = "\n".join(lines).casefold()
+    for label, keywords in ITEM_KEYWORDS:
+        if any(keyword.casefold() in receipt_text for keyword in keywords):
+            return label
+
     # Japanese convenience-store receipts commonly print a branch name ending
     # in 店. Prefer it over misrecognised brand text and the following address.
     for line in lines:

@@ -17,7 +17,7 @@ class ReceiptParserTests(unittest.TestCase):
 """)
 
         self.assertEqual(result, {
-            "description": "全家便利商店",
+            "description": "全家",
             "originalAmount": 85,
             "currency": "TWD",
             "occurredAt": "2026-08-12T12:00",
@@ -80,6 +80,15 @@ nanaco支
 
         self.assertEqual(result["originalAmount"], 1161)
         self.assertEqual(result["currency"], "JPY")
+
+    def test_uses_matched_category_keyword_as_description(self):
+        result = parse_receipt_text("""7-Eleven 千代田店
+2019年10月01日 08:45
+おにぎり ￥130
+合計 ￥1,161
+""")
+
+        self.assertEqual(result["description"], "7-Eleven")
 
     def test_falls_back_to_largest_yen_charge_when_final_total_label_is_lost(self):
         # A narrow mobile upload can make RapidOCR miss the isolated 計 label.
