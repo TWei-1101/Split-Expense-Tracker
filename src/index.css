@@ -86,7 +86,7 @@ input[type='number']::-webkit-outer-spin-button {
 .swipe-delete-row {
   position: relative;
   overflow: hidden;
-  border-radius: .5rem;
+  border-radius: .75rem;
   touch-action: pan-y;
 }
 
@@ -97,7 +97,12 @@ input[type='number']::-webkit-outer-spin-button {
 
 .swipe-delete-row__action {
   position: absolute;
-  inset: 0;
+  /* Match the visual card rather than painting a full-height layer beneath it.
+     This prevents a red seam from appearing along the card's lower rounded edge. */
+  top: 1px;
+  right: 0;
+  bottom: 1px;
+  width: 7rem;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -106,6 +111,11 @@ input[type='number']::-webkit-outer-spin-button {
   font-size: .875rem;
   font-weight: 700;
   background: rgb(220 38 38);
+  border-radius: 0 .75rem .75rem 0;
+  /* Keep the destructive layer completely absent until a real left drag begins. */
+  opacity: 0;
+  transition: opacity 80ms linear;
+  pointer-events: none;
 }
 
 .swipe-delete-row__content {

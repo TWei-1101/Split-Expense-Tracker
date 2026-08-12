@@ -86,12 +86,14 @@ const RECEIPT_OCR_ENDPOINT = import.meta.env.VITE_RECEIPT_OCR_ENDPOINT || 'https
 
 function SwipeDeleteRow({ children, onDelete, disabled = false, label }) {
   const contentRef = useRef(null);
+  const actionRef = useRef(null);
   const dragRef = useRef(null);
   const didSwipeRef = useRef(false);
 
   const resetPosition = useCallback(() => {
     const element = contentRef.current;
     if (element) element.style.transform = 'translateX(0)';
+    if (actionRef.current) actionRef.current.style.opacity = '0';
   }, []);
 
   const handlePointerDown = useCallback((event) => {
@@ -105,13 +107,16 @@ function SwipeDeleteRow({ children, onDelete, disabled = false, label }) {
     const xDistance = event.clientX - drag.startX;
     const yDistance = event.clientY - drag.startY;
     if (!drag.active) {
-      if (Math.abs(yDistance) > Math.abs(xDistance)) { dragRef.current = null; return; }
-      if (Math.abs(xDistance) < 8) return;
+      // iOS reports a few pixels of sideways jitter while the page is scrolling.
+      // Only take over once this is clearly a deliberate left swipe.
+      if (Math.abs(yDistance) > Math.abs(xDistance) / 1.5 || xDistance >= 0) { dragRef.current = null; return; }
+      if (Math.abs(xDistance) < 14) return;
       drag.active = true;
       event.currentTarget.setPointerCapture(event.pointerId);
     }
     const dampedDistance = Math.max(-112, Math.min(0, xDistance * 0.85));
     if (contentRef.current) contentRef.current.style.transform = `translateX(${dampedDistance}px)`;
+    if (actionRef.current) actionRef.current.style.opacity = dampedDistance < -1 ? '1' : '0';
     event.preventDefault();
   }, []);
 
@@ -138,6 +143,7 @@ function SwipeDeleteRow({ children, onDelete, disabled = false, label }) {
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerEnd}
       onPointerCancel={() => { dragRef.current = null; resetPosition(); }}
+      onLostPointerCapture={() => { dragRef.current = null; resetPosition(); }}
       onKeyDown={(event) => {
         if (!disabled && (event.key === 'Delete' || event.key === 'Backspace')) {
           event.preventDefault();
@@ -145,7 +151,7 @@ function SwipeDeleteRow({ children, onDelete, disabled = false, label }) {
         }
       }}
     >
-      <div className="swipe-delete-row__action" aria-hidden="true">刪除</div>
+      <div ref={actionRef} className="swipe-delete-row__action" aria-hidden="true">刪除</div>
       <div
         ref={contentRef}
         className="swipe-delete-row__content"
