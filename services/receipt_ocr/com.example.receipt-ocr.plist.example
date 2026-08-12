@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.example.receipt-ocr</string>
+  <key>ProgramArguments</key><array>
+    <string>/Users/twei/.venvs/receipt-ocr/bin/python</string>
+    <string>/Users/twei/.openclaw/workspace/repos/Split-Expense-Tracker/services/receipt_ocr/server.py</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/twei/.openclaw/workspace/repos/Split-Expense-Tracker/services/receipt_ocr</string>
+  <key>EnvironmentVariables</key><dict>
+    <key>GOOGLE_APPLICATION_CREDENTIALS</key><string>/Users/twei/.config/firebase/receipt-ocr-service-account.json</string>
+    <key>RECEIPT_OCR_HOST</key><string>127.0.0.1</string>
+    <key>RECEIPT_OCR_PORT</key><string>8788</string>
+  </dict>
+  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/receipt-ocr.log</string>
+  <key>StandardErrorPath</key><string>/tmp/receipt-ocr.error.log</string>
+</dict></plist>

@@ -75,12 +75,14 @@ import {
   sortRecycleBinRecordsNewestFirst,
 } from './lib/expense-recycle-bin.js';
 import { shouldTriggerSwipeDelete } from './lib/swipe-delete.js';
+import { normalizeReceiptOcrResult } from './lib/receipt-ocr.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
 // --- Firebase 設定（從 CDN 版 hardcode，沿用同一份，避免 query 跑到 default-app-id）---
 const appId = 'YOUR_APP_ID';
 const SELF_PAYER_KEY = '__self__';
+const RECEIPT_OCR_ENDPOINT = import.meta.env.VITE_RECEIPT_OCR_ENDPOINT || 'https://receipt-ocr.twei-ha.com/v1/receipts:parse';
 
 function SwipeDeleteRow({ children, onDelete, disabled = false, label }) {
   const contentRef = useRef(null);
@@ -780,7 +782,7 @@ async function _getStorage() {
 		/**
          * 支出 Modal (核心邏輯獨立)
          */
-        const ExpenseModal = memo(({ db, currentUserId, members, expenses, luggage, getInitialShares, state, onClose, getDisplayName, isReadOnly, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel, isOnline, onExpenseSaved, onExpenseSaveFailed }) => {
+        const ExpenseModal = memo(({ db, auth, currentUserId, members, expenses, luggage, getInitialShares, state, onClose, getDisplayName, isReadOnly, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel, isOnline, onExpenseSaved, onExpenseSaveFailed }) => {
             const [newExpense, setNewExpense] = useState({
                 description: '',
                 originalAmount: '',
@@ -803,6 +805,7 @@ async function _getStorage() {
             const [isLoadingModal, setIsLoadingModal] = useState(false);
             const [modalError, setModalError] = useState(null);
             const [uploadStatus, setUploadStatus] = useState('');
+            const [receiptOcrStatus, setReceiptOcrStatus] = useState('');
             const [duplicateCandidates, setDuplicateCandidates] = useState([]);
             const { isPresent: isExpenseModalPresent, isEntering: isExpenseModalEntering, isExiting: isExpenseModalExiting } = useAnimatedPresence(state.isOpen);
 
@@ -903,6 +906,7 @@ async function _getStorage() {
                     setRemoveExistingImage(false);
                     setModalError(null);
                     setUploadStatus('');
+                    setReceiptOcrStatus('');
                     setDuplicateCandidates([]);
                 }
             }, [state.isOpen, isEditing, expenseToEdit, members, currentUserId, getInitialShares, currentUserLabel, getDisplayName, defaultCurrency]);
@@ -952,6 +956,40 @@ async function _getStorage() {
                 }) }
               : null;
 
+            const recognizeReceipt = async (file) => {
+                if (!auth?.currentUser) return;
+                if (!isOnline) {
+                    setReceiptOcrStatus('目前離線，已保留收據圖片；恢復連線後可重新選取圖片辨識。');
+                    return;
+                }
+                setReceiptOcrStatus('正在辨識收據並預填欄位…');
+                try {
+                    const idToken = await auth.currentUser.getIdToken();
+                    const response = await fetch(RECEIPT_OCR_ENDPOINT, {
+                        method: 'POST',
+                        headers: {
+                          Authorization: `Bearer ${idToken}`,
+                          'Content-Type': file.type,
+                        },
+                        body: file,
+                    });
+                    const payload = await response.json().catch(() => ({}));
+                    if (!response.ok) throw new Error(payload.error || '辨識服務暫時無法使用。');
+                    const fields = normalizeReceiptOcrResult(payload);
+                    if (!Object.keys(fields).length) throw new Error('沒有辨識到可預填的欄位，請手動輸入。');
+                    setNewExpense((previous) => ({
+                        ...previous,
+                        ...fields,
+                        category: fields.description && !categoryWasManuallySelected
+                          ? inferExpenseCategory(fields.description)
+                          : previous.category,
+                    }));
+                    setReceiptOcrStatus('已預填辨識結果，請確認後再儲存。');
+                } catch (error) {
+                    setReceiptOcrStatus(`收據未能自動辨識：${error.message}`);
+                }
+            };
+
             const handleImageChange = (e) => {
                 const file = e.target.files?.[0];
                 if (!file) return;
@@ -970,6 +1008,7 @@ async function _getStorage() {
                 setImagePreviewUrl(URL.createObjectURL(file));
                 setRemoveExistingImage(false);
                 setModalError(null);
+                recognizeReceipt(file);
             };
 
             const compressImage = (file) => new Promise((resolve, reject) => {
@@ -1443,6 +1482,9 @@ async function _getStorage() {
                         )}
                       </div>
                       <p className="mt-1 text-xs text-gray-500">支援圖片檔，原圖上限 20MB；儲存前會自動壓縮。</p>
+                      <p className="mt-1 text-xs text-primaryColor-700" role="status" aria-live="polite">
+                        {receiptOcrStatus || '選取收據後會自動辨識並預填品項、金額、日期與幣別；不會自動儲存。'}
+                      </p>
                       {imagePreviewUrl && (
                         <div className="mt-3">
                           <img
@@ -4174,6 +4216,7 @@ async function _getStorage() {
                 <ExpenseModal 
                     key={expenseModalState.isEditing && expenseModalState.editingExpense ? `edit-${expenseModalState.editingExpense.id}` : 'add-new'}
                     db={db}
+                    auth={auth}
                     currentUserId={userId}
                     members={members}
                     expenses={expenses}

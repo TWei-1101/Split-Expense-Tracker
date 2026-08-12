@@ -1,0 +1,2 @@
+firebase-admin>=6.6,<7
+rapidocr-onnxruntime>=1.2.2,<2
