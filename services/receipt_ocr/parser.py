@@ -10,7 +10,10 @@ import re
 
 TOTAL_LABEL = re.compile(r"(?:總(?:計|額)|合計|應付(?:金額)?|TOTAL|AMOUNT\s+DUE)", re.I)
 AMOUNT = re.compile(r"(?<!\d)(\d{1,3}(?:,\d{3})+|\d+(?:\.\d{1,2})?)(?!\d)")
-DATE = re.compile(r"(?<!\d)(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?!\d)")
+DATE = re.compile(
+    r"(?<!\d)(\d{4})(?:[/-]|年)(\d{1,2})(?:[/-]|月)(\d{1,2})(?:日)?(?!\d)"
+)
+TIME = re.compile(r"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)")
 
 
 def _currency(text: str) -> str:
@@ -33,6 +36,12 @@ def _amount(line: str) -> int | float | None:
 
 
 def _description(lines: list[str]) -> str | None:
+    # Japanese convenience-store receipts commonly print a branch name ending
+    # in 店. Prefer it over misrecognised brand text and the following address.
+    for line in lines:
+        if re.fullmatch(r"[\u4e00-\u9fff\u3040-\u30ff]+店", line):
+            return line
+
     for line in lines:
         # A merchant is generally at the top, contains letters, and is not a
         # date, a total, or an address/receipt serial number.
@@ -43,18 +52,32 @@ def _description(lines: list[str]) -> str | None:
     return None
 
 
+def _total(lines: list[str]) -> int | float | None:
+    """Return a labeled total, including Japanese receipts split across lines."""
+    candidates = [_amount(line) for line in lines if TOTAL_LABEL.search(line)]
+
+    for index, line in enumerate(lines):
+        # RapidOCR can split 「計」 and its value onto two lines. Restrict this
+        # to a standalone label so 小計 is never mistaken for the final total.
+        if line == "計" and index + 1 < len(lines):
+            candidates.append(_amount(lines[index + 1]))
+
+    return next((value for value in reversed(candidates) if value is not None), None)
+
+
 def parse_receipt_text(text: str) -> dict:
     """Return form-ready receipt data, using null for fields not found."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    total_candidates = [_amount(line) for line in lines if TOTAL_LABEL.search(line)]
-    total = next((value for value in reversed(total_candidates) if value is not None), None)
+    total = _total(lines)
 
     occurred_at = None
     date_match = DATE.search(text)
     if date_match:
         year, month, day = map(int, date_match.groups())
         if 1 <= month <= 12 and 1 <= day <= 31:
-            occurred_at = f"{year:04d}-{month:02d}-{day:02d}T12:00"
+            time_match = TIME.search(text[date_match.end():])
+            time = f"{time_match.group(1).zfill(2)}:{time_match.group(2)}" if time_match else "12:00"
+            occurred_at = f"{year:04d}-{month:02d}-{day:02d}T{time}"
 
     return {
         "description": _description(lines),

@@ -35,6 +35,38 @@ TOTAL JPY 1,200
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-07-01T12:00")
 
+    def test_parses_japanese_7eleven_receipt_from_rapidocr_output(self):
+        result = parse_receipt_text("""C.CAr-C.ca
+SIVENSNOINGS
+千代田店
+东京都千代田区二番町8一8
+電話：03-1234-5678
+2019年10月01日（火）08:45
+手卷辛子明太子
+*130
+小計（税拔8%）
+￥270
+消費税等（8%）
+￥21
+小
+計（税达10%）
+￥490
+小
+計（非課税）
+￥50
+計
+￥1,161
+nanaco支
+￥1，139
+""")
+
+        self.assertEqual(result, {
+            "description": "千代田店",
+            "originalAmount": 1161,
+            "currency": "JPY",
+            "occurredAt": "2019-10-01T08:45",
+        })
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",
