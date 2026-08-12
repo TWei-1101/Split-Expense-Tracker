@@ -16,14 +16,18 @@ DATE = re.compile(
 )
 TIME = re.compile(r"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)")
 
-# Keep receipt prefills intentionally simple: when OCR sees one of these
-# travel-relevant terms, use that term as the expense name.  The web form then
-# derives its existing four-way category from the same keyword.
-ITEM_KEYWORDS = (
+# Store names are useful for the form's item name, but they must never decide
+# the category: convenience stores sell food, toiletries, tickets and more.
+MERCHANT_KEYWORDS = (
     # nanaco is the 7-Eleven Japan payment programme.  On narrow receipts the
     # logo itself is frequently unreadable, while this marker survives OCR.
     ("7-Eleven", ("7-eleven", "seven eleven", "セブンイレブン", "nanaco")),
     ("全家", ("全家", "familymart", "ファミリーマート")),
+)
+
+# Categories are inferred only from purchased-item wording.  Payment methods
+# (for example Japanese transit IC money) are deliberately not included.
+ITEM_KEYWORDS = (
     ("拉麵", ("拉麵", "ラーメン", "ramen")),
     ("壽司", ("壽司", "寿司", "sushi")),
     ("咖啡", ("咖啡", "カフェ", "coffee", "cafe")),
@@ -36,6 +40,12 @@ ITEM_KEYWORDS = (
     ("火車", ("火車", "train", "jr", "電車", "新幹線")),
     ("飯店", ("飯店", "hotel", "ホテル")),
     ("旅館", ("旅館", "民宿", "hostel", "ryokan", "宿泊")),
+)
+
+CATEGORY_ITEM_KEYWORDS = (
+    ("food", ("拉麵", "ラーメン", "ramen", "壽司", "寿司", "sushi", "咖啡", "カフェ", "coffee", "cafe", "飯", "便當", "おにぎり", "手卷", "手巻", "明太子", "弁当", "飲料", "飲み物", "麵包", "パン")),
+    ("transport", ("機票", "flight", "airline", "飛行機", "纜車", "cable car", "ropeway", "ロープウェイ", "租車", "rental car", "レンタカー", "計程車", "taxi", "タクシー", "地鐵", "捷運", "metro", "subway", "地下鉄", "巴士", "公車", "bus", "バス", "火車", "train", "電車", "新幹線")),
+    ("lodging", ("飯店", "hotel", "ホテル", "旅館", "民宿", "hostel", "ryokan", "宿泊")),
 )
 
 
@@ -63,7 +73,7 @@ def _amount(line: str) -> int | float | None:
 
 def _description(lines: list[str]) -> str | None:
     receipt_text = "\n".join(lines).casefold()
-    for label, keywords in ITEM_KEYWORDS:
+    for label, keywords in MERCHANT_KEYWORDS + ITEM_KEYWORDS:
         if any(keyword.casefold() in receipt_text for keyword in keywords):
             return label
 
@@ -83,6 +93,15 @@ def _description(lines: list[str]) -> str | None:
     return None
 
 
+def _category(lines: list[str]) -> str:
+    """Classify only product detail text; unknown receipts are safely other."""
+    receipt_text = "\n".join(lines).casefold()
+    for category, keywords in CATEGORY_ITEM_KEYWORDS:
+        if any(keyword.casefold() in receipt_text for keyword in keywords):
+            return category
+    return "other"
+
+
 def _total(lines: list[str]) -> int | float | None:
     """Return a labeled total, including Japanese receipts split across lines."""
     def compact(line: str) -> str:
@@ -98,6 +117,31 @@ def _total(lines: list[str]) -> int | float | None:
             candidates.append(_amount(lines[index + 1]))
 
     labeled_total = next((value for value in reversed(candidates) if value is not None), None)
+
+    # A frequent 7-Eleven Japan failure mode is that the OCR drops the leading
+    # "1," from the final total, returning ￥161 for a ￥1,161 receipt.  That
+    # receipt also prints the nanaco payment and the cashless rebate.  When
+    # both are available, their sum is a stronger cross-check than the single
+    # (possibly damaged) total glyph.  Keep this deliberately narrow: it only
+    # applies to the nanaco receipt format, and only replaces a smaller total.
+    compact_lines = [compact(line) for line in lines]
+    nanaco_payment = None
+    cashless_rebate = None
+    for index, line in enumerate(compact_lines):
+        if "nanaco" in line.casefold() and ("支" in line or "払" in line):
+            nanaco_payment = _amount(lines[index]) or (
+                _amount(lines[index + 1]) if index + 1 < len(lines) else None
+            )
+        if re.search(r"(?:還元|返金|値引|割引)", line):
+            cashless_rebate = _amount(lines[index]) or (
+                _amount(lines[index + 1]) if index + 1 < len(lines) else None
+            )
+
+    if nanaco_payment is not None and cashless_rebate is not None:
+        verified_total = nanaco_payment + cashless_rebate
+        if labeled_total is None or labeled_total < nanaco_payment:
+            return verified_total
+
     if labeled_total is not None:
         return labeled_total
 
@@ -134,6 +178,7 @@ def parse_receipt_text(text: str) -> dict:
 
     return {
         "description": _description(lines),
+        "category": _category(lines),
         "originalAmount": total,
         "currency": _currency(text),
         "occurredAt": occurred_at,

@@ -18,6 +18,7 @@ class ReceiptParserTests(unittest.TestCase):
 
         self.assertEqual(result, {
             "description": "全家",
+            "category": "other",
             "originalAmount": 85,
             "currency": "TWD",
             "occurredAt": "2026-08-12T12:00",
@@ -62,6 +63,7 @@ nanaco支
 
         self.assertEqual(result, {
             "description": "7-Eleven",
+            "category": "food",
             "originalAmount": 1161,
             "currency": "JPY",
             "occurredAt": "2019-10-01T08:45",
@@ -90,6 +92,17 @@ nanaco支
 
         self.assertEqual(result["description"], "7-Eleven")
 
+    def test_store_or_payment_method_does_not_decide_category(self):
+        result = parse_receipt_text("""FamilyMart
+交通系支
+￥322
+合計
+￥328
+""")
+
+        self.assertEqual(result["description"], "全家")
+        self.assertEqual(result["category"], "other")
+
     def test_falls_back_to_largest_yen_charge_when_final_total_label_is_lost(self):
         # A narrow mobile upload can make RapidOCR miss the isolated 計 label.
         # The fallback must not choose the later nanaco payment or cashless
@@ -110,9 +123,22 @@ nanaco支
 
         self.assertEqual(result["originalAmount"], 1161)
 
+    def test_repairs_7eleven_total_when_ocr_drops_its_leading_digit(self):
+        result = parse_receipt_text("""千代田店
+nanaco支
+￥1，139
+還元額
+-22
+計
+￥161
+""")
+
+        self.assertEqual(result["originalAmount"], 1161)
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",
+            "category": "other",
             "originalAmount": None,
             "currency": "TWD",
             "occurredAt": None,

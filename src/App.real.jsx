@@ -1014,8 +1014,8 @@ async function _getStorage() {
                         const nextExpense = mergeReceiptOcrIntoExpense(previous, payload);
                         return {
                           ...nextExpense,
-                          category: fields.description && !categoryWasManuallySelected
-                            ? inferExpenseCategory(fields.description)
+                          category: !categoryWasManuallySelected
+                            ? (fields.category || (fields.description ? inferExpenseCategory(fields.description) : previous.category))
                             : previous.category,
                         };
                     });

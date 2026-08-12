@@ -12,11 +12,13 @@ test('收據辨識結果只會預填有效的品項、金額、支援的幣別�
     description: '全家便利商店',
     originalAmount: '150.5',
     currency: 'jpy',
+    category: 'food',
     occurredAt: '2026-08-12T10:30:00+08:00',
   }), {
     description: '全家便利商店',
     originalAmount: 150.5,
     currency: 'JPY',
+    category: 'food',
     occurredAt: '2026-08-12T10:30',
   });
 });
@@ -35,10 +37,10 @@ test('收據辨識金額接受 OCR 常見的千分位、全形逗號與相容欄
 
 test('OCR 回傳的 1161 會直接成為受控金額欄位可顯示的字串值', () => {
   const expense = mergeReceiptOcrIntoExpense({ description: '', originalAmount: '', currency: 'TWD' }, {
-    description: '千代田店', originalAmount: 1161, currency: 'JPY', occurredAt: '2019-10-01T08:45',
+    description: '千代田店', originalAmount: 1161, currency: 'JPY', category: 'food', occurredAt: '2019-10-01T08:45',
   });
   assert.deepEqual(expense, {
-    description: '千代田店', originalAmount: '1161', currency: 'JPY', occurredAt: '2019-10-01T08:45',
+    description: '千代田店', originalAmount: '1161', currency: 'JPY', category: 'food', occurredAt: '2019-10-01T08:45',
   });
   const renderedAmountInput = renderToStaticMarkup(React.createElement('input', {
     type: 'number', id: 'originalAmount', value: expense.originalAmount, readOnly: true,

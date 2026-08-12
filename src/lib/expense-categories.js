@@ -14,9 +14,9 @@ export const EXPENSE_CATEGORY_OPTIONS = Object.freeze([
 
 const CATEGORY_KEYWORDS = Object.freeze({
   [EXPENSE_CATEGORIES.FOOD]: [
-    '餐', '飯', '早餐', '午餐', '晚餐', '宵夜', '咖啡', '飲料', '拉麵', '壽司', '燒肉', '便當', '甜點', '麵包', '全家', '7-eleven', 'seven eleven',
+    '餐', '飯', '早餐', '午餐', '晚餐', '宵夜', '咖啡', '飲料', '拉麵', '壽司', '燒肉', '便當', '甜點', '麵包',
     'food', 'restaurant', 'cafe', 'coffee', 'breakfast', 'lunch', 'dinner', 'ramen', 'sushi', 'meal',
-    'レストラン', 'カフェ', 'コーヒー', '朝食', '昼食', '夕食', 'ラーメン', '寿司', '食事', 'セブンイレブン', 'ファミリーマート',
+    'レストラン', 'カフェ', 'コーヒー', '朝食', '昼食', '夕食', 'ラーメン', '寿司', '食事',
   ],
   [EXPENSE_CATEGORIES.TRANSPORT]: [
     '交通', '車票', '計程車', '捷運', '地鐵', '公車', '巴士', '火車', '高鐵', '機票', '租車', '停車', '加油', 'jr', '地鐵',
