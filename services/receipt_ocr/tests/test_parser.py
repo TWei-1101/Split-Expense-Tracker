@@ -67,6 +67,20 @@ nanaco支
             "occurredAt": "2019-10-01T08:45",
         })
 
+    def test_parses_japanese_total_when_ocr_inserts_spaces_and_fullwidth_comma(self):
+        # RapidOCR may split the label and use a fullwidth comma on a Japanese
+        # receipt; this must not make the parser fall back to a line item.
+        result = parse_receipt_text("""千代田店
+2019年10月01日（火）08:45
+小 計
+￥100
+合 計
+￥1，161
+""")
+
+        self.assertEqual(result["originalAmount"], 1161)
+        self.assertEqual(result["currency"], "JPY")
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",

@@ -31,27 +31,23 @@ test('收據辨識金額接受 OCR 常見的千分位、全形逗號與相容欄
   assert.deepEqual(normalizeReceiptOcrResult({ originalAmount: '總計 1,161' }), {});
 });
 
-test('主畫面的收據入口會先開啟圖片來源選擇，並帶 Firebase 身分憑證呼叫本地 OCR', () => {
+test('主畫面的收據入口是單一相機按鈕，直接呼叫原生圖片選擇器並帶 Firebase 身分憑證呼叫本地 OCR', () => {
   assert.match(appSource, /getIdToken\(\)/);
   assert.match(appSource, /RECEIPT_OCR_ENDPOINT/);
   assert.match(appSource, /normalizeReceiptOcrResult/);
   assert.match(appSource, /'Content-Type': file\.type/);
   assert.match(appSource, /const startReceiptOcr = useCallback/);
-  assert.match(appSource, /onClick=\{startReceiptOcr\}/);
-  assert.match(appSource, /setIsReceiptPickerOpen\(true\)/);
-  assert.match(appSource, /isOpen=\{isReceiptPickerOpen\}/);
-  assert.match(appSource, /新增收據/);
-  assert.match(appSource, /capture="environment"/);
-  assert.match(appSource, /上傳照片/);
-  assert.match(appSource, /htmlFor="receipt-upload-image"/);
-  assert.match(appSource, /id="receipt-upload-image"/);
-  assert.match(appSource, /className="absolute inset-0 h-full w-full cursor-pointer opacity-0"/);
+  assert.match(appSource, /receiptOcrInputRef\.current\?\.click\(\)/);
+  assert.match(appSource, /id="receipt-ocr-image"/);
+  assert.match(appSource, /accept="image\/\*"/);
   assert.match(appSource, /onChange=\{handleReceiptImageSelected\}/);
   assert.match(appSource, /receiptImageFile: file/);
   assert.match(appSource, /isReceiptOcrEntry/);
   assert.match(appSource, /const file = state\.receiptImageFile/);
   assert.match(appSource, /if \(isReceiptOcrEntry\) \{\s*recognizeReceipt\(file\);/);
   assert.match(appSource, /不會自動儲存/);
+  assert.doesNotMatch(appSource, /isReceiptPickerOpen/);
+  assert.doesNotMatch(appSource, /選擇收據圖片來源/);
 });
 
 test('OCR 非同步回應抵達時不會被 modal 初始化的重渲染清空', () => {

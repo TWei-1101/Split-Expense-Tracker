@@ -2106,7 +2106,7 @@ async function _getStorage() {
             [recycleBinExpenses],
           );
           const [isRecycleBinModalOpen, setIsRecycleBinModalOpen] = useState(false);
-		  const [isReceiptPickerOpen, setIsReceiptPickerOpen] = useState(false);
+		  const receiptOcrInputRef = useRef(null);
 		  const [pendingRecycleBinExpenseIds, setPendingRecycleBinExpenseIds] = useState(() => new Set());
           const [luggage, setLuggage] = useState([]);
           const [isLuggageModalOpen, setIsLuggageModalOpen] = useState(false);
@@ -3108,7 +3108,7 @@ async function _getStorage() {
                 setError('您正在瀏覽共享紀錄簿，無法進行修改。請切換回您的私有紀錄簿。');
                 return;
             }
-            setIsReceiptPickerOpen(true);
+            receiptOcrInputRef.current?.click();
           }, [isReadOnly]);
 
           const handleReceiptImageSelected = useCallback((event) => {
@@ -3124,7 +3124,6 @@ async function _getStorage() {
               setError('圖片檔案請小於 20MB。');
               return;
             }
-            setIsReceiptPickerOpen(false);
             setExpenseModalState({
                 isOpen: true,
                 editingExpense: null,
@@ -4275,10 +4274,11 @@ async function _getStorage() {
                 </div>
                 <div className="mt-3">
                   <button
+                    type="button"
                     onClick={startReceiptOcr}
                     disabled={isReadOnly}
                     className={
-                      "flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-3 font-semibold transition duration-300 shadow-lg hover:scale-[1.01] transform focus:ring-4 disabled:cursor-not-allowed " +
+                      "flex h-12 w-12 items-center justify-center rounded-xl border transition duration-300 shadow-lg hover:scale-[1.03] transform focus:ring-4 disabled:cursor-not-allowed " +
                       (isReadOnly
                         ? "border-gray-300 bg-gray-100 text-gray-400"
                         : "border-primaryColor-500 bg-white text-primaryColor-700 hover:bg-primaryColor-50 focus:ring-primaryColor-300")
@@ -4286,9 +4286,20 @@ async function _getStorage() {
                     aria-label="拍照或選取收據並自動辨識"
                     title={isReadOnly ? '唯讀模式下無法新增支出' : '拍照或選取收據，自動預填支出欄位'}
                   >
-                    <span aria-hidden="true" className="text-lg">📷</span>
-                    <span>拍照／選取收據</span>
+                    <svg aria-hidden="true" className="h-6 w-6" {...IconProps} viewBox="0 0 24 24">
+                      <path d="M4 7h3l1.5-2h7L17 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
+                      <circle cx="12" cy="13" r="3.5" />
+                    </svg>
                   </button>
+                  <input
+                    ref={receiptOcrInputRef}
+                    type="file"
+                    id="receipt-ocr-image"
+                    name="receipt-ocr-image"
+                    accept="image/*"
+                    className="sr-only"
+                    onChange={handleReceiptImageSelected}
+                  />
                 </div>
 
                 {/* 總結與列表 */}
@@ -4320,55 +4331,6 @@ async function _getStorage() {
                 />
 
                 {/* Modal 區塊 */}
-                <AnimatedModalFrame
-                    isOpen={isReceiptPickerOpen}
-                    onClose={() => setIsReceiptPickerOpen(false)}
-                    ariaLabel="選擇收據圖片來源"
-                    contentClassName="w-full max-w-sm rounded-xl bg-white p-6 shadow-2xl"
-                >
-                    <div className="text-center">
-                      <span aria-hidden="true" className="text-3xl">📷</span>
-                      <h2 className="mt-2 text-xl font-bold text-gray-800">新增收據</h2>
-                      <p className="mt-1 text-sm text-gray-500">選擇圖片來源後，會自動辨識並開啟新增支出。</p>
-                    </div>
-                    <div className="mt-6 grid grid-cols-2 gap-3">
-                      <label htmlFor="receipt-camera-image" className="relative flex min-h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-primaryColor-200 bg-primaryColor-50 px-3 py-4 text-center font-semibold text-primaryColor-800 transition hover:border-primaryColor-500 hover:bg-primaryColor-100 focus-within:ring-4 focus-within:ring-primaryColor-300">
-                        <span aria-hidden="true" className="text-2xl">📷</span>
-                        <span>拍照</span>
-                        <input
-                          type="file"
-                          id="receipt-camera-image"
-                          name="receipt-camera-image"
-                          accept="image/*"
-                          capture="environment"
-                          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                          onChange={handleReceiptImageSelected}
-                        />
-                      </label>
-                      <label
-                        htmlFor="receipt-upload-image"
-                        className="relative flex min-h-24 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-primaryColor-200 bg-primaryColor-50 px-3 py-4 text-center font-semibold text-primaryColor-800 transition hover:border-primaryColor-500 hover:bg-primaryColor-100 focus-within:ring-4 focus-within:ring-primaryColor-300"
-                      >
-                        <span aria-hidden="true" className="text-2xl">🖼️</span>
-                        <span>上傳照片</span>
-                        <input
-                          type="file"
-                          id="receipt-upload-image"
-                          name="receipt-upload-image"
-                          accept="image/*"
-                          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                          onChange={handleReceiptImageSelected}
-                        />
-                      </label>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setIsReceiptPickerOpen(false)}
-                      className="mt-4 min-h-11 w-full rounded-xl bg-gray-100 px-4 py-3 font-semibold text-gray-700 transition hover:bg-gray-200 focus:ring-4 focus:ring-gray-300"
-                    >
-                      取消
-                    </button>
-                </AnimatedModalFrame>
                 <ExpenseModal 
                     key={expenseModalState.isEditing && expenseModalState.editingExpense ? `edit-${expenseModalState.editingExpense.id}` : 'add-new'}
                     db={db}

@@ -28,7 +28,10 @@ def _currency(text: str) -> str:
 
 
 def _amount(line: str) -> int | float | None:
-    matches = AMOUNT.findall(line)
+    # RapidOCR can emit fullwidth punctuation on a Japanese receipt.  Normalize
+    # only numeric separators here, so a total such as ￥1，161 remains one
+    # amount rather than two unrelated numbers (1 and 161).
+    matches = AMOUNT.findall(line.replace("，", ","))
     if not matches:
         return None
     value = float(matches[-1].replace(",", ""))
@@ -54,12 +57,16 @@ def _description(lines: list[str]) -> str | None:
 
 def _total(lines: list[str]) -> int | float | None:
     """Return a labeled total, including Japanese receipts split across lines."""
-    candidates = [_amount(line) for line in lines if TOTAL_LABEL.search(line)]
+    def compact(line: str) -> str:
+        return re.sub(r"[\s\u3000]+", "", line)
+
+    candidates = [_amount(line) for line in lines if TOTAL_LABEL.search(compact(line))]
 
     for index, line in enumerate(lines):
-        # RapidOCR can split 「計」 and its value onto two lines. Restrict this
-        # to a standalone label so 小計 is never mistaken for the final total.
-        if line == "計" and index + 1 < len(lines):
+        # RapidOCR can split a final-total label and its value onto two lines,
+        # sometimes inserting spaces inside 合計.  Restrict this to explicit
+        # final-total labels so 小計 is never mistaken for the final total.
+        if compact(line).upper() in {"計", "合計", "總計", "總額", "TOTAL", "AMOUNTDUE"} and index + 1 < len(lines):
             candidates.append(_amount(lines[index + 1]))
 
     return next((value for value in reversed(candidates) if value is not None), None)
