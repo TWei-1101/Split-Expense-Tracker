@@ -1,4 +1,5 @@
 const SUPPORTED_CURRENCIES = new Set(['TWD', 'CNY', 'HKD', 'USD', 'THB', 'EUR', 'CAD', 'VND', 'IDR', 'JPY', 'KRW', 'AUD', 'NOK']);
+const SUPPORTED_CATEGORIES = new Set(['food', 'transport', 'lodging', 'other']);
 
 function toDateTimeLocal(value) {
   if (typeof value !== 'string' || !value) return undefined;
@@ -32,6 +33,7 @@ export function normalizeReceiptOcrResult(result = {}) {
   if (amount !== undefined) normalized.originalAmount = amount;
   const currency = typeof result.currency === 'string' ? result.currency.toUpperCase() : '';
   if (SUPPORTED_CURRENCIES.has(currency)) normalized.currency = currency;
+  if (typeof result.category === 'string' && SUPPORTED_CATEGORIES.has(result.category)) normalized.category = result.category;
   const occurredAt = toDateTimeLocal(result.occurredAt);
   if (occurredAt) normalized.occurredAt = occurredAt;
   return normalized;
