@@ -61,6 +61,8 @@ import {
   filterExpensesByCategory,
 } from './lib/expense-categories.js';
 import { expenseTimestampToDate, findDuplicateExpenses } from './lib/duplicate-expenses.js';
+import { calculateBalances as calculateBalancesImpl, calculateSettlements as calculateSettlementsImpl } from './lib/settlement.js';
+import { convertToTWD as convertToTWDImpl } from './lib/currency.js';
 import { formatExpenseDateTimeLocal, parseExpenseDateTimeLocal } from './lib/expense-date-time.js';
 import {
   buildLuggageDeletionPlan,
@@ -845,8 +847,7 @@ async function _getStorage() {
             
             const currentExchangeRate = liveExchangeRates[newExpense.currency] || DEFAULT_EXCHANGE_RATES[newExpense.currency] || 1.0;
             const amountInTWD = useMemo(() => {
-                const amount = parseFloat(newExpense.originalAmount) || 0;
-                return amount * currentExchangeRate;
+                return convertToTWDImpl(newExpense.originalAmount, currentExchangeRate);
             }, [newExpense.originalAmount, currentExchangeRate]);
 
             // ✨ NEW: 選單不列 TWD（因為是預設幣），TWD 改用左邊的 TW 按鈕切換
@@ -3766,32 +3767,7 @@ async function _getStorage() {
 
           // --- 9. 分帳計算 ---
           const calculateBalances = useMemo(() => {
-            const balances = members.reduce((acc, name) => ({ ...acc, [name]: 0 }), {});
-
-            expenses.forEach(expense => {
-              if (expense.payerName === SELF_PAYER_KEY) return;
-
-              const amount = expense.amountInTWD; 
-              const { payerName, shares } = expense;
-              const totalShares = Object.values(shares).reduce((sum, s) => sum + s, 0);
-
-              if (totalShares === 0) return;
-
-              const costPerShare = amount / totalShares;
-
-              if (balances[payerName] !== undefined) {
-                balances[payerName] += amount;
-              }
-
-              Object.entries(shares).forEach(([member, shareCount]) => {
-                const memberCost = costPerShare * shareCount;
-                if (balances[member] !== undefined) {
-                  balances[member] -= memberCost;
-                }
-              });
-            });
-
-            return balances;
+            return calculateBalancesImpl(members, expenses, { selfPayerKey: SELF_PAYER_KEY });
           }, [expenses, members]);
 
           // 退稅只追蹤付款人待收款項，不參與 calculateBalances / calculateSettlements。
@@ -3801,53 +3777,8 @@ async function _getStorage() {
           );
 
           const calculateSettlements = useMemo(() => {
-            const balances = calculateBalances;
-            const settlements = [];
-
-            const creditors = []; 
-            const debtors = []; 
-
-            const mutableBalances = { ...balances };
-
-            for (const member in mutableBalances) {
-                const balance = mutableBalances[member];
-                if (balance >= 1) { 
-                    creditors.push({ name: member, amount: balance });
-                } else if (balance <= -1) { 
-                    debtors.push({ name: member, amount: -balance }); 
-                }
-            }
-
-            let i = 0; 
-            let j = 0; 
-
-            while (i < debtors.length && j < creditors.length) {
-                const debtor = debtors[i];
-                const creditor = creditors[j];
-
-                const transferAmount = Math.round(Math.min(debtor.amount, creditor.amount));
-
-                if (transferAmount > 0) {
-                    settlements.push({
-                        from: debtor.name,
-                        to: creditor.name,
-                        amount: transferAmount,
-                    });
-                }
-
-                debtor.amount -= transferAmount;
-                creditor.amount -= transferAmount;
-
-                if (debtor.amount < 1) { 
-                    i++;
-                }
-                if (creditor.amount < 1) {
-                    j++;
-                }
-            }
-            
-            return settlements;
-          }, [calculateBalances]); 
+            return calculateSettlementsImpl(calculateBalances);
+          }, [calculateBalances]);
 
           const formatTimestamp = (timestamp) => {
             if (!timestamp) return '無日期';
