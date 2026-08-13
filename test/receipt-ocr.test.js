@@ -95,12 +95,12 @@ test('相機與新增支出為右下角懸浮操作，管理分帳入口位於�
   const floatingAddEntry = appSource.indexOf('onClick={startAdd}');
   const memberEntry = appSource.indexOf('[管理分帳成員]');
   const sharesLabel = appSource.indexOf('分帳份數');
-  const averageEntry = appSource.indexOf('[設為平均分配]');
+  const personalEntry = appSource.indexOf('[設為個人記帳]');
   assert.ok(receiptEntry > floatingAddEntry);
   assert.match(appSource, /fixed bottom-6 right-5/);
   assert.match(appSource, /fixed bottom-\[5\.5rem\] right-5/);
   assert.match(appSource, /h-14 w-14 items-center justify-center rounded-full text-white shadow-2xl/);
-  assert.ok(memberEntry > sharesLabel && memberEntry < averageEntry);
+  assert.ok(memberEntry > sharesLabel && memberEntry < personalEntry);
   assert.doesNotMatch(appSource, /<Users className="w-6 h-6" \/>/);
 });
 

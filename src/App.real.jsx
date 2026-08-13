@@ -1175,11 +1175,15 @@ async function _getStorage() {
                 });
             };
 
-            const setToAverageSplit = () => {
-                const averageShares = members.reduce((acc, name) => ({ ...acc, [name]: 1 }), {});
+            const setToPersonalExpense = () => {
+                const payer = newExpense.payerName;
+                const personalShares = members.reduce((acc, name) => {
+                    acc[name] = name === payer ? 1 : 0;
+                    return acc;
+                }, {});
                 setNewExpense(prev => ({
                     ...prev,
-                    shares: averageShares,
+                    shares: personalShares,
                 }));
             };
 
@@ -1634,12 +1638,12 @@ async function _getStorage() {
                           [管理分帳成員]
                         </button>
                         <button
-                          onClick={setToAverageSplit}
+                          onClick={setToPersonalExpense}
                           type="button"
                           className="text-sm text-primaryColor-600 hover:text-primaryColor-800 font-medium disabled:opacity-50"
                           disabled={isReadOnly}
                         >
-                          [設為平均分配]
+                          [設為個人記帳]
                         </button>
                       </div>
                       {/* 移除 max-h-48，讓 flex-1 負責滾動 */}
