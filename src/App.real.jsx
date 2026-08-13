@@ -4651,13 +4651,6 @@ async function _getStorage() {
                     </div>
                 </div>
                 
-                {/* 顯示搜尋結果數量提示 */}
-                {(searchKeyword.trim() !== '' || filterCategory) && expenses.length > sortedExpenses.length && (
-                    <p className="text-sm text-gray-600 mb-4 italic p-2 bg-gray-100 rounded-lg">
-                        顯示 {sortedExpenses.length} 筆{searchKeyword.trim() ? `符合「${searchKeyword}」` : ''}{searchKeyword.trim() && filterCategory ? '且' : ''}{filterCategory ? `屬於「${EXPENSE_CATEGORY_OPTIONS.find(option => option.value === filterCategory)?.label}」` : ''}的結果 (總計 {expenses.length} 筆)。
-                    </p>
-                )}
-
                 {/* ✨ NEW: 搜尋結果摘要 - 總金額 + 每份平均（用組內成員份額加總當分母，每個成員只計一次） */}
                 {searchKeyword.trim() !== '' && sortedExpenses.length > 0 && (() => {
                     // 收集每個 user 第一次出現的 share value（dedup：廷瑋=2、郁傑=1 → 3，不乘上 7 筆）
