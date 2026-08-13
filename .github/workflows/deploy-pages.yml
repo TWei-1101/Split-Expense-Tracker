@@ -46,4 +46,4 @@ jobs:
             --project-name ${{ github.ref_name == 'main' && 'split-expense-tracker' || 'split-expense-tracker-test' }}
             --branch ${{ github.ref_name }}
             --commit-dirty=true
-            --commit-message "${{ github.event.head_commit.message }} [${{ github.sha }}]"
+            --commit-message "deploy-${{ github.sha }}"

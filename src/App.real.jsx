@@ -61,6 +61,8 @@ import {
   filterExpensesByCategory,
 } from './lib/expense-categories.js';
 import { expenseTimestampToDate, findDuplicateExpenses } from './lib/duplicate-expenses.js';
+import { calculateBalances as calculateBalancesImpl, calculateSettlements as calculateSettlementsImpl } from './lib/settlement.js';
+import { convertToTWD as convertToTWDImpl } from './lib/currency.js';
 import { formatExpenseDateTimeLocal, parseExpenseDateTimeLocal } from './lib/expense-date-time.js';
 import {
   buildLuggageDeletionPlan,
@@ -828,8 +830,7 @@ async function _getStorage() {
             
             const currentExchangeRate = liveExchangeRates[newExpense.currency] || DEFAULT_EXCHANGE_RATES[newExpense.currency] || 1.0;
             const amountInTWD = useMemo(() => {
-                const amount = parseFloat(newExpense.originalAmount) || 0;
-                return amount * currentExchangeRate;
+                return convertToTWDImpl(newExpense.originalAmount, currentExchangeRate);
             }, [newExpense.originalAmount, currentExchangeRate]);
 
             // ✨ NEW: 選單不列 TWD（因為是預設幣），TWD 改用左邊的 TW 按鈕切換
@@ -1157,11 +1158,15 @@ async function _getStorage() {
                 });
             };
 
-            const setToAverageSplit = () => {
-                const averageShares = members.reduce((acc, name) => ({ ...acc, [name]: 1 }), {});
+            const setToPersonalExpense = () => {
+                const payer = newExpense.payerName;
+                const personalShares = members.reduce((acc, name) => {
+                    acc[name] = name === payer ? 1 : 0;
+                    return acc;
+                }, {});
                 setNewExpense(prev => ({
                     ...prev,
-                    shares: averageShares,
+                    shares: personalShares,
                 }));
             };
 
@@ -1616,12 +1621,12 @@ async function _getStorage() {
                           [管理分帳成員]
                         </button>
                         <button
-                          onClick={setToAverageSplit}
+                          onClick={setToPersonalExpense}
                           type="button"
                           className="text-sm text-primaryColor-600 hover:text-primaryColor-800 font-medium disabled:opacity-50"
                           disabled={isReadOnly}
                         >
-                          [設為平均分配]
+                          [設為個人記帳]
                         </button>
                       </div>
                       {/* 移除 max-h-48，讓 flex-1 負責滾動 */}
@@ -3749,32 +3754,7 @@ async function _getStorage() {
 
           // --- 9. 分帳計算 ---
           const calculateBalances = useMemo(() => {
-            const balances = members.reduce((acc, name) => ({ ...acc, [name]: 0 }), {});
-
-            expenses.forEach(expense => {
-              if (expense.payerName === SELF_PAYER_KEY) return;
-
-              const amount = expense.amountInTWD; 
-              const { payerName, shares } = expense;
-              const totalShares = Object.values(shares).reduce((sum, s) => sum + s, 0);
-
-              if (totalShares === 0) return;
-
-              const costPerShare = amount / totalShares;
-
-              if (balances[payerName] !== undefined) {
-                balances[payerName] += amount;
-              }
-
-              Object.entries(shares).forEach(([member, shareCount]) => {
-                const memberCost = costPerShare * shareCount;
-                if (balances[member] !== undefined) {
-                  balances[member] -= memberCost;
-                }
-              });
-            });
-
-            return balances;
+            return calculateBalancesImpl(members, expenses, { selfPayerKey: SELF_PAYER_KEY });
           }, [expenses, members]);
 
           // 退稅只追蹤付款人待收款項，不參與 calculateBalances / calculateSettlements。
@@ -3784,53 +3764,8 @@ async function _getStorage() {
           );
 
           const calculateSettlements = useMemo(() => {
-            const balances = calculateBalances;
-            const settlements = [];
-
-            const creditors = []; 
-            const debtors = []; 
-
-            const mutableBalances = { ...balances };
-
-            for (const member in mutableBalances) {
-                const balance = mutableBalances[member];
-                if (balance >= 1) { 
-                    creditors.push({ name: member, amount: balance });
-                } else if (balance <= -1) { 
-                    debtors.push({ name: member, amount: -balance }); 
-                }
-            }
-
-            let i = 0; 
-            let j = 0; 
-
-            while (i < debtors.length && j < creditors.length) {
-                const debtor = debtors[i];
-                const creditor = creditors[j];
-
-                const transferAmount = Math.round(Math.min(debtor.amount, creditor.amount));
-
-                if (transferAmount > 0) {
-                    settlements.push({
-                        from: debtor.name,
-                        to: creditor.name,
-                        amount: transferAmount,
-                    });
-                }
-
-                debtor.amount -= transferAmount;
-                creditor.amount -= transferAmount;
-
-                if (debtor.amount < 1) { 
-                    i++;
-                }
-                if (creditor.amount < 1) {
-                    j++;
-                }
-            }
-            
-            return settlements;
-          }, [calculateBalances]); 
+            return calculateSettlementsImpl(calculateBalances);
+          }, [calculateBalances]);
 
           const formatTimestamp = (timestamp) => {
             if (!timestamp) return '無日期';
@@ -4634,13 +4569,6 @@ async function _getStorage() {
                     </div>
                 </div>
                 
-                {/* 顯示搜尋結果數量提示 */}
-                {(searchKeyword.trim() !== '' || filterCategory) && expenses.length > sortedExpenses.length && (
-                    <p className="text-sm text-gray-600 mb-4 italic p-2 bg-gray-100 rounded-lg">
-                        顯示 {sortedExpenses.length} 筆{searchKeyword.trim() ? `符合「${searchKeyword}」` : ''}{searchKeyword.trim() && filterCategory ? '且' : ''}{filterCategory ? `屬於「${EXPENSE_CATEGORY_OPTIONS.find(option => option.value === filterCategory)?.label}」` : ''}的結果 (總計 {expenses.length} 筆)。
-                    </p>
-                )}
-
                 {/* ✨ NEW: 搜尋結果摘要 - 總金額 + 每份平均（用組內成員份額加總當分母，每個成員只計一次） */}
                 {searchKeyword.trim() !== '' && sortedExpenses.length > 0 && (() => {
                     // 收集每個 user 第一次出現的 share value（dedup：廷瑋=2、郁傑=1 → 3，不乘上 7 筆）

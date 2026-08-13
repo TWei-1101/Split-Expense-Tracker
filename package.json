@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test test/*.test.js",
+    "test:watch": "node --test --watch test/*.test.js"
   },
   "dependencies": {
     "firebase": "^12.6.0",
