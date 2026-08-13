@@ -36,7 +36,6 @@ import {
   arrayRemove,
 } from 'firebase/firestore';
 import { getOfflineSyncStatus } from './lib/offline-sync-status.js';
-import { detectTelegramMode } from './lib/tg-mode.js';
 import { createTaxRefund, getTaxRefundProfileByCountry, pendingTaxRefundTotalInTWD, TAX_REFUND_PROFILES } from './lib/tax-refund.js';
 import {
   buildGroupBookList,
@@ -180,7 +179,7 @@ function readCachedSignedInUser() {
     try {
         const cached = JSON.parse(window.localStorage.getItem(AUTH_BOOTSTRAP_STORAGE_KEY) || 'null');
         return cached && typeof cached.uid === 'string' && cached.uid ? cached : null;
-    } catch (error) {
+    } catch (_error) {
         return null;
     }
 }
@@ -199,7 +198,7 @@ function cacheSignedInUser(user, { collectionId = user?.uid, shortCode = null, o
         } else {
             window.localStorage.removeItem(AUTH_BOOTSTRAP_STORAGE_KEY);
         }
-    } catch (error) {
+    } catch (_error) {
         // localStorage can be unavailable in private/locked-down contexts.
     }
 }
@@ -207,7 +206,7 @@ function cacheSignedInUser(user, { collectionId = user?.uid, shortCode = null, o
 function clearCachedSignedInUser() {
     try {
         window.localStorage.removeItem(AUTH_BOOTSTRAP_STORAGE_KEY);
-    } catch (error) {
+    } catch (_error) {
         // Nothing to clear when storage is unavailable.
     }
 }
@@ -254,7 +253,7 @@ function getFirebaseAuthWithPersistentCache(app) {
         _authInstance = initializeAuth(app, {
             persistence: [indexedDBLocalPersistence, browserLocalPersistence],
         });
-    } catch (error) {
+    } catch (_error) {
         // Firebase may already have initialized Auth through another bundle.
         _authInstance = getAuth(app);
     }
@@ -314,11 +313,7 @@ async function _getStorage() {
 		const getGroupLuggageDocPath = (groupId) =>
 		  `artifacts/${appId}/groups/${groupId}/settings/luggage`;
 
-		const getExpenseImagePath = (groupId, expenseId, fileName) => {
-		  const safeName = (fileName || 'receipt').replace(/[^\w.\-]+/g, '_').slice(-80);
-		  return `artifacts/${appId}/groups/${groupId}/expense-images/${expenseId}-${Date.now()}-${safeName}`;
-		};
-		
+
         // --- 匯率設定 (預設值作為備用) ---
         const PERMANENT_RATES_CACHE_KEY = "permanentExchangeRates";
         // ✨ NEW: 定義記憶最後一次使用幣別的 Key
@@ -648,13 +643,13 @@ async function _getStorage() {
          * 認證模態視窗
          */
         const AuthModal = memo(({ auth, db, setToastMessage, isOpen, onClose }) => { // MODIFIED: 接受控制屬性
-            if (!isOpen) return null; // NEW: 檢查是否開啟
-            
             const [email, setEmail] = useState('');
             const [password, setPassword] = useState('');
             const [nickname, setNickname] = useState('');
             const [isLogin, setIsLogin] = useState(true);
             const [isLoading, setIsLoading] = useState(false);
+
+            if (!isOpen) return null; // NEW: 檢查是否開啟
 
             const handleSubmit = async (e) => {
                 e.preventDefault();
@@ -855,6 +850,8 @@ async function _getStorage() {
                             ...acc, 
                             [name]: expenseToEdit.shares[name] !== undefined ? expenseToEdit.shares[name] : 0 
                         }), {});
+                        // A changed edit key is the external record switch; its fields must synchronously replace this modal's draft.
+                        // eslint-disable-next-line react-hooks/set-state-in-effect
                         setNewExpense({
                             description: expenseToEdit.description,
                             originalAmount: expenseToEdit.originalAmount,
@@ -891,7 +888,7 @@ async function _getStorage() {
 							  defaultPayerId = memberId;
 							  break;
 							}
-						  } catch (e) {
+						  } catch (_e) {
 							// getDisplayName 出錯就忽略
 						  }
 						}
@@ -1052,6 +1049,8 @@ async function _getStorage() {
                 if (!isReceiptOcrEntry || !file || handledReceiptFileRef.current === file) return;
                 handledReceiptFileRef.current = file;
                 if (!file.type.startsWith('image/')) {
+                    // The browser supplies this file outside React; reject a non-image before any OCR or preview work starts.
+                    // eslint-disable-next-line react-hooks/set-state-in-effect
                     setModalError('請選擇圖片檔。');
                     return;
                 }
@@ -1721,7 +1720,7 @@ async function _getStorage() {
 		/**
          * 成員管理 Modal (核心邏輯獨立)
          */
-        const MemberManagementModal = memo(({ db, currentUserId, members, customMembers, defaultSharesConfig, isMemberModalOpen, setIsMemberModalOpen, saveMembers, handleSaveDefaultShares, handleDeleteMember, setIsLoading, isLoading, setError, getDisplayName, isReadOnly, groupMembers, groupOwner, inviteUserByEmail, removeGroupMember, setToastMessage, migrateMemberID }) => { // <-- MODIFIED: Add migrateMemberID
+        const MemberManagementModal = memo(({ currentUserId, members, customMembers, defaultSharesConfig, isMemberModalOpen, setIsMemberModalOpen, saveMembers, handleSaveDefaultShares, handleDeleteMember, isLoading, getDisplayName, isReadOnly, groupMembers, groupOwner, inviteUserByEmail, removeGroupMember, migrateMemberID }) => { // <-- MODIFIED: Add migrateMemberID
             const [memberInput, setMemberInput] = useState('');
             const [tempDefaultShares, setTempDefaultShares] = useState({});
             // NEW: 內部訊息狀態
@@ -1738,6 +1737,8 @@ async function _getStorage() {
                         acc[name] = shareValue;
                         return acc;
                     }, {});
+                    // Opening supplies a new member/default-share snapshot, so the modal must synchronously reset its independent draft.
+                    // eslint-disable-next-line react-hooks/set-state-in-effect
                     setTempDefaultShares(initialShares);
                     setMemberInput('');
                     setModalMessage(null); // NEW: 開啟時清除訊息
@@ -1752,11 +1753,6 @@ async function _getStorage() {
                 }
             }, [isMemberModalOpen, members, defaultSharesConfig, groupMembers, customMembers, currentUserId]); // <-- MODIFIED: 增加依賴
             
-            // NEW: 內部訊息清除 (防止無限迴圈)
-            const resetMessage = useCallback(() => {
-                setModalMessage(null);
-            }, []);
-
 			
 			// 只處理「一般成員名稱」→ 加到分帳成員名單
 			const handleAddMemberByName = async (name) => {
@@ -2095,8 +2091,7 @@ async function _getStorage() {
           const [userProfiles, setUserProfiles] = useState({});
 		  const [lastExchangeUpdate, setLastExchangeUpdate] = useState(null);
           const [liveExchangeRates, setLiveExchangeRates] = useState(DEFAULT_EXCHANGE_RATES);
-		  const [defaultCurrency, setDefaultCurrency] = useState(DEFAULT_CURRENCY);
-		  const [detectedCountry, setDetectedCountry] = useState(null);
+		  const [defaultCurrency] = useState(DEFAULT_CURRENCY);
 		  const [copyMessage, setCopyMessage] = useState('');
 		  const toastController = useMemo(
 			() => createTimedMessageController({ setMessage: setCopyMessage }),
@@ -2190,6 +2185,8 @@ async function _getStorage() {
 		  // 已登入使用者可切換自己建立或受邀加入的帳本；訪客維持分享連結唯讀模式。
 		  useEffect(() => {
 		    if (!db || !userId || isGuest) {
+		      // Auth/database availability is external; clear its previous account-book snapshot before rendering a signed-out view.
+		      // eslint-disable-next-line react-hooks/set-state-in-effect
 		      setGroupBooks([]);
 		      return;
 		    }
@@ -2270,6 +2267,7 @@ async function _getStorage() {
 		  if (!error) return;
 
 		  const timer = setTimeout(() => {
+			// This external timer is the lifecycle boundary for transient UI feedback and must clear it when it expires.
 			setError(null);
 		  }, 3000); // 3 秒清除
 
@@ -2279,6 +2277,8 @@ async function _getStorage() {
           // --- 1. Firebase 初始化與驗證（支援 /g/短代碼） ---
           useEffect(() => {
             if (!firebaseConfig) {
+              // Missing Firebase config is an external initialization failure; surface it before any auth subscription can exist.
+              // eslint-disable-next-line react-hooks/set-state-in-effect
               setError('Firebase configuration is missing.');
               setAuthReady(true);
               return;
@@ -3105,6 +3105,8 @@ async function _getStorage() {
 				});
 			  });
 
+			  // Firestore-backed member lists and historical expense participants are external inputs; synchronize their merged snapshot.
+			  // eslint-disable-next-line react-hooks/set-state-in-effect
 			  setMembers(currentMembers);
 			}, [currentCollectionId, customMembers, isGuest, groupMembers, expenses]); // ✅ NEW: 加上 expenses 依賴
 
@@ -3293,7 +3295,7 @@ async function _getStorage() {
 			setIsLoading(true);
 			try {
 			  const batch = writeBatch(db);
-			  const { id: ignoredId, ...expenseData } = record.expense;
+			  const { id: _ignoredId, ...expenseData } = record.expense;
 			  batch.set(doc(db, getGroupExpensesPath(currentCollectionId), record.id), expenseData);
 			  batch.delete(doc(db, getGroupRecycleBinPath(currentCollectionId), record.id));
 			  await batch.commit();
@@ -3420,6 +3422,8 @@ async function _getStorage() {
 
 				  if (sameNicknameOldNameExists) {
 				    // 自動合併：不跳確認
+				    // This callback is created later in the same stable component scope.
+				    // eslint-disable-next-line react-hooks/immutability
 				    await migrateMemberID(invitedDisplayName, invitedUid, setModalMessage, { skipConfirm: true });
 				    // 合併後不需要再提示手動替換
 				  } else {
@@ -4589,7 +4593,6 @@ async function _getStorage() {
                         }
                     }
                     const memberShareValues = Array.from(memberShareMap.values());
-                    const searchMemberCount = memberShareMap.size;
                     // 分母 = Σ(每位成員份額)，每人只算一次（不會乘上 expense 數量）
                     const searchGroupShares = memberShareValues.reduce((s, n) => s + n, 0);
                     const searchTotal = sortedExpenses.reduce((s, e) => s + (e.amountInTWD || 0), 0);
@@ -4900,17 +4903,7 @@ async function _getStorage() {
             );
         });
 
-        const BalanceSummary = memo(({ settlements, balances, members, getDisplayName, isReadOnly, settleMemberDebt, pendingTaxRefundInTWD, offlineSyncStatus }) => {
-            const debtorBalances = useMemo(() => {
-                return members.filter(member => Math.round(balances[member] || 0) < 0)
-                               .map(member => ({
-                                   id: member,
-                                   amount: Math.abs(Math.round(balances[member] || 0)),
-                                   displayName: getDisplayName(member),
-                               }))
-                               .filter(d => d.amount > 0);
-            }, [balances, members, getDisplayName]);
-
+        const BalanceSummary = memo(({ settlements, getDisplayName, isReadOnly, settleMemberDebt, pendingTaxRefundInTWD, offlineSyncStatus }) => {
             return (
               <div className="mt-8 p-6 bg-white rounded-xl shadow-2xl">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
