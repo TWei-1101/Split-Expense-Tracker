@@ -24,7 +24,7 @@ if [[ "$CURRENT_BRANCH" != "main" ]]; then
 fi
 
 # 確認工作目錄乾淨
-if [[ -n "$(git status --porcelain)" ]]; then
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
     echo "❌ 工作目錄有未 commit 的改動："
     git status --short
     exit 1
