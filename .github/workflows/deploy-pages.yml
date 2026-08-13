@@ -34,9 +34,15 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Set commit subject for deploy log
+        id: meta
+        run: |
+          echo "subject=$(echo \"${{ github.event.head_commit.message }}\" | head -1)" >> "$GITHUB_OUTPUT"
+
       - name: Deploy (main → prod, other → preview)
         env:
           CF_ACCOUNT_ID: db273682e79e3ece0509cac24fae67e1
+          COMMIT_SUBJECT: ${{ steps.meta.outputs.subject }}
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CF_TOKEN }}
@@ -46,4 +52,4 @@ jobs:
             --project-name ${{ github.ref_name == 'main' && 'split-expense-tracker' || 'split-expense-tracker-test' }}
             --branch ${{ github.ref_name }}
             --commit-dirty=true
-            --commit-message "${{ github.event.head_commit.message }} [${{ github.sha }}]"
+            --commit-message "${COMMIT_SUBJECT} [${{ github.sha }}]"
