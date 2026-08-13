@@ -23,6 +23,12 @@ test('收據辨識結果只會預填有效的品項、金額、支援的幣別�
   });
 });
 
+test('收據日期保留 OCR 回傳的當地鐘面時間，不受執行環境時區影響', () => {
+  assert.deepEqual(normalizeReceiptOcrResult({ occurredAt: '2026-08-12T10:30:00+08:00' }), {
+    occurredAt: '2026-08-12T10:30',
+  });
+});
+
 test('收據辨識的不可信欄位不覆寫表單', () => {
   assert.deepEqual(normalizeReceiptOcrResult({
     description: ' ', originalAmount: -1, currency: 'BTC', occurredAt: 'not-a-date',

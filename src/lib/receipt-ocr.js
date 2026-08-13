@@ -5,6 +5,11 @@ function toDateTimeLocal(value) {
   if (typeof value !== 'string' || !value) return undefined;
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return undefined;
+  // datetime-local represents the receipt's printed wall-clock time. Keep an
+  // ISO response's calendar portion instead of converting it to the browser's
+  // timezone (which made OCR results differ between Taipei and CI's UTC).
+  const localDateTime = value.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})/);
+  if (localDateTime) return localDateTime[1];
   const pad = (number) => String(number).padStart(2, '0');
   return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
 }
