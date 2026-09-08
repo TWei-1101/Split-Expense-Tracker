@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { convertToTWD } from '../src/lib/currency.js';
+import { convertToTWD, normalizeFrankfurterRates } from '../src/lib/currency.js';
 
 test('convertToTWD：基本換算', () => {
   assert.equal(convertToTWD(100, 0.21), 21);    // JPY 100 = TWD 21
@@ -62,4 +62,30 @@ test('convertToTWD：浮點數邊界（不憑空多出金額）', () => {
   const nineTimes = convertToTWD(0.9, 32.5);  // 29.25
   // 用 toFixed 比對避免 JS 浮點累計誤差
   assert.equal(nineTxSum.toFixed(2), nineTimes.toFixed(2));
+});
+
+test('normalizeFrankfurterRates：將 TWD 基準匯率轉為每單位外幣的台幣價格', () => {
+  const rates = normalizeFrankfurterRates([
+    { date: '2026-09-04', base: 'TWD', quote: 'USD', rate: 0.03125 },
+    { date: '2026-09-05', base: 'TWD', quote: 'JPY', rate: 5 },
+  ], ['TWD', 'USD', 'JPY'], { TWD: 1, USD: 30.5, JPY: 0.25 });
+
+  assert.deepEqual(rates, { TWD: 1, USD: 32, JPY: 0.2 });
+});
+
+test('normalizeFrankfurterRates：缺少或無效的幣別沿用硬編碼備援', () => {
+  const fallback = { TWD: 1, USD: 30.5, JPY: 0.25, KRW: 0.023 };
+  const rates = normalizeFrankfurterRates([
+    { base: 'TWD', quote: 'USD', rate: 0 },
+    { base: 'EUR', quote: 'JPY', rate: 170 },
+  ], Object.keys(fallback), fallback);
+
+  assert.deepEqual(rates, fallback);
+});
+
+test('normalizeFrankfurterRates：拒絕非陣列的 v2 回應', () => {
+  assert.throws(
+    () => normalizeFrankfurterRates({ rates: {} }, ['TWD', 'USD'], { TWD: 1, USD: 30.5 }),
+    /must be an array/,
+  );
 });

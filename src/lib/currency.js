@@ -8,3 +8,27 @@ export function convertToTWD(originalAmount, exchangeRate) {
   const rate = Number(exchangeRate) || 0;
   return amount * rate;
 }
+
+// Frankfurter v2 returns one row per TWD/quote pair. The app stores the
+// inverse value so every rate consistently means "1 unit = x TWD".
+export function normalizeFrankfurterRates(rows, currencies, fallbackRates) {
+  if (!Array.isArray(rows)) {
+    throw new TypeError('Frankfurter rates must be an array');
+  }
+
+  const twdToCurrency = new Map(
+    rows
+      .filter((row) => row?.base === 'TWD'
+        && typeof row.quote === 'string'
+        && Number.isFinite(row.rate)
+        && row.rate > 0)
+      .map((row) => [row.quote, row.rate]),
+  );
+
+  return Object.fromEntries(currencies.map((code) => {
+    if (code === 'TWD') return [code, 1];
+
+    const rate = twdToCurrency.get(code);
+    return [code, rate ? 1 / rate : fallbackRates[code]];
+  }));
+}

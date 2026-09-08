@@ -61,7 +61,7 @@ import {
 } from './lib/expense-categories.js';
 import { expenseTimestampToDate, findDuplicateExpenses } from './lib/duplicate-expenses.js';
 import { calculateBalances as calculateBalancesImpl, calculateSettlements as calculateSettlementsImpl } from './lib/settlement.js';
-import { convertToTWD as convertToTWDImpl } from './lib/currency.js';
+import { convertToTWD as convertToTWDImpl, normalizeFrankfurterRates } from './lib/currency.js';
 import { formatExpenseDateTimeLocal, parseExpenseDateTimeLocal } from './lib/expense-date-time.js';
 import {
   buildLuggageDeletionPlan,
@@ -315,7 +315,7 @@ async function _getStorage() {
 
 
         // --- 匯率設定 (預設值作為備用) ---
-        const PERMANENT_RATES_CACHE_KEY = "permanentExchangeRates";
+        const PERMANENT_RATES_CACHE_KEY = "frankfurterPermanentExchangeRatesV2";
         // ✨ NEW: 定義記憶最後一次使用幣別的 Key
         const LAST_EXPENSE_CURRENCY_KEY = "lastExpenseCurrency";
 
@@ -375,62 +375,29 @@ async function _getStorage() {
         const CURRENCIES = Object.keys(HARDCODED_DEFAULT_RATES); // 幣別列表仍使用硬編碼的 Key
         const DEFAULT_CURRENCY = 'TWD';
 
-        // --- 匯率獲取函式：每 4 小時更新一次 + 可顯示更新時間 ---
+		// --- 匯率獲取函式：每次啟動都更新，快取只作為離線備援 ---
 		const fetchExchangeRates = async () => {
-			const CACHE_KEY = "exchangeRatesCache";
-			const CACHE_TIME_KEY = "exchangeRatesCacheTime";
-			const FOUR_HOURS = 4 * 60 * 60 * 1000;
+			const CACHE_KEY = "frankfurterExchangeRatesCacheV2";
+			const CACHE_TIME_KEY = "frankfurterExchangeRatesCacheTimeV2";
 
-			// 1. 從 localStorage 讀取臨時快取
-			try {
-				const cachedRates = localStorage.getItem(CACHE_KEY);
-				const cachedTime = localStorage.getItem(CACHE_TIME_KEY);
-
-				if (cachedRates && cachedTime) {
-					const lastUpdate = parseInt(cachedTime, 10);
-					const now = Date.now();
-
-					// 少於 4 小時 → 使用臨時快取
-					if (now - lastUpdate < FOUR_HOURS) {
-						console.log("📦 使用臨時快取匯率（4 小時內）");
-
-						return {
-							rates: JSON.parse(cachedRates),
-							lastUpdate
-						};
-					}
-				}
-			} catch (err) {
-				console.warn("⚠ 讀取臨時匯率快取失敗，將重新抓取。", err);
-			}
-
-			// 2. 超過 4 小時 → 抓取新資料
-			const API_URL = "https://open.er-api.com/v6/latest/TWD";
+			// 每次 App 啟動皆向 Frankfurter 取得最新資料。
+			const quotes = CURRENCIES.filter(code => code !== DEFAULT_CURRENCY).join(',');
+			const API_URL = `https://api.frankfurter.dev/v2/rates?base=${DEFAULT_CURRENCY}&quotes=${quotes}`;
 
 			try {
 				const res = await fetch(API_URL);
 				if (!res.ok) throw new Error("API 回應錯誤");
 
 				const data = await res.json();
-				if (!data || data.result !== "success") throw new Error("無效匯率資料");
-
-				const processedRates = { [DEFAULT_CURRENCY]: 1.0 };
-
-				CURRENCIES.forEach(code => {
-					if (code === DEFAULT_CURRENCY) return;
-
-					const rateTWDToCode = data.rates[code]; // 1 TWD = x {code}
-					if (typeof rateTWDToCode === "number" && rateTWDToCode > 0) {
-						processedRates[code] = 1 / rateTWDToCode; // 1 {code} = ? TWD
-					} else {
-                        // 如果 API 沒給，使用硬編碼預設值
-						processedRates[code] = HARDCODED_DEFAULT_RATES[code];
-					}
-				});
+				const processedRates = normalizeFrankfurterRates(
+					data,
+					CURRENCIES,
+					HARDCODED_DEFAULT_RATES,
+				);
 
 				const now = Date.now();
 
-				// 3. 寫入 Cache
+				// 寫入 Cache，供下次離線啟動備援。
 				try {
 					localStorage.setItem(CACHE_KEY, JSON.stringify(processedRates));
 					localStorage.setItem(CACHE_TIME_KEY, now.toString());
@@ -451,11 +418,20 @@ async function _getStorage() {
 
 			} catch (err) {
 				console.error("❌ 抓取匯率失敗，使用預設匯率", err);
-				const fallbackTime = Date.now();
+				let fallbackRates = DEFAULT_EXCHANGE_RATES;
+				let fallbackTime = null;
+
+				try {
+					const cachedRates = localStorage.getItem(CACHE_KEY);
+					const cachedTime = Number(localStorage.getItem(CACHE_TIME_KEY));
+					if (cachedRates) fallbackRates = JSON.parse(cachedRates);
+					if (Number.isFinite(cachedTime) && cachedTime > 0) fallbackTime = cachedTime;
+				} catch (cacheError) {
+					console.warn("⚠ 讀取匯率快取失敗，使用預設匯率。", cacheError);
+				}
 
 				return {
-					// 使用持久化或硬編碼的 DEFAULT_EXCHANGE_RATES
-					rates: DEFAULT_EXCHANGE_RATES, 
+					rates: fallbackRates,
 					lastUpdate: fallbackTime
 				};
 			}
@@ -2088,6 +2064,7 @@ async function _getStorage() {
           const [authReady, setAuthReady] = useState(() => Boolean(ownBookBootstrap));
           const [isGuest, setIsGuest] = useState(false); // NEW: 追蹤是否為匿名訪客
           const [isAuthModalOpen, setIsAuthModalOpen] = useState(false); // NEW: 控制 AuthModal 顯示
+		  const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false);
           const [userProfiles, setUserProfiles] = useState({});
 		  const [lastExchangeUpdate, setLastExchangeUpdate] = useState(null);
           const [liveExchangeRates, setLiveExchangeRates] = useState(DEFAULT_EXCHANGE_RATES);
@@ -3170,6 +3147,16 @@ async function _getStorage() {
             receiptOcrInputRef.current?.click();
           }, [isReadOnly]);
 
+		  useEffect(() => {
+			if (!isQuickActionsOpen) return undefined;
+
+			const closeOnEscape = (event) => {
+				if (event.key === 'Escape') setIsQuickActionsOpen(false);
+			};
+			window.addEventListener('keydown', closeOnEscape);
+			return () => window.removeEventListener('keydown', closeOnEscape);
+		  }, [isQuickActionsOpen]);
+
           const handleReceiptImageSelected = useCallback((event) => {
             const file = event.target.files?.[0];
             // 讓使用者取消後或下一次選相同圖片時，仍能正確觸發 change。
@@ -4221,29 +4208,55 @@ async function _getStorage() {
                 
                 
 
-                <button
-                  type="button"
-                  onClick={startAdd}
-                  disabled={isReadOnly}
-                  className={"fixed bottom-6 right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full text-white shadow-2xl transition hover:scale-105 focus:outline-none focus:ring-4 focus:ring-primaryColor-300 disabled:cursor-not-allowed disabled:bg-gray-400 sm:bottom-8 sm:right-8 " + (isReadOnly ? 'bg-gray-400' : 'bg-primaryColor-500 hover:bg-primaryColor-600')}
-                  aria-label={isReadOnly ? '唯讀模式下無法新增支出' : '新增支出'}
-                  title={isReadOnly ? '唯讀模式下無法新增支出' : '新增支出'}
-                >
-                  <Plus className="h-7 w-7" />
-                </button>
-                <button
-                  type="button"
-                  onClick={startReceiptOcr}
-                  disabled={isReadOnly}
-                  className={"fixed bottom-[5.5rem] right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full text-white shadow-2xl transition hover:scale-105 focus:outline-none focus:ring-4 focus:ring-primaryColor-300 disabled:cursor-not-allowed sm:bottom-24 sm:right-8 " + (isReadOnly ? 'bg-gray-400' : 'bg-primaryColor-500 hover:bg-primaryColor-600')}
-                  aria-label="拍照或選取收據並自動辨識"
-                  title={isReadOnly ? '唯讀模式下無法新增支出' : '拍照或選取收據，自動預填支出欄位'}
-                >
-                  <svg aria-hidden="true" className="h-7 w-7" {...IconProps} viewBox="0 0 24 24">
-                    <path d="M4 7h3l1.5-2h7L17 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
-                    <circle cx="12" cy="13" r="3.5" />
-                  </svg>
-                </button>
+				{isQuickActionsOpen && (
+				  <button
+					type="button"
+					className="fixed inset-0 z-20 cursor-default"
+					onClick={() => setIsQuickActionsOpen(false)}
+					aria-label="關閉新增操作選單"
+				  />
+				)}
+				<div className="fixed bottom-6 right-5 z-30 flex flex-col items-end gap-3 sm:bottom-8 sm:right-8">
+				  {isQuickActionsOpen && (
+					<div id="quick-actions-menu" className="flex flex-col items-end gap-3" role="menu" aria-label="新增操作">
+					  <button
+						type="button"
+						onClick={() => { setIsQuickActionsOpen(false); startReceiptOcr(); }}
+						className="flex items-center gap-3 rounded-full text-white transition hover:scale-105 focus:outline-none focus:ring-4 focus:ring-primaryColor-300"
+						role="menuitem"
+					  >
+						<span className="rounded-lg bg-white px-3 py-2 text-sm font-semibold text-gray-700 shadow-lg">掃描收據</span>
+						<span className="flex h-12 w-12 items-center justify-center rounded-full bg-primaryColor-500 shadow-2xl hover:bg-primaryColor-600">
+						  <svg aria-hidden="true" className="h-6 w-6" {...IconProps} viewBox="0 0 24 24">
+							<path d="M4 7h3l1.5-2h7L17 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
+							<circle cx="12" cy="13" r="3.5" />
+						  </svg>
+						</span>
+					  </button>
+					  <button
+						type="button"
+						onClick={() => { setIsQuickActionsOpen(false); startAdd(); }}
+						className="flex items-center gap-3 rounded-full text-white transition hover:scale-105 focus:outline-none focus:ring-4 focus:ring-primaryColor-300"
+						role="menuitem"
+					  >
+						<span className="rounded-lg bg-white px-3 py-2 text-sm font-semibold text-gray-700 shadow-lg">手動新增</span>
+						<span className="flex h-12 w-12 items-center justify-center rounded-full bg-primaryColor-500 shadow-2xl hover:bg-primaryColor-600"><Plus className="h-6 w-6" /></span>
+					  </button>
+					</div>
+				  )}
+				  <button
+					type="button"
+					onClick={() => setIsQuickActionsOpen((open) => !open)}
+					disabled={isReadOnly}
+					className={"flex h-14 w-14 items-center justify-center rounded-full text-white shadow-2xl transition hover:scale-105 focus:outline-none focus:ring-4 focus:ring-primaryColor-300 disabled:cursor-not-allowed disabled:bg-gray-400 " + (isReadOnly ? 'bg-gray-400' : 'bg-primaryColor-500 hover:bg-primaryColor-600')}
+					aria-label={isReadOnly ? '唯讀模式下無法新增支出' : (isQuickActionsOpen ? '關閉新增操作選單' : '開啟新增操作選單')}
+					aria-expanded={isQuickActionsOpen}
+					aria-controls="quick-actions-menu"
+					title={isReadOnly ? '唯讀模式下無法新增支出' : '新增支出'}
+				  >
+					{isQuickActionsOpen ? <X className="h-7 w-7" /> : <Plus className="h-7 w-7" />}
+				  </button>
+				</div>
                 <input
                     ref={receiptOcrInputRef}
                     type="file"

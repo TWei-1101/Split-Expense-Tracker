@@ -1,2 +1,6 @@
 # Local debug helpers (firebase-admin node scripts)
 /query-sjv*
+
+# Local dependencies and build output
+/node_modules/
+/dist/
