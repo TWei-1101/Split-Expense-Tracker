@@ -77,6 +77,7 @@ import {
 } from './lib/expense-recycle-bin.js';
 import { shouldTriggerSwipeDelete } from './lib/swipe-delete.js';
 import { normalizeReceiptOcrResult, mergeReceiptOcrIntoExpense } from './lib/receipt-ocr.js';
+import { buildExpenseMemberList } from './lib/expense-members.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
@@ -3051,41 +3052,22 @@ async function _getStorage() {
 			return () => { cancelled = true; };
 		  }, [db, currentCollectionId, isReadOnly, recycleBinExpenses]);
 
-          // --- 5. 衍生成員清單 ---
+		  // --- 5. 衍生成員清單 ---
 			useEffect(() => {
-			  let currentMembers = [].filter(Boolean);
-
-			  if (!isGuest && currentCollectionId) {
-				currentMembers.push(currentCollectionId);
-			  }
-
-			  // 群組可編輯成員一定要在
-			  groupMembers.forEach(uid => {
-				if (!currentMembers.includes(uid)) currentMembers.push(uid);
-			  });
-
-			  // 自訂分帳成員一定要在
-			  customMembers.forEach(name => {
-				if (name !== currentCollectionId && !currentMembers.includes(name)) {
-				  currentMembers.push(name);
-				}
-			  });
-
-			  // ✅ NEW: 把支出資料實際用到的所有成員 key 也加進來（防止結餘被「刪名」影響）
-			  expenses.forEach(exp => {
-				if (exp?.payerName && exp.payerName !== SELF_PAYER_KEY && !currentMembers.includes(exp.payerName)) {
-				  currentMembers.push(exp.payerName);
-				}
-				const shareKeys = Object.keys(exp?.shares || {});
-				shareKeys.forEach(k => {
-				  if (k && !currentMembers.includes(k)) currentMembers.push(k);
-				});
+			  const currentMembers = buildExpenseMemberList({
+				groupMembers,
+				customMembers,
+				expenses,
+				ownerId: groupOwner,
+				currentUserId: userId,
+				collectionId: currentCollectionId,
+				isGuest,
 			  });
 
 			  // Firestore-backed member lists and historical expense participants are external inputs; synchronize their merged snapshot.
 			  // eslint-disable-next-line react-hooks/set-state-in-effect
 			  setMembers(currentMembers);
-			}, [currentCollectionId, customMembers, isGuest, groupMembers, expenses]); // ✅ NEW: 加上 expenses 依賴
+			}, [currentCollectionId, customMembers, isGuest, groupMembers, groupOwner, userId, expenses]);
 
           const getInitialShares = useCallback(() => {
             return members.reduce((acc, name) => {
