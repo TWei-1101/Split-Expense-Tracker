@@ -4499,6 +4499,7 @@ async function _getStorage() {
 
             // 1 人以上才標註「最高花費者」皇冠
             const topSpenderId = memberSpending.length > 1 ? memberSpending[0]?.userId : null;
+			const hasMultipleSplitMembers = memberSpending.length > 1;
             const totalSpending = memberSpending.reduce((s, m) => s + m.amount, 0);
             const selfPaidSummary = useMemo(() => {
                 return spendingExpenses.reduce((summary, exp) => {
@@ -4681,7 +4682,8 @@ async function _getStorage() {
                                 </p>
                             </div>
                         </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+						{hasMultipleSplitMembers && (
+						<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
                             {memberSpending.map((m) => {
                                 const isTop = m.userId === topSpenderId;
                                 const isActive = filterPayer === m.displayName;
@@ -4758,7 +4760,8 @@ async function _getStorage() {
                                     </div>
                                 );
                             })()}
-                        </div>
+						</div>
+						)}
                     </div>
                 )}
                 

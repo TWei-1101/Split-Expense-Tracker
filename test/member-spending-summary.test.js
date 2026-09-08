@@ -12,6 +12,11 @@ test('每人花費摘要將總金額作為獨立欄位，不顯示筆數或統�
   assert.match(appSource, /TWD \{totalSpending\.toFixed\(0\)\}/);
 });
 
+test('只有一位分帳者時，只顯示總金額而不顯示個人花費卡', () => {
+  assert.match(appSource, /const hasMultipleSplitMembers = memberSpending\.length > 1;/);
+  assert.match(appSource, /\{hasMultipleSplitMembers && \(\s*<div[\s\S]*?memberSpending\.map/);
+});
+
 test('點選所有支出的分類時，每人花費金額與摘要都使用該分類支出，且可取消回到全部', () => {
   assert.match(appSource, /const spendingExpenses = useMemo\(\(\) => filterExpensesByCategory\(expenses, filterCategory\), \[expenses, filterCategory\]\)/);
   assert.match(appSource, /for \(const exp of spendingExpenses\)/);
