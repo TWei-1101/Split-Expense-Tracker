@@ -310,7 +310,7 @@ Total
 钓
 """)
 
-        self.assertEqual(result["description"], "KORONAGIRAI")
+        self.assertEqual(result["description"], "炉端 KORONAGIRAI")
         self.assertEqual(result["category"], "food")
         self.assertEqual(result["originalAmount"], 10483)
         self.assertEqual(result["currency"], "JPY")
