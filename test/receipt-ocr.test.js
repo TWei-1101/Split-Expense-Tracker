@@ -29,6 +29,19 @@ test('收據日期保留 OCR 回傳的當地鐘面時間，不受執行環境時
   });
 });
 
+test('收據只有日期沒有時間時，依幣別推導當地即時時間', () => {
+  const result = normalizeReceiptOcrResult({
+    description: 'Richmond Hotel',
+    originalAmount: 1700,
+    currency: 'JPY',
+    category: 'lodging',
+    occurredAt: '2026-09-11',
+  });
+  assert.equal(result.description, 'Richmond Hotel');
+  assert.equal(result.currency, 'JPY');
+  assert.match(result.occurredAt, /^2026-09-11T\d{2}:\d{2}$/);
+});
+
 test('收據辨識的不可信欄位不覆寫表單', () => {
   assert.deepEqual(normalizeReceiptOcrResult({
     description: ' ', originalAmount: -1, currency: 'BTC', occurredAt: 'not-a-date',

@@ -21,7 +21,7 @@ class ReceiptParserTests(unittest.TestCase):
             "category": "other",
             "originalAmount": 85,
             "currency": "TWD",
-            "occurredAt": "2026-08-12T12:00",
+            "occurredAt": "2026-08-12",
         })
 
     def test_prefers_labeled_total_over_line_item_amounts(self):
@@ -34,7 +34,7 @@ TOTAL JPY 1,200
 
         self.assertEqual(result["originalAmount"], 1200)
         self.assertEqual(result["currency"], "JPY")
-        self.assertEqual(result["occurredAt"], "2026-07-01T12:00")
+        self.assertEqual(result["occurredAt"], "2026-07-01")
 
     def test_parses_japanese_7eleven_receipt_from_rapidocr_output(self):
         result = parse_receipt_text("""C.CAr-C.ca
@@ -151,7 +151,7 @@ Change
         self.assertEqual(result["category"], "lodging")
         self.assertEqual(result["originalAmount"], 1700)
         self.assertEqual(result["currency"], "JPY")
-        self.assertEqual(result["occurredAt"], "2026-09-11T12:00")
+        self.assertEqual(result["occurredAt"], "2026-09-11")
 
     def test_parses_thousands_dot_separator_total(self):
         result = parse_receipt_text("""details
@@ -294,7 +294,7 @@ Total
         self.assertEqual(result["category"], "lodging")
         self.assertEqual(result["originalAmount"], 1700)
         self.assertEqual(result["currency"], "JPY")
-        self.assertEqual(result["occurredAt"], "2026-09-11T12:00")
+        self.assertEqual(result["occurredAt"], "2026-09-11")
 
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
