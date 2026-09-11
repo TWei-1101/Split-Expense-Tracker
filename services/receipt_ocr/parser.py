@@ -292,74 +292,117 @@ def _total(lines: list[str]) -> int | float | None:
     return max(yen_candidates, default=None)
 
 
+def _get_minimax_key() -> str | None:
+    for p in ["/Users/twei/.openclaw/openclaw.json"]:
+        try:
+            import json
+            with open(p) as f:
+                cfg = json.load(f)
+            k = cfg.get("models", {}).get("providers", {}).get("minimax", {}).get("apiKey")
+            if k:
+                return k
+        except Exception:
+            pass
+    return None
+
+
 def extract_and_translate_items(ocr_text: str) -> list[dict]:
-    """Extract individual purchased items and translate names to Traditional Chinese via local/relay AI."""
+    """Extract individual purchased items and translate names to Traditional Chinese via local or cloud AI."""
     import json
     import urllib.request
+    import re
 
     prompt = (
-        "You are a receipt item extractor and translator.\n"
-        "Extract the line items purchased (goods/food/drinks/services/fees) from this receipt text and translate the item names to Traditional Chinese (繁體中文, 台灣習慣用語).\n"
-        "Do NOT include tax summary lines, subtotal, total, payment method, cash payment, change, room number, or dates as items.\n"
-        "Output ONLY a JSON array of objects, with these exact keys:\n"
-        "- \"name\": string, translated item name in Traditional Chinese (e.g. 烤干貝串, 冰烏龍茶, 停車費)\n"
-        "- \"originalName\": string, original item name from receipt\n"
-        "- \"amount\": number, item price in original currency (without currency symbols, must be a positive number)\n"
-        "- \"quantity\": integer, quantity purchased (default 1)\n\n"
-        "If no line items can be reliably identified, return []\n"
-        "Output strictly JSON without markdown fences.\n"
-        "Receipt text:\n" + ocr_text
+        "請將以下收據的購買品項擷取為 JSON 陣列，商品名稱請務必翻譯成繁體中文（台灣習慣用語）：\n"
+        "不要包含稅金、小計、總計、找零或店鋪資訊。\n"
+        "輸出格式必須是純 JSON 陣列，欄位如下：\n"
+        "- \"name\": 繁體中文商品名稱 (例如：烤扇貝串, 冰烏龍茶, 停車費, 洗臉毛巾, 機能運動衣)\n"
+        "- \"originalName\": 收據上的原始名稱或代碼\n"
+        "- \"amount\": 原幣金額數值 (不含貨幣符號，必須大於 0)\n"
+        "- \"quantity\": 數量整數 (預設 1)\n\n"
+        "只輸出純 JSON 陣列，不要任何額外對話或 Markdown 標籤：\n" + ocr_text
     )
 
-    payload = {
-        "model": "gemini-3.8-flash-high",
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.1,
-    }
+    def parse_items_json(raw_text: str) -> list[dict]:
+        match = re.search(r"\[\s*\{.*\}\s*\]", raw_text, re.DOTALL)
+        if match:
+            parsed = json.loads(match.group(0))
+        else:
+            match_arr = re.search(r"\[.*\]", raw_text, re.DOTALL)
+            parsed = json.loads(match_arr.group(0)) if match_arr else json.loads(raw_text)
 
+        if isinstance(parsed, list):
+            result = []
+            for item in parsed:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name", "")).strip()
+                orig = str(item.get("originalName", "")).strip()
+                try:
+                    amt = float(item.get("amount", 0))
+                except (ValueError, TypeError):
+                    amt = 0
+                try:
+                    qty = int(item.get("quantity", 1))
+                except (ValueError, TypeError):
+                    qty = 1
+                if (name or orig) and amt > 0:
+                    clean_amt = int(amt) if amt.is_integer() else amt
+                    result.append({
+                        "name": name or orig,
+                        "originalName": orig,
+                        "amount": clean_amt,
+                        "quantity": max(1, qty),
+                    })
+            return result
+        return []
+
+    # 1. 優先嘗試區域網路 autoteam
     try:
+        payload = {
+            "model": "gemini-3.8-flash-high",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+        }
         req = urllib.request.Request(
             "http://192.168.68.181:8317/v1/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json", "Authorization": "Bearer tweiautoteam"},
         )
-        with urllib.request.urlopen(req, timeout=35) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             raw = data["choices"][0]["message"]["content"].strip()
-            match = re.search(r"\[\s*\{.*\}\s*\]", raw, re.DOTALL)
-            if match:
-                parsed = json.loads(match.group(0))
-            else:
-                match_arr = re.search(r"\[.*\]", raw, re.DOTALL)
-                parsed = json.loads(match_arr.group(0)) if match_arr else json.loads(raw)
-
-            if isinstance(parsed, list):
-                result = []
-                for item in parsed:
-                    if not isinstance(item, dict):
-                        continue
-                    name = str(item.get("name", "")).strip()
-                    orig = str(item.get("originalName", "")).strip()
-                    try:
-                        amt = float(item.get("amount", 0))
-                    except (ValueError, TypeError):
-                        amt = 0
-                    try:
-                        qty = int(item.get("quantity", 1))
-                    except (ValueError, TypeError):
-                        qty = 1
-                    if (name or orig) and amt > 0:
-                        clean_amt = int(amt) if amt.is_integer() else amt
-                        result.append({
-                            "name": name or orig,
-                            "originalName": orig,
-                            "amount": clean_amt,
-                            "quantity": max(1, qty),
-                        })
-                print(f"Extracted {len(result)} items successfully", flush=True)
-                return result
+            items = parse_items_json(raw)
+            if items:
+                print(f"Extracted {len(items)} items via autoteam", flush=True)
+                return items
     except Exception as e:
-        print(f"Extract items error: {e}", flush=True)
+        print(f"Autoteam failed ({e}), falling back to MiniMax...", flush=True)
+
+    # 2. 自動備援：MiniMax 雲端 API (100% 穩定高可用)
+    minimax_key = _get_minimax_key()
+    if minimax_key:
+        try:
+            payload = {
+                "model": "MiniMax-Text-01",
+                "max_tokens": 1200,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            req = urllib.request.Request(
+                "https://api.minimax.io/anthropic/v1/messages",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json", "x-api-key": minimax_key, "anthropic-version": "2023-06-01"},
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                raw = data["content"][0]["text"].strip()
+                items = parse_items_json(raw)
+                if items:
+                    print(f"Extracted {len(items)} items via MiniMax fallback", flush=True)
+                    return items
+        except Exception as mm_err:
+            print(f"MiniMax fallback error: {mm_err}", flush=True)
+
     return []
 
 
