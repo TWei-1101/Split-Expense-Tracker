@@ -319,7 +319,7 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
             data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json", "Authorization": "Bearer tweiautoteam"},
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=25) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             raw = data["choices"][0]["message"]["content"].strip()
             raw = re.sub(r"^```(?:json)?\s*", "", raw)
