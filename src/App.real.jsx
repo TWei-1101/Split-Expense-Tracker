@@ -954,6 +954,70 @@ async function _getStorage() {
                 }) }
               : null;
 
+            const compressImage = (file) => new Promise((resolve, reject) => {
+                const imageUrl = URL.createObjectURL(file);
+                const image = new Image();
+                image.onload = () => {
+                    const targets = [
+                        { maxSide: 1600, quality: 0.82 },
+                        { maxSide: 1200, quality: 0.76 },
+                        { maxSide: 1000, quality: 0.72 },
+                        { maxSide: 800, quality: 0.70 },
+                    ];
+
+                    const renderTarget = (targetIndex) => {
+                      try {
+                        const { maxSide, quality } = targets[targetIndex];
+                        const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+                        const width = Math.max(1, Math.round(image.width * scale));
+                        const height = Math.max(1, Math.round(image.height * scale));
+                        const canvas = document.createElement('canvas');
+                        canvas.width = width;
+                        canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(image, 0, 0, width, height);
+
+                        canvas.toBlob((blob) => {
+                            if (!blob) {
+                                URL.revokeObjectURL(imageUrl);
+                                reject(new Error('圖片壓縮失敗，請換一張圖片。'));
+                                return;
+                            }
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                                const dataUrl = reader.result;
+                                if (typeof dataUrl === 'string' && dataUrl.length <= 850000) {
+                                    URL.revokeObjectURL(imageUrl);
+                                    resolve({ dataUrl, blob, width, height });
+                                    return;
+                                }
+                                if (targetIndex < targets.length - 1) {
+                                    renderTarget(targetIndex + 1);
+                                    return;
+                                }
+                                URL.revokeObjectURL(imageUrl);
+                                reject(new Error('圖片壓縮後仍太大，請裁切或換一張圖片。'));
+                            };
+                            reader.onerror = () => {
+                                URL.revokeObjectURL(imageUrl);
+                                reject(new Error('圖片轉換失敗，請換一張圖片。'));
+                            };
+                            reader.readAsDataURL(blob);
+                        }, 'image/jpeg', quality);
+                      } catch (err) {
+                        URL.revokeObjectURL(imageUrl);
+                        reject(err);
+                      }
+                    };
+                    renderTarget(0);
+                };
+                image.onerror = () => {
+                    URL.revokeObjectURL(imageUrl);
+                    reject(new Error('圖片載入失敗，請確認檔案格式。'));
+                };
+                image.src = imageUrl;
+            });
+
             const recognizeReceipt = async (file) => {
                 if (!auth?.currentUser) return;
                 if (!isOnline) {
@@ -962,6 +1026,15 @@ async function _getStorage() {
                 }
                 setReceiptOcrStatus('正在辨識收據並預填欄位…');
                 try {
+                    let uploadBlob = file;
+                    try {
+                        const { blob } = await compressImage(file);
+                        if (blob) {
+                            uploadBlob = blob;
+                        }
+                    } catch (_err) {
+                        // fallback to original file
+                    }
                     const idToken = await auth.currentUser.getIdToken();
                     const response = await fetch(RECEIPT_OCR_ENDPOINT, {
                         method: 'POST',
@@ -969,7 +1042,7 @@ async function _getStorage() {
                           Authorization: `Bearer ${idToken}`,
                           'Content-Type': file.type,
                         },
-                        body: file,
+                        body: uploadBlob,
                     });
                     const payload = await response.json().catch(() => ({}));
                     if (!response.ok) throw new Error(payload.error || '辨識服務暫時無法使用。');
@@ -1041,71 +1114,6 @@ async function _getStorage() {
                 setModalError(null);
                 recognizeReceipt(file);
             }, [isReceiptOcrEntry, state.receiptImageFile]);
-
-            const compressImage = (file) => new Promise((resolve, reject) => {
-                const imageUrl = URL.createObjectURL(file);
-                const image = new Image();
-                image.onload = () => {
-                    const targets = [
-                        { maxSide: 1600, quality: 0.82 },
-                        { maxSide: 1200, quality: 0.76 },
-                        { maxSide: 1000, quality: 0.72 },
-                        { maxSide: 800, quality: 0.70 },
-                    ];
-
-                    const renderTarget = (targetIndex) => {
-                      try {
-                        const { maxSide, quality } = targets[targetIndex];
-                        const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
-                        const width = Math.max(1, Math.round(image.width * scale));
-                        const height = Math.max(1, Math.round(image.height * scale));
-                        const canvas = document.createElement('canvas');
-                        canvas.width = width;
-                        canvas.height = height;
-                        const ctx = canvas.getContext('2d');
-                        ctx.drawImage(image, 0, 0, width, height);
-
-                        canvas.toBlob((blob) => {
-                            if (!blob) {
-                                URL.revokeObjectURL(imageUrl);
-                                reject(new Error('圖片壓縮失敗，請換一張圖片。'));
-                                return;
-                            }
-                            const reader = new FileReader();
-                            reader.onload = () => {
-                                const dataUrl = reader.result;
-                                if (typeof dataUrl === 'string' && dataUrl.length <= 850000) {
-                                    URL.revokeObjectURL(imageUrl);
-                                    resolve({ dataUrl, blob, width, height });
-                                    return;
-                                }
-                                if (targetIndex < targets.length - 1) {
-                                    renderTarget(targetIndex + 1);
-                                    return;
-                                }
-                                URL.revokeObjectURL(imageUrl);
-                                reject(new Error('圖片壓縮後仍太大，請裁切或換一張圖片。'));
-                            };
-                            reader.onerror = () => {
-                                URL.revokeObjectURL(imageUrl);
-                                reject(new Error('圖片轉換失敗，請換一張圖片。'));
-                            };
-                            reader.readAsDataURL(blob);
-                        }, 'image/jpeg', quality);
-                      } catch (err) {
-                        URL.revokeObjectURL(imageUrl);
-                        reject(err);
-                      }
-                    };
-
-                    renderTarget(0);
-                };
-                image.onerror = () => {
-                    URL.revokeObjectURL(imageUrl);
-                    reject(new Error('圖片讀取失敗，請換一張圖片。'));
-                };
-                image.src = imageUrl;
-            });
 
             const clearSelectedImage = () => {
                 if (imagePreviewUrl && imagePreviewUrl.startsWith('blob:')) {
