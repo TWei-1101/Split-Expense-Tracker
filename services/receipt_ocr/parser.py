@@ -55,7 +55,7 @@ FOOD_MERCHANTS = (
     ("鳥貴族", ("鳥貴族", "torikizoku")),
     ("敘敘苑", ("敘敘苑", "叙々苑", "jojoen")),
     ("Cranberry", ("cranberry", "クランベリー", "t5460101000476")),
-    ("KORONAGIRAI", ("koronagirai", "koronagirat", "0155-67-5604")),
+    ("炉端 KORONAGIRAI", ("koronagirai", "koronagirat", "0155-67-5604")),
 )
 
 # Hotel and lodging brands
@@ -78,6 +78,7 @@ HOTEL_MERCHANTS = (
 ITEM_KEYWORDS = (
     ("拉麵", ("拉麵", "ラーメン", "ramen")),
     ("壽司", ("壽司", "寿司", "sushi")),
+    ("爐端燒", ("炉端", "ろばた", "炉ばた", "robatayaki", "robata", "姿焼き", "姿焼")),
     ("咖啡", ("咖啡", "カフェ", "coffee", "cafe")),
     ("機票", ("機票", "flight", "airline", "飛行機")),
     ("纜車", ("纜車", "cable car", "ropeway", "ロープウェイ")),
