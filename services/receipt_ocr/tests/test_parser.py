@@ -135,6 +135,48 @@ nanaco支
 
         self.assertEqual(result["originalAmount"], 1161)
 
+    def test_parses_total_amount_and_yen_suffix(self):
+        result = parse_receipt_text("""RECEIPT
+Date 2026/09/11
+Richmond Hotel Obihiro Ekimae
+Total amount
+1,700yen
+Payment
+2.000yen(cash)
+Change
+300yen(cash)
+""")
+
+        self.assertEqual(result["description"], "飯店")
+        self.assertEqual(result["category"], "lodging")
+        self.assertEqual(result["originalAmount"], 1700)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-11T12:00")
+
+    def test_parses_thousands_dot_separator_total(self):
+        result = parse_receipt_text("""details
+Total
+1.700yen
+""")
+
+        self.assertEqual(result["originalAmount"], 1700)
+        self.assertEqual(result["currency"], "JPY")
+
+    def test_yen_fallback_ignores_cash_payment_and_change(self):
+        result = parse_receipt_text("""Richmond Hotel
+Parking fee
+800yen
+Accommodation Tax
+900yen
+Payment
+2.000yen(cash)
+Change
+300yen(cash)
+""")
+
+        self.assertEqual(result["originalAmount"], 900)
+        self.assertEqual(result["currency"], "JPY")
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",

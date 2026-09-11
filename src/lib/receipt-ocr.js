@@ -25,7 +25,8 @@ function toPositiveAmount(value) {
   const normalized = value
     .trim()
     .replace(/[\s,，]/g, '')
-    .replace(/^(?:NT\$|TWD|USD|JPY|CNY|HKD|THB|EUR|CAD|VND|IDR|KRW|AUD|NOK|[¥￥$€£])/i, '');
+    .replace(/^(?:NT\$|TWD|USD|JPY|CNY|HKD|THB|EUR|CAD|VND|IDR|KRW|AUD|NOK|[¥￥$€£])/i, '')
+    .replace(/(?:yen|円)$/i, '');
   if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) return undefined;
   const amount = Number(normalized);
   return Number.isFinite(amount) && amount > 0 ? amount : undefined;
