@@ -1,15 +1,60 @@
 const SUPPORTED_CURRENCIES = new Set(['TWD', 'CNY', 'HKD', 'USD', 'THB', 'EUR', 'CAD', 'VND', 'IDR', 'JPY', 'KRW', 'AUD', 'NOK']);
 const SUPPORTED_CATEGORIES = new Set(['food', 'transport', 'lodging', 'other']);
 
-function toDateTimeLocal(value) {
+export function getLocalTimeForCurrency(currency) {
+  const timezones = {
+    JPY: 'Asia/Tokyo',
+    KRW: 'Asia/Seoul',
+    TWD: 'Asia/Taipei',
+    CNY: 'Asia/Shanghai',
+    HKD: 'Asia/Hong_Kong',
+    THB: 'Asia/Bangkok',
+    VND: 'Asia/Ho_Chi_Minh',
+    SGD: 'Asia/Singapore',
+    EUR: 'Europe/Paris',
+    GBP: 'Europe/London',
+    USD: 'America/New_York',
+    CAD: 'America/Toronto',
+    AUD: 'Australia/Sydney',
+  };
+  const timeZone = timezones[currency] || undefined;
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(new Date());
+    const hour = parts.find(p => p.type === 'hour')?.value || '12';
+    const minute = parts.find(p => p.type === 'minute')?.value || '00';
+    return `${hour}:${minute}`;
+  } catch (_e) {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  }
+}
+
+function toDateTimeLocal(value, currency) {
   if (typeof value !== 'string' || !value) return undefined;
+
+  // 1. Explicit printed time on receipt, e.g. "2026-09-11T14:24"
+  const localDateTime = value.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+  if (localDateTime) return `${localDateTime[1]}T${localDateTime[2]}`;
+
+  // 2. Receipt only has date without explicit time, e.g. "2026-09-11"
+  // Keep the date, and infer the current wall-clock time in the currency's local timezone.
+  const dateOnly = value.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (dateOnly) {
+    const time = getLocalTimeForCurrency(currency);
+    return `${dateOnly[1]}T${time}`;
+  }
+
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return undefined;
   // datetime-local represents the receipt's printed wall-clock time. Keep an
   // ISO response's calendar portion instead of converting it to the browser's
   // timezone (which made OCR results differ between Taipei and CI's UTC).
-  const localDateTime = value.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})/);
-  if (localDateTime) return localDateTime[1];
   const pad = (number) => String(number).padStart(2, '0');
   return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
 }
@@ -40,7 +85,7 @@ export function normalizeReceiptOcrResult(result = {}) {
   const currency = typeof result.currency === 'string' ? result.currency.toUpperCase() : '';
   if (SUPPORTED_CURRENCIES.has(currency)) normalized.currency = currency;
   if (typeof result.category === 'string' && SUPPORTED_CATEGORIES.has(result.category)) normalized.category = result.category;
-  const occurredAt = toDateTimeLocal(result.occurredAt);
+  const occurredAt = toDateTimeLocal(result.occurredAt, currency);
   if (occurredAt) normalized.occurredAt = occurredAt;
   return normalized;
 }

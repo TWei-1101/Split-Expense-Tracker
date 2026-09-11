@@ -285,13 +285,31 @@ def parse_receipt_text(text: str) -> dict:
     total = _total(lines)
 
     occurred_at = None
-    date_match = DATE.search(text)
-    if date_match:
-        year, month, day = map(int, date_match.groups())
-        if 1 <= month <= 12 and 1 <= day <= 31:
-            time_match = TIME.search(text[date_match.end():])
-            time = f"{time_match.group(1).zfill(2)}:{time_match.group(2)}" if time_match else "12:00"
-            occurred_at = f"{year:04d}-{month:02d}-{day:02d}T{time}"
+    for i, line in enumerate(lines):
+        m = DATE.search(line)
+        if m:
+            year, month, day = map(int, m.groups())
+            if not (1 <= month <= 12 and 1 <= day <= 31):
+                continue
+            # 1. Check same line
+            tm = TIME.search(line[m.end():]) or TIME.search(line[:m.start()])
+            if tm:
+                occurred_at = f"{year:04d}-{month:02d}-{day:02d}T{tm.group(1).zfill(2)}:{tm.group(2)}"
+                break
+            # 2. Check adjacent lines (immediately after or before)
+            if i + 1 < len(lines):
+                tm = TIME.search(lines[i + 1])
+                if tm and not DATE.search(lines[i + 1]):
+                    occurred_at = f"{year:04d}-{month:02d}-{day:02d}T{tm.group(1).zfill(2)}:{tm.group(2)}"
+                    break
+            if i > 0:
+                tm = TIME.search(lines[i - 1])
+                if tm and not DATE.search(lines[i - 1]):
+                    occurred_at = f"{year:04d}-{month:02d}-{day:02d}T{tm.group(1).zfill(2)}:{tm.group(2)}"
+                    break
+            # Date found without explicit time near it
+            occurred_at = f"{year:04d}-{month:02d}-{day:02d}"
+            break
 
     return {
         "description": _description(lines),
