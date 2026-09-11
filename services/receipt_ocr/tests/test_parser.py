@@ -242,6 +242,32 @@ T5460101000476
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-11T14:24")
 
+    def test_parses_workman_plus_receipt_without_yen_symbol(self):
+        result = parse_receipt_text("""WORKMAN Plus
+===<领收证>===
+千店
+北海道千市
+新富3丁目10番6号
+0123-22-0233
+小計（6点）
+5.648
+合計
+5.648
+现金
+10.000
+预
+10.000
+4,352
+合同会社EWORKS
+登錄番号T4430003017135
+""")
+
+        self.assertEqual(result["description"], "WORKMAN Plus")
+        self.assertEqual(result["category"], "other")
+        self.assertEqual(result["originalAmount"], 5648)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertIsNone(result["occurredAt"])
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",
