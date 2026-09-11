@@ -62,7 +62,7 @@ def extract_text(image_path: str) -> str:
         from rapidocr_onnxruntime import RapidOCR
     except ImportError as error:
         raise RuntimeError("rapidocr_not_installed") from error
-    result, _elapsed = RapidOCR()(image_path)
+    result, _elapsed = RapidOCR(det_limit_side_len=1500)(image_path)
     return "\n".join(str(row[1]) for row in (result or []) if len(row) > 1 and row[1])
 
 

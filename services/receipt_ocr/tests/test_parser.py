@@ -221,6 +221,27 @@ T5460101000476
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-11T16:14")
 
+    def test_parses_cash_7eleven_receipt_with_c_ca_logo_without_nanaco(self):
+        result = parse_receipt_text("""C.cA-c.ca
+带店西1条店
+北海道带市西1条南9丁目17一
+2026年09月11日（金）14:24青139
+小計（税拔8%）
+￥901
+合計
+￥973
+预
+￥1.572
+￥599
+[*]一軽减税率对象。
+""")
+
+        self.assertEqual(result["description"], "7-Eleven")
+        self.assertEqual(result["category"], "food")
+        self.assertEqual(result["originalAmount"], 973)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-11T14:24")
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",
