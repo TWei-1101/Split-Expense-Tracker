@@ -42,6 +42,24 @@ test('收據只有日期沒有時間時，依幣別推導當地即時時間', ()
   assert.match(result.occurredAt, /^2026-09-11T\d{2}:\d{2}$/);
 });
 
+test('收據辨識明細包含中文名稱、原文與原幣金額', () => {
+  const result = normalizeReceiptOcrResult({
+    description: '炉端 KORONAGIRAI',
+    originalAmount: 10483,
+    currency: 'JPY',
+    items: [
+      { name: '烤整隻烏賊', originalName: '烏賊姿焼き', amount: 1089, quantity: 1 },
+      { name: '大扇貝串', originalName: '大ホタテ串', amount: 1078, quantity: 2 },
+    ],
+  });
+  assert.equal(result.items.length, 2);
+  assert.equal(result.items[0].name, '烤整隻烏賊');
+  assert.equal(result.items[0].originalName, '烏賊姿焼き');
+  assert.equal(result.items[0].amount, 1089);
+  assert.equal(result.items[0].quantity, 1);
+  assert.equal(result.items[1].quantity, 2);
+});
+
 test('收據辨識的不可信欄位不覆寫表單', () => {
   assert.deepEqual(normalizeReceiptOcrResult({
     description: ' ', originalAmount: -1, currency: 'BTC', occurredAt: 'not-a-date',

@@ -774,6 +774,7 @@ async function _getStorage() {
                 luggageId: '',
                 taxRefund: { eligible: false, status: 'pending' },
                 occurredAt: formatExpenseDateTimeLocal(),
+                items: [],
             });
             const [categoryWasManuallySelected, setCategoryWasManuallySelected] = useState(false);
             const [imageFile, setImageFile] = useState(null);
@@ -843,6 +844,7 @@ async function _getStorage() {
                             luggageId: getExpenseLuggageId(expenseToEdit),
                             taxRefund: expenseToEdit.taxRefund || { eligible: false, status: 'pending' },
                             occurredAt: formatExpenseDateTimeLocal(expenseToEdit.timestamp),
+                            items: Array.isArray(expenseToEdit.items) ? expenseToEdit.items : [],
                         });
                         setCategoryWasManuallySelected(true);
                         setImagePreviewUrl(expenseToEdit.imageUrl || expenseToEdit.imageDataUrl || '');
@@ -893,6 +895,7 @@ async function _getStorage() {
                         luggageId: '',
                         taxRefund: { eligible: false, status: 'pending' },
                         occurredAt: formatExpenseDateTimeLocal(),
+                        items: [],
 					  });
                       setCategoryWasManuallySelected(false);
                       setImagePreviewUrl('');
@@ -1262,6 +1265,7 @@ async function _getStorage() {
                             return acc;
                         }, {}),
                         timestamp: occurredAt,
+                        ...(Array.isArray(newExpense.items) && newExpense.items.length > 0 ? { items: newExpense.items } : {}),
                         ...(isEditing ? {} : { creatorId: currentUserId }),
                         appId: appId,
                         ...imageFields,
@@ -1567,6 +1571,32 @@ async function _getStorage() {
                             loading="lazy"
                             className="h-32 w-32 rounded-lg object-cover border border-gray-200 shadow-sm"
                           />
+                        </div>
+                      )}
+                      {Array.isArray(newExpense.items) && newExpense.items.length > 0 && (
+                        <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-bold text-gray-700">🧾 已辨識明細（{newExpense.items.length} 項）</span>
+                            <span className="text-[11px] text-gray-500">已自動翻譯中文</span>
+                          </div>
+                          <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+                            {newExpense.items.map((item, idx) => (
+                              <div key={idx} className="flex items-center justify-between rounded-lg bg-white p-2 border border-gray-100 text-xs shadow-xs">
+                                <div className="min-w-0 flex-grow pr-2">
+                                  <span className="font-semibold text-gray-800">{item.name}</span>
+                                  {item.originalName && item.originalName !== item.name && (
+                                    <span className="text-gray-400 ml-1">({item.originalName})</span>
+                                  )}
+                                  {item.quantity > 1 && (
+                                    <span className="ml-1 text-primaryColor-600 font-bold">x{item.quantity}</span>
+                                  )}
+                                </div>
+                                <span className="font-bold text-gray-700 flex-shrink-0">
+                                  {newExpense.currency} {Number(item.amount).toLocaleString('zh-TW')}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -4418,6 +4448,7 @@ async function _getStorage() {
         // --- 獨立的列表和總結組件 ---
         const ExpenseList = memo(({ expenses, luggage, deleteExpense, startEdit, isLoading, getDisplayName, getPayerLabel, formatTimestamp, isReadOnly, clearAllExpenses, searchKeyword, setSearchKeyword, onOpenRecycleBin }) => { // ✨ 接受搜尋相關 props
             const [previewImage, setPreviewImage] = useState(null);
+            const [viewingItemsExpense, setViewingItemsExpense] = useState(null);
             // 切換金額顯示狀態：用 expenseId 記錄目前要顯示 TWD 的卡片
             const [showTwdExpenseIds, setShowTwdExpenseIds] = useState(() => new Set());
             const toggleAmountDisplay = (expenseId) => {
@@ -4850,6 +4881,17 @@ async function _getStorage() {
                               <p className="text-xs text-gray-400 mt-1">
                                 <span className="font-medium">時間:</span> {formatTimestamp(exp.timestamp)}
                               </p>
+                              {Array.isArray(exp.items) && exp.items.length > 0 && (
+                                <div className="mt-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setViewingItemsExpense(exp)}
+                                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-primaryColor-700 bg-primaryColor-50 hover:bg-primaryColor-100 border border-primaryColor-200 transition shadow-xs cursor-pointer"
+                                  >
+                                    🧾 查看明細 ({exp.items.length} 項)
+                                  </button>
+                                </div>
+                              )}
                             </div>
                             <div className={`flex flex-col items-end space-y-2 flex-shrink-0 ${isReadOnly ? 'opacity-50' : ''}`}>
                               <div className="flex space-x-2">
@@ -4902,6 +4944,75 @@ async function _getStorage() {
                         alt={previewImage.title || '支出圖片'}
                         className="max-h-[90vh] max-w-full rounded-xl object-contain bg-white shadow-2xl"
                       />
+                    </div>
+                  </div>
+                )}
+                {viewingItemsExpense && (
+                  <div
+                    className="fixed inset-0 bg-gray-900 bg-opacity-70 z-50 flex items-center justify-center p-4 force-gpu"
+                    onClick={() => setViewingItemsExpense(null)}
+                  >
+                    <div
+                      className="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-4 max-h-[85vh] flex flex-col relative"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex justify-between items-start border-b pb-3">
+                        <div className="min-w-0 pr-2">
+                          <h3 className="text-lg font-bold text-gray-800 flex items-center gap-1.5 truncate">
+                            <span>🧾</span> {viewingItemsExpense.description} 明細
+                          </h3>
+                          <p className="text-xs text-gray-500 mt-1">
+                            總金額：<span className="font-bold text-primaryColor-600 text-sm">{viewingItemsExpense.currency} {Number(viewingItemsExpense.originalAmount).toLocaleString('zh-TW')}</span>
+                            <span className="ml-2 text-gray-400">（共 {viewingItemsExpense.items?.length || 0} 項）</span>
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setViewingItemsExpense(null)}
+                          className="p-1 rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition"
+                          aria-label="關閉明細"
+                        >
+                          <X className="w-5 h-5" />
+                        </button>
+                      </div>
+
+                      <div className="overflow-y-auto space-y-2 flex-grow pr-1">
+                        {viewingItemsExpense.items?.map((item, idx) => (
+                          <div
+                            key={idx}
+                            className="flex justify-between items-center p-2.5 rounded-xl bg-gray-50 border border-gray-100 hover:bg-gray-100 transition"
+                          >
+                            <div className="min-w-0 flex-grow pr-3">
+                              <div className="text-sm font-semibold text-gray-800">
+                                {item.name}
+                                {item.quantity > 1 && (
+                                  <span className="ml-1.5 text-xs text-primaryColor-600 font-bold bg-primaryColor-50 px-1.5 py-0.5 rounded border border-primaryColor-200">
+                                    x{item.quantity}
+                                  </span>
+                                )}
+                              </div>
+                              {item.originalName && item.originalName !== item.name && (
+                                <div className="text-xs text-gray-400 truncate mt-0.5">
+                                  原文：{item.originalName}
+                                </div>
+                              )}
+                            </div>
+                            <div className="text-sm font-bold text-gray-700 flex-shrink-0">
+                              {viewingItemsExpense.currency} {Number(item.amount).toLocaleString('zh-TW')}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="pt-2 border-t flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setViewingItemsExpense(null)}
+                          className="px-5 py-2 bg-primaryColor-600 hover:bg-primaryColor-700 text-white rounded-xl text-sm font-semibold shadow transition"
+                        >
+                          關閉
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}

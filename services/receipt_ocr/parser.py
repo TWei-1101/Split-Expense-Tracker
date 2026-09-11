@@ -288,7 +288,73 @@ def _total(lines: list[str]) -> int | float | None:
     return max(yen_candidates, default=None)
 
 
-def parse_receipt_text(text: str) -> dict:
+def extract_and_translate_items(ocr_text: str) -> list[dict]:
+    """Extract individual purchased items and translate names to Traditional Chinese via local/relay AI."""
+    import json
+    import urllib.request
+
+    prompt = (
+        "You are a receipt item extractor and translator.\n"
+        "Extract the line items purchased (goods/food/drinks/services/fees) from this receipt text and translate the item names to Traditional Chinese (繁體中文, 台灣習慣用語).\n"
+        "Do NOT include tax summary lines, subtotal, total, payment method, cash payment, change, room number, or dates as items.\n"
+        "Output ONLY a JSON array of objects, with these exact keys:\n"
+        "- \"name\": string, translated item name in Traditional Chinese (e.g. 烤干貝串, 冰烏龍茶, 停車費)\n"
+        "- \"originalName\": string, original item name from receipt\n"
+        "- \"amount\": number, item price in original currency (without currency symbols, must be a positive number)\n"
+        "- \"quantity\": integer, quantity purchased (default 1)\n\n"
+        "If no line items can be reliably identified, return []\n"
+        "Output strictly JSON without markdown fences.\n"
+        "Receipt text:\n" + ocr_text
+    )
+
+    payload = {
+        "model": "gemini-3.8-flash-high",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+    }
+
+    try:
+        req = urllib.request.Request(
+            "http://192.168.68.181:8317/v1/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Authorization": "Bearer tweiautoteam"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            raw = data["choices"][0]["message"]["content"].strip()
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```$", "", raw)
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                result = []
+                for item in parsed:
+                    if not isinstance(item, dict):
+                        continue
+                    name = str(item.get("name", "")).strip()
+                    orig = str(item.get("originalName", "")).strip()
+                    try:
+                        amt = float(item.get("amount", 0))
+                    except (ValueError, TypeError):
+                        amt = 0
+                    try:
+                        qty = int(item.get("quantity", 1))
+                    except (ValueError, TypeError):
+                        qty = 1
+                    if (name or orig) and amt > 0:
+                        clean_amt = int(amt) if amt.is_integer() else amt
+                        result.append({
+                            "name": name or orig,
+                            "originalName": orig,
+                            "amount": clean_amt,
+                            "quantity": max(1, qty),
+                        })
+                return result
+    except Exception:
+        pass
+    return []
+
+
+def parse_receipt_text(text: str, extract_items: bool = False) -> dict:
     """Return form-ready receipt data, using null for fields not found."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     total = _total(lines)
@@ -326,4 +392,5 @@ def parse_receipt_text(text: str) -> dict:
         "originalAmount": total,
         "currency": _currency(text),
         "occurredAt": occurred_at,
+        "items": extract_and_translate_items(text) if extract_items else [],
     }

@@ -87,6 +87,19 @@ export function normalizeReceiptOcrResult(result = {}) {
   if (typeof result.category === 'string' && SUPPORTED_CATEGORIES.has(result.category)) normalized.category = result.category;
   const occurredAt = toDateTimeLocal(result.occurredAt, currency);
   if (occurredAt) normalized.occurredAt = occurredAt;
+  if (Array.isArray(result.items)) {
+    const validItems = result.items
+      .map(item => ({
+        name: typeof item.name === 'string' ? item.name.trim() : '',
+        originalName: typeof item.originalName === 'string' ? item.originalName.trim() : '',
+        amount: typeof item.amount === 'number' ? item.amount : Number(item.amount) || 0,
+        quantity: typeof item.quantity === 'number' ? Math.max(1, Math.round(item.quantity)) : 1,
+      }))
+      .filter(item => (item.name || item.originalName) && item.amount > 0);
+    if (validItems.length > 0) {
+      normalized.items = validItems;
+    }
+  }
   return normalized;
 }
 
@@ -100,6 +113,7 @@ export function mergeReceiptOcrIntoExpense(expense = {}, result = {}) {
   return {
     ...expense,
     ...fields,
+    ...(fields.items !== undefined ? { items: fields.items } : {}),
     ...(fields.originalAmount !== undefined
       ? { originalAmount: String(fields.originalAmount) }
       : {}),
