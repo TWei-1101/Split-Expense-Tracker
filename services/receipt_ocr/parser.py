@@ -70,7 +70,7 @@ ITEM_KEYWORDS = (
     ("地鐵", ("地鐵", "捷運", "metro", "subway", "地下鉄")),
     ("巴士", ("巴士", "公車", "bus", "バス")),
     ("火車", ("火車", "train", "jr", "電車", "新幹線")),
-    ("飯店", ("飯店", "hotel", "ホテル")),
+    ("飯店", ("飯店", "hotel", "ホテル", "roomno", "room no", "termofstay", "term of stay", "accommodation tax", "宿泊税", "宿泊")),
     ("旅館", ("旅館", "民宿", "hostel", "ryokan", "宿泊")),
 )
 
@@ -84,7 +84,7 @@ CATEGORY_ITEM_KEYWORDS = (
         "テーブル", "減税率", "减税率", "軽減税率", "外食", "喫茶", "8%対象", "内税8%", "税率8%", "消費税等8%", "ポテト",
     )),
     ("transport", ("機票", "flight", "airline", "飛行機", "纜車", "cable car", "ropeway", "ロープウェイ", "租車", "rental car", "レンタカー", "計程車", "taxi", "タクシー", "地鐵", "捷運", "metro", "subway", "地下鉄", "巴士", "公車", "bus", "バス", "火車", "train", "電車", "新幹線")),
-    ("lodging", ("飯店", "hotel", "ホテル", "旅館", "民宿", "hostel", "ryokan", "宿泊")),
+    ("lodging", ("飯店", "hotel", "ホテル", "旅館", "民宿", "hostel", "ryokan", "宿泊", "termofstay", "term of stay", "roomno", "room no", "accommodation")),
 )
 
 
@@ -123,6 +123,11 @@ def _amount(line: str) -> int | float | None:
     return int(value) if value.is_integer() else value
 
 
+GENERIC_DOCUMENT_TITLES = frozenset({
+    "RECEIPT", "INVOICE", "BILL", "領収", "領収書", "領収証", "レシート", "DETAILS", "TOTAL", "SUBTOTAL", "TAX"
+})
+
+
 def _description(lines: list[str]) -> str | None:
     receipt_text = "\n".join(lines).casefold()
     for label, keywords in MERCHANT_KEYWORDS + FOOD_MERCHANTS + ITEM_KEYWORDS:
@@ -131,11 +136,12 @@ def _description(lines: list[str]) -> str | None:
 
     # If the top line is clearly a brand name (not delimiter / receipt title), prefer it
     for line in lines[:3]:
-        cleaned = line.strip("=<- >*#:")
-        if (re.search(r"^[A-Za-z0-9\s\-+&.']+$", cleaned)
-                and len(cleaned) >= 3
-                and not re.search(r"^(?:receipt|no\.|tel|fax|date|領収|领收)", cleaned, re.I)):
-            return cleaned
+        cleaned = re.sub(r"[\s\u3000=<-]+", "", line).upper()
+        if (cleaned not in GENERIC_DOCUMENT_TITLES
+                and re.search(r"^[A-Za-z0-9\s\-+&.']+$", line.strip("=<- >*#:"))
+                and len(line.strip("=<- >*#:")) >= 3
+                and not re.search(r"^(?:receipt|no\.|tel|fax|date|領収|领收)", line.strip("=<- >*#:"), re.I)):
+            return line.strip("=<- >*#:")
 
     # Japanese convenience-store receipts commonly print a branch name ending
     # in 店. Prefer it over misrecognised brand text and the following address.
@@ -146,7 +152,9 @@ def _description(lines: list[str]) -> str | None:
     for line in lines:
         # A merchant is generally at the top, contains letters, and is not a
         # date, a total, or an address/receipt serial number.
-        if (not DATE.search(line) and not TOTAL_LABEL.search(line)
+        cleaned = re.sub(r"[\s\u3000=<-]+", "", line).upper()
+        if (cleaned not in GENERIC_DOCUMENT_TITLES
+                and not DATE.search(line) and not TOTAL_LABEL.search(line)
                 and re.search(r"[A-Za-z\u4e00-\u9fff]", line)
                 and len(line) <= 48):
             return line
@@ -173,12 +181,23 @@ def _total(lines: list[str]) -> int | float | None:
     candidates = [_amount(line) for line in lines if TOTAL_LABEL.search(compact(line))]
 
     FINAL_TOTAL_LABELS = frozenset({"計", "计", "合計", "合计", "總計", "总计", "總額", "总额", "TOTAL", "TOTALAMOUNT", "AMOUNTDUE"})
+    EXCLUDE_ROW = re.compile(r"(?:支払|支|還元|返金|値引|割引|PAYMENT|CHANGE|お預|お釣|預|预|釣|钓|cash|現金)", re.I)
     for index, line in enumerate(lines):
         # RapidOCR can split a final-total label and its value onto two lines,
-        # sometimes inserting spaces inside 合計.  Restrict this to explicit
-        # final-total labels so 小計 is never mistaken for the final total.
-        if compact(line).upper() in FINAL_TOTAL_LABELS and index + 1 < len(lines):
-            candidates.append(_amount(lines[index + 1]))
+        # sometimes inserting spaces inside 合計, or emitting the amount on
+        # the preceding line in multi-column layouts.
+        if compact(line).upper() in FINAL_TOTAL_LABELS:
+            line_candidates = []
+            if index + 1 < len(lines) and not EXCLUDE_ROW.search(lines[index + 1]):
+                amt_next = _amount(lines[index + 1])
+                if amt_next is not None:
+                    line_candidates.append(amt_next)
+            if index > 0 and not EXCLUDE_ROW.search(lines[index - 1]):
+                amt_prev = _amount(lines[index - 1])
+                if amt_prev is not None:
+                    line_candidates.append(amt_prev)
+            if line_candidates:
+                candidates.append(max(line_candidates))
 
     labeled_total = next((value for value in reversed(candidates) if value is not None), None)
 
