@@ -268,6 +268,33 @@ T5460101000476
         self.assertEqual(result["currency"], "JPY")
         self.assertIsNone(result["occurredAt"])
 
+    def test_parses_two_column_hotel_receipt_with_amount_preceding_label(self):
+        result = parse_receipt_text("""RECEIPT
+RoomNo. 507
+Term of stay 2026/09/11~2026/09/12
+Date 2026/09/11
+1,700yen
+Total amount
+2.000yen(cash)
+Payment
+300yen(cash)
+Change
+800yen
+Parking fee
+900yen**
+Accommodation Tax
+1.700yen
+Total
+800yen
+10%Tax Rate Items
+""")
+
+        self.assertEqual(result["description"], "飯店")
+        self.assertEqual(result["category"], "lodging")
+        self.assertEqual(result["originalAmount"], 1700)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-11T12:00")
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",
