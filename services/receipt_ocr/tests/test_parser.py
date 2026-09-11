@@ -199,6 +199,28 @@ Change
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-11T17:02")
 
+    def test_parses_simplified_characters_total_and_excludes_paid_cash(self):
+        result = parse_receipt_text("""A
+登绿番号
+T5460101000476
+本店
+2026年9月11日（金）16:14#000002
+小
+￥3,102
+合计
+￥3,102
+书预少
+￥5,002
+书钓少
+￥1,900
+""")
+
+        self.assertEqual(result["description"], "Cranberry")
+        self.assertEqual(result["category"], "food")
+        self.assertEqual(result["originalAmount"], 3102)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-11T16:14")
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",
