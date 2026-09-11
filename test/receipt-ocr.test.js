@@ -37,6 +37,7 @@ test('收據辨識的不可信欄位不覆寫表單', () => {
 
 test('收據辨識金額接受 OCR 常見的千分位、全形逗號與相容欄位名稱', () => {
   assert.deepEqual(normalizeReceiptOcrResult({ originalAmount: '￥1，161' }), { originalAmount: 1161 });
+  assert.deepEqual(normalizeReceiptOcrResult({ originalAmount: '1,700yen' }), { originalAmount: 1700 });
   assert.deepEqual(normalizeReceiptOcrResult({ amount: 'NT$ 1,250.50' }), { originalAmount: 1250.5 });
   assert.deepEqual(normalizeReceiptOcrResult({ originalAmount: '總計 1,161' }), {});
 });

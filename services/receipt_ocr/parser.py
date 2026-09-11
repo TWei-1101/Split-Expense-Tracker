@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import re
 
-TOTAL_LABEL = re.compile(r"(?:總(?:計|額)|合計|應付(?:金額)?|TOTAL|AMOUNT\s+DUE)", re.I)
+TOTAL_LABEL = re.compile(r"(?:總(?:計|額)|合計|應付(?:金額)?|TOTAL(?:\s*AMOUNT)?|AMOUNT\s+DUE)", re.I)
 AMOUNT = re.compile(r"(?<!\d)(\d{1,3}(?:,\d{3})+|\d+(?:\.\d{1,2})?)(?!\d)")
-YEN_AMOUNT = re.compile(r"(?:￥|¥|JPY\s*)(\d{1,3}(?:[，,]\d{3})+|\d+(?:\.\d{1,2})?)", re.I)
+YEN_AMOUNT = re.compile(
+    r"(?:(?:￥|¥|JPY\s*)(\d{1,3}(?:[，,.]\d{3})+|\d+(?:\.\d{1,2})?)|(?<!\d)(\d{1,3}(?:[，,.]\d{3})+|\d+(?:\.\d{1,2})?)\s*(?:yen|円))",
+    re.I,
+)
 DATE = re.compile(
     r"(?<!\d)(\d{4})(?:[/-]|年)(\d{1,2})(?:[/-]|月)(\d{1,2})(?:日)?(?!\d)"
 )
@@ -51,7 +54,7 @@ CATEGORY_ITEM_KEYWORDS = (
 
 def _currency(text: str) -> str:
     upper = text.upper()
-    if "JPY" in upper or "￥" in text or "¥" in text:
+    if "JPY" in upper or "YEN" in upper or "￥" in text or "¥" in text:
         return "JPY"
     if "USD" in upper or "US$" in upper:
         return "USD"
@@ -64,7 +67,9 @@ def _amount(line: str) -> int | float | None:
     # RapidOCR can emit fullwidth punctuation on a Japanese receipt.  Normalize
     # only numeric separators here, so a total such as ￥1，161 remains one
     # amount rather than two unrelated numbers (1 and 161).
-    matches = AMOUNT.findall(line.replace("，", ","))
+    # Also normalize period used as thousands separator (e.g. 1.700yen)
+    normalized = re.sub(r"(?<=\d)\.(?=\d{3}(?:\D|$))", ",", line.replace("，", ","))
+    matches = AMOUNT.findall(normalized)
     if not matches:
         return None
     value = float(matches[-1].replace(",", ""))
@@ -109,11 +114,12 @@ def _total(lines: list[str]) -> int | float | None:
 
     candidates = [_amount(line) for line in lines if TOTAL_LABEL.search(compact(line))]
 
+    FINAL_TOTAL_LABELS = frozenset({"計", "合計", "總計", "總額", "TOTAL", "TOTALAMOUNT", "AMOUNTDUE"})
     for index, line in enumerate(lines):
         # RapidOCR can split a final-total label and its value onto two lines,
         # sometimes inserting spaces inside 合計.  Restrict this to explicit
         # final-total labels so 小計 is never mistaken for the final total.
-        if compact(line).upper() in {"計", "合計", "總計", "總額", "TOTAL", "AMOUNTDUE"} and index + 1 < len(lines):
+        if compact(line).upper() in FINAL_TOTAL_LABELS and index + 1 < len(lines):
             candidates.append(_amount(lines[index + 1]))
 
     labeled_total = next((value for value in reversed(candidates) if value is not None), None)
@@ -152,12 +158,21 @@ def _total(lines: list[str]) -> int | float | None:
     # are all smaller on the 7-Eleven format.  Keep this as a last resort and
     # exclude payment/refund rows, so it cannot replace a normal labeled total.
     yen_candidates = []
+    skip_next = False
     for line in lines:
         compact_line = compact(line)
-        if re.search(r"(?:支払|支|還元|返金|値引|割引)", compact_line):
+        if re.search(r"(?:支払|支|還元|返金|値引|割引|PAYMENT|CHANGE|お預|お釣)", compact_line, re.I):
+            skip_next = True
             continue
-        for raw_value in YEN_AMOUNT.findall(line.replace("，", ",")):
-            value = float(raw_value.replace(",", ""))
+        if skip_next:
+            skip_next = False
+            continue
+        if re.search(r"(?:cash|現金|お預|お釣)", compact_line, re.I):
+            continue
+        for match in YEN_AMOUNT.findall(line):
+            raw_value = match[0] or match[1]
+            cleaned = re.sub(r"(?<=\d)\.(?=\d{3}(?:\D|$))", ",", raw_value.replace("，", ","))
+            value = float(cleaned.replace(",", ""))
             yen_candidates.append(int(value) if value.is_integer() else value)
     return max(yen_candidates, default=None)
 

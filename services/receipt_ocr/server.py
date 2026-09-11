@@ -51,6 +51,14 @@ def verify_firebase_id_token(authorization: str | None) -> dict:
 
 def extract_text(image_path: str) -> str:
     try:
+        from PIL import Image, ImageOps
+        with Image.open(image_path) as img:
+            transposed = ImageOps.exif_transpose(img)
+            if transposed is not None:
+                transposed.save(image_path)
+    except Exception:
+        pass
+    try:
         from rapidocr_onnxruntime import RapidOCR
     except ImportError as error:
         raise RuntimeError("rapidocr_not_installed") from error
