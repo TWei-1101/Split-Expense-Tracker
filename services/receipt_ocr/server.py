@@ -9,7 +9,7 @@ from tempfile import NamedTemporaryFile
 
 from parser import parse_receipt_text
 
-MAX_IMAGE_BYTES = 8 * 1024 * 1024
+MAX_IMAGE_BYTES = 25 * 1024 * 1024
 DEFAULT_ORIGINS = frozenset({"https://expense.771101.xyz", "https://expense-test.771101.xyz"})
 SUPPORTED_IMAGES = frozenset({"image/jpeg", "image/png", "image/webp"})
 SUFFIXES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
@@ -106,14 +106,17 @@ def make_handler(token_verifier=verify_firebase_id_token, ocr=extract_text):
                 self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
                 return
             if not allowed_origin(self.headers.get("Origin")):
+                print(f"[{self.date_time_string()}] Forbidden origin: {self.headers.get('Origin')}", flush=True)
                 self._json(HTTPStatus.FORBIDDEN, {"error": "origin_not_allowed"})
                 return
             try:
                 token_verifier(self.headers.get("Authorization"))
-            except PermissionError:
+            except PermissionError as err:
+                print(f"[{self.date_time_string()}] Unauthorized: {err}", flush=True)
                 self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
-            except Exception:
+            except Exception as err:
+                print(f"[{self.date_time_string()}] Auth unavailable: {err}", flush=True)
                 self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "auth_unavailable"})
                 return
             try:
@@ -123,6 +126,7 @@ def make_handler(token_verifier=verify_firebase_id_token, ocr=extract_text):
             content_type = self.headers.get("Content-Type")
             error = validate_upload(content_type, length)
             if error:
+                print(f"[{self.date_time_string()}] Upload rejected: {error} (length={length}, type={content_type})", flush=True)
                 status = HTTPStatus.REQUEST_ENTITY_TOO_LARGE if error == "payload_too_large" else HTTPStatus.UNSUPPORTED_MEDIA_TYPE
                 self._json(status, {"error": error})
                 return

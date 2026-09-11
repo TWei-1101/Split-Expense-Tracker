@@ -31,6 +31,15 @@ MERCHANT_KEYWORDS = (
     ("全家", ("全家", "familymart", "ファミリーマート")),
     ("Lawson", ("lawson", "ローソン")),
     ("Seicomart", ("seicomart", "セイコーマート", "セコマ")),
+    ("WORKMAN Plus", ("workman", "ワークマン")),
+    ("UNIQLO", ("uniqlo", "ユニクロ")),
+    ("GU", ("\bgu\b", "ジーユー")),
+    ("無印良品", ("無印良品", "muji")),
+    ("唐吉訶德", ("don quijote", "donki", "ドン・キホーテ", "ドンキ", "唐吉訶德")),
+    ("大創", ("daiso", "ダイソー")),
+    ("Bic Camera", ("bic camera", "biccamera", "ビックカメラ")),
+    ("Yodobashi Camera", ("yodobashi", "ヨドバシ")),
+    ("松本清", ("matsumoto kiyoshi", "matsukiyo", "マツモトキヨシ", "マツキヨ")),
 )
 
 # Food-specific brands and stores whose purchases are unambiguously food/dining.
@@ -79,6 +88,15 @@ CATEGORY_ITEM_KEYWORDS = (
 )
 
 
+JAPAN_MARKERS = re.compile(
+    r"(?:北海道|東京都|大阪府|京都府|[一-龥]{1,3}[縣県市町村]|"
+    r"領収|领收|領収証|领收证|領収書|领收书|レシート|課税|课税|消費税|消费税|税合計|税合计|内税|外税|軽減税率|軽减税率|"
+    r"お買|お預|お釣|点数|登録番号\s*T\d{13}|登錄番号\s*T\d{13}|登绿番号\s*T\d{13}|"
+    r"[\u3040-\u309f]{2,}|[\u30a0-\u30ff]{2,})",
+    re.I,
+)
+
+
 def _currency(text: str) -> str:
     upper = text.upper()
     if "JPY" in upper or "YEN" in upper or "￥" in text or "¥" in text:
@@ -87,6 +105,8 @@ def _currency(text: str) -> str:
         return "USD"
     if "EUR" in upper or "€" in text:
         return "EUR"
+    if JAPAN_MARKERS.search(text):
+        return "JPY"
     return "TWD"
 
 
@@ -108,6 +128,14 @@ def _description(lines: list[str]) -> str | None:
     for label, keywords in MERCHANT_KEYWORDS + FOOD_MERCHANTS + ITEM_KEYWORDS:
         if any(keyword.casefold() in receipt_text for keyword in keywords):
             return label
+
+    # If the top line is clearly a brand name (not delimiter / receipt title), prefer it
+    for line in lines[:3]:
+        cleaned = line.strip("=<- >*#:")
+        if (re.search(r"^[A-Za-z0-9\s\-+&.']+$", cleaned)
+                and len(cleaned) >= 3
+                and not re.search(r"^(?:receipt|no\.|tel|fax|date|領収|领收)", cleaned, re.I)):
+            return cleaned
 
     # Japanese convenience-store receipts commonly print a branch name ending
     # in 店. Prefer it over misrecognised brand text and the following address.
