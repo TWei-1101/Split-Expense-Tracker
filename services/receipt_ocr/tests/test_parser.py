@@ -296,6 +296,26 @@ Total
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-11")
 
+    def test_parses_japanese_restaurant_receipt_with_kanji_time_and_cash_tendered(self):
+        result = parse_receipt_text("""KORONAGIRAT
+0155-67-5604
+2026年9月11日（金）21時18分000101
+やきとり
+梅酒
+￥10.483
+合計
+￥11,000
+現计
+￥517
+钓
+""")
+
+        self.assertEqual(result["description"], "KORONAGIRAI")
+        self.assertEqual(result["category"], "food")
+        self.assertEqual(result["originalAmount"], 10483)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-11T21:18")
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",

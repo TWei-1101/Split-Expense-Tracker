@@ -17,7 +17,7 @@ YEN_AMOUNT = re.compile(
 DATE = re.compile(
     r"(?<!\d)(\d{4})(?:[/-]|年)(\d{1,2})(?:[/-]|月)(\d{1,2})(?:日)?(?!\d)"
 )
-TIME = re.compile(r"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)")
+TIME = re.compile(r"(?<!\d)([01]?\d|2[0-3])(?::|時)([0-5]\d)(?:分)?(?!\d)")
 
 # Store names are useful for the form's item name, but they must never decide
 # the category: convenience stores sell food, toiletries, tickets and more.
@@ -55,6 +55,7 @@ FOOD_MERCHANTS = (
     ("鳥貴族", ("鳥貴族", "torikizoku")),
     ("敘敘苑", ("敘敘苑", "叙々苑", "jojoen")),
     ("Cranberry", ("cranberry", "クランベリー", "t5460101000476")),
+    ("KORONAGIRAI", ("koronagirai", "koronagirat", "0155-67-5604")),
 )
 
 # Hotel and lodging brands
@@ -97,6 +98,7 @@ CATEGORY_ITEM_KEYWORDS = (
         "チョコ", "パフェ", "和菓子", "洋菓子", "シュークリーム", "甜點", "點心", "冰淇淋", "蛋糕",
         "燒肉", "定食", "丼", "うどん", "そば", "カレー", "バーガー", "ピザ", "パスタ", "飲食",
         "テーブル", "減税率", "减税率", "軽減税率", "外食", "喫茶", "8%対象", "内税8%", "税率8%", "消費税等8%", "ポテト",
+        "串", "梅酒", "酒", "居酒屋", "炉端", "お通し", "やきとり", "焼き鳥", "焼鳥", "ウーロン茶", "烏龍茶", "刺身", "ビール", "サワー", "ハイボール",
     )),
     ("transport", ("機票", "flight", "airline", "飛行機", "纜車", "cable car", "ropeway", "ロープウェイ", "租車", "rental car", "レンタカー", "計程車", "taxi", "タクシー", "地鐵", "捷運", "metro", "subway", "地下鉄", "巴士", "公車", "bus", "バス", "火車", "train", "電車", "新幹線")),
     ("lodging", ("飯店", "hotel", "ホテル", "旅館", "民宿", "hostel", "ryokan", "宿泊", "termofstay", "term of stay", "roomno", "room no", "accommodation")),
@@ -206,7 +208,11 @@ def _total(lines: list[str]) -> int | float | None:
     candidates = [_amount(line) for line in lines if TOTAL_LABEL.search(compact(line))]
 
     FINAL_TOTAL_LABELS = frozenset({"計", "计", "合計", "合计", "總計", "总计", "總額", "总额", "TOTAL", "TOTALAMOUNT", "AMOUNTDUE"})
-    EXCLUDE_ROW = re.compile(r"(?:支払|支|還元|返金|値引|割引|PAYMENT|CHANGE|お預|お釣|預|预|釣|钓|cash|現金)", re.I)
+    EXCLUDE_ROW = re.compile(r"(?:支払|支|還元|返金|値引|割引|PAYMENT|CHANGE|お預|お釣|預|预|釣|钓|cash|現金|現計|現计|クレ計|電計|掛計)", re.I)
+    CASH_TENDERED_LABEL = re.compile(r"(?:現計|現计|お預|お預り|預|预|cash|現金|PAYMENT)", re.I)
+
+    has_change = any(re.search(r"(?:釣|钓|お釣|お釣り|CHANGE)", line, re.I) for line in lines)
+
     for index, line in enumerate(lines):
         # RapidOCR can split a final-total label and its value onto two lines,
         # sometimes inserting spaces inside 合計, or emitting the amount on
@@ -214,9 +220,11 @@ def _total(lines: list[str]) -> int | float | None:
         if compact(line).upper() in FINAL_TOTAL_LABELS:
             line_candidates = []
             if index + 1 < len(lines) and not EXCLUDE_ROW.search(lines[index + 1]):
-                amt_next = _amount(lines[index + 1])
-                if amt_next is not None:
-                    line_candidates.append(amt_next)
+                is_cash_paid = has_change and index + 2 < len(lines) and CASH_TENDERED_LABEL.search(lines[index + 2])
+                if not is_cash_paid:
+                    amt_next = _amount(lines[index + 1])
+                    if amt_next is not None:
+                        line_candidates.append(amt_next)
             if index > 0 and not EXCLUDE_ROW.search(lines[index - 1]):
                 amt_prev = _amount(lines[index - 1])
                 if amt_prev is not None:
