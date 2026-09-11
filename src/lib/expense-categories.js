@@ -25,7 +25,7 @@ const CATEGORY_KEYWORDS = Object.freeze({
   ],
   [EXPENSE_CATEGORIES.LODGING]: [
     '住宿', '飯店', '旅館', '酒店', '民宿', '旅店', 'hotel', 'hostel', 'lodging', 'accommodation', 'airbnb',
-    'ホテル', '旅館', '宿泊',
+    'richmond', 'inn', 'ホテル', '旅館', '宿泊', 'リッチモンド', 'イン',
   ],
 });
 
