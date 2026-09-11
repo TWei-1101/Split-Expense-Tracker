@@ -24,8 +24,13 @@ TIME = re.compile(r"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)")
 MERCHANT_KEYWORDS = (
     # nanaco is the 7-Eleven Japan payment programme.  On narrow receipts the
     # logo itself is frequently unreadable, while this marker survives OCR.
-    ("7-Eleven", ("7-eleven", "seven eleven", "セブンイレブン", "nanaco")),
+    ("7-Eleven", (
+        "7-eleven", "seven eleven", "seven & i", "seven&i", "セブンイレブン", "セブン-イレブン", "セブン",
+        "nanaco", "7プレミアム", "7カフェ", "c.car-cca", "c.car", "c.ca-c.ca", "c.ca", "sivensnoings",
+    )),
     ("全家", ("全家", "familymart", "ファミリーマート")),
+    ("Lawson", ("lawson", "ローソン")),
+    ("Seicomart", ("seicomart", "セイコーマート", "セコマ")),
 )
 
 # Food-specific brands and stores whose purchases are unambiguously food/dining.
