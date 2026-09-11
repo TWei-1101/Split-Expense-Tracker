@@ -28,6 +28,20 @@ MERCHANT_KEYWORDS = (
     ("全家", ("全家", "familymart", "ファミリーマート")),
 )
 
+# Food-specific brands and stores whose purchases are unambiguously food/dining.
+FOOD_MERCHANTS = (
+    ("六花亭", ("六花亭", "六花亨", "rokkatei")),
+    ("北菓樓", ("北菓樓", "北菓楼", "kitakaro")),
+    ("柳月", ("柳月", "ryugetsu")),
+    ("星巴克", ("星巴克", "starbucks", "スターバックス")),
+    ("麥當勞", ("麥當勞", "mcdonald", "マクドナルド", "マック")),
+    ("肯德基", ("肯德基", "kfc", "ケンタッキー")),
+    ("摩斯漢堡", ("摩斯", "mos burger", "モスバーガー")),
+    ("一蘭", ("一蘭", "ichiran")),
+    ("鳥貴族", ("鳥貴族", "torikizoku")),
+    ("敘敘苑", ("敘敘苑", "叙々苑", "jojoen")),
+)
+
 # Categories are inferred only from purchased-item wording.  Payment methods
 # (for example Japanese transit IC money) are deliberately not included.
 ITEM_KEYWORDS = (
@@ -46,7 +60,14 @@ ITEM_KEYWORDS = (
 )
 
 CATEGORY_ITEM_KEYWORDS = (
-    ("food", ("拉麵", "ラーメン", "ramen", "壽司", "寿司", "sushi", "咖啡", "カフェ", "coffee", "cafe", "飯", "便當", "おにぎり", "手卷", "手巻", "明太子", "弁当", "飲料", "飲み物", "麵包", "パン")),
+    ("food", (
+        "拉麵", "ラーメン", "ramen", "壽司", "寿司", "sushi", "咖啡", "カフェ", "coffee", "cafe",
+        "飯", "便當", "おにぎり", "手卷", "手巻", "明太子", "弁当", "飲料", "飲み物", "麵包", "パン",
+        "菓子", "パイ", "アイス", "サンド", "ケーキ", "デザート", "スイーツ", "プリン", "クッキー",
+        "チョコ", "パフェ", "和菓子", "洋菓子", "シュークリーム", "甜點", "點心", "冰淇淋", "蛋糕",
+        "燒肉", "定食", "丼", "うどん", "そば", "カレー", "バーガー", "ピザ", "パスタ", "飲食",
+        "テーブル", "減税率", "减税率", "軽減税率", "外食", "喫茶",
+    )),
     ("transport", ("機票", "flight", "airline", "飛行機", "纜車", "cable car", "ropeway", "ロープウェイ", "租車", "rental car", "レンタカー", "計程車", "taxi", "タクシー", "地鐵", "捷運", "metro", "subway", "地下鉄", "巴士", "公車", "bus", "バス", "火車", "train", "電車", "新幹線")),
     ("lodging", ("飯店", "hotel", "ホテル", "旅館", "民宿", "hostel", "ryokan", "宿泊")),
 )
@@ -78,7 +99,7 @@ def _amount(line: str) -> int | float | None:
 
 def _description(lines: list[str]) -> str | None:
     receipt_text = "\n".join(lines).casefold()
-    for label, keywords in MERCHANT_KEYWORDS + ITEM_KEYWORDS:
+    for label, keywords in MERCHANT_KEYWORDS + FOOD_MERCHANTS + ITEM_KEYWORDS:
         if any(keyword.casefold() in receipt_text for keyword in keywords):
             return label
 
@@ -99,8 +120,11 @@ def _description(lines: list[str]) -> str | None:
 
 
 def _category(lines: list[str]) -> str:
-    """Classify only product detail text; unknown receipts are safely other."""
+    """Classify product detail text and food merchants; unknown receipts are safely other."""
     receipt_text = "\n".join(lines).casefold()
+    for label, keywords in FOOD_MERCHANTS:
+        if any(keyword.casefold() in receipt_text for keyword in keywords):
+            return "food"
     for category, keywords in CATEGORY_ITEM_KEYWORDS:
         if any(keyword.casefold() in receipt_text for keyword in keywords):
             return category
