@@ -177,6 +177,28 @@ Change
         self.assertEqual(result["originalAmount"], 900)
         self.assertEqual(result["currency"], "JPY")
 
+    def test_recognizes_food_merchants_and_confectionery_category(self):
+        result = parse_receipt_text("""六花亨
+带店本店
+2026年09月11日（金）17:02No.4888
+1名
+サクサクパイ
+￥300
+マルセイアイスサンド
+￥300
+小計
+￥920
+合計
+￥920
+减税率对象商品。
+""")
+
+        self.assertEqual(result["description"], "六花亭")
+        self.assertEqual(result["category"], "food")
+        self.assertEqual(result["originalAmount"], 920)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-11T17:02")
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",

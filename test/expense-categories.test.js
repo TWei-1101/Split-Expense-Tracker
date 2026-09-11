@@ -12,6 +12,7 @@ import {
 
 test('品項依中英日旅遊關鍵字自動分類，未命中歸其他', () => {
   assert.equal(inferExpenseCategory('拉麵晚餐'), EXPENSE_CATEGORIES.FOOD);
+  assert.equal(inferExpenseCategory('六花亭'), EXPENSE_CATEGORIES.FOOD);
   assert.equal(inferExpenseCategory('Airport express train'), EXPENSE_CATEGORIES.TRANSPORT);
   assert.equal(inferExpenseCategory('ホテル Hotel 住宿'), EXPENSE_CATEGORIES.LODGING);
   assert.equal(inferExpenseCategory('7-Eleven'), EXPENSE_CATEGORIES.OTHER);
