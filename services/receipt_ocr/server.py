@@ -132,7 +132,9 @@ def make_handler(token_verifier=verify_firebase_id_token, ocr=extract_text):
                 with NamedTemporaryFile(suffix=SUFFIXES[mime_type]) as image_file:
                     image_file.write(image)
                     image_file.flush()
-                    fields = parse_receipt_text(ocr(image_file.name))
+                    ocr_text = ocr(image_file.name)
+                    fields = parse_receipt_text(ocr_text)
+                    print(f"[{self.date_time_string()}] Parsed receipt: {fields}", flush=True)
             except RuntimeError as error:
                 self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": str(error)})
                 return

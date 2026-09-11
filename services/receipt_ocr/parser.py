@@ -26,7 +26,7 @@ MERCHANT_KEYWORDS = (
     # logo itself is frequently unreadable, while this marker survives OCR.
     ("7-Eleven", (
         "7-eleven", "seven eleven", "seven & i", "seven&i", "セブンイレブン", "セブン-イレブン", "セブン",
-        "nanaco", "7プレミアム", "7カフェ", "c.car-cca", "c.car", "c.ca-c.ca", "c.ca", "sivensnoings",
+        "nanaco", "7プレミアム", "7カフェ", "77°l么", "77°", "7ns", "c.car-cca", "c.car", "c.ca-c.ca", "c.ca", "sivensnoings",
     )),
     ("全家", ("全家", "familymart", "ファミリーマート")),
     ("Lawson", ("lawson", "ローソン")),
