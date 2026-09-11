@@ -147,7 +147,7 @@ Change
 300yen(cash)
 """)
 
-        self.assertEqual(result["description"], "飯店")
+        self.assertEqual(result["description"], "Richmond Hotel")
         self.assertEqual(result["category"], "lodging")
         self.assertEqual(result["originalAmount"], 1700)
         self.assertEqual(result["currency"], "JPY")
@@ -270,6 +270,7 @@ T5460101000476
 
     def test_parses_two_column_hotel_receipt_with_amount_preceding_label(self):
         result = parse_receipt_text("""RECEIPT
+registration number: T1010901015937
 RoomNo. 507
 Term of stay 2026/09/11~2026/09/12
 Date 2026/09/11
@@ -289,7 +290,7 @@ Total
 10%Tax Rate Items
 """)
 
-        self.assertEqual(result["description"], "飯店")
+        self.assertEqual(result["description"], "Richmond Hotel")
         self.assertEqual(result["category"], "lodging")
         self.assertEqual(result["originalAmount"], 1700)
         self.assertEqual(result["currency"], "JPY")

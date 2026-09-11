@@ -57,6 +57,21 @@ FOOD_MERCHANTS = (
     ("Cranberry", ("cranberry", "クランベリー", "t5460101000476")),
 )
 
+# Hotel and lodging brands
+HOTEL_MERCHANTS = (
+    ("Richmond Hotel", ("richmond", "リッチモンド", "t1010901015937", "0155-20-2255")),
+    ("東橫INN", ("toyoko", "東横イン", "東橫inn")),
+    ("Dormy Inn", ("dormy", "ドーミーイン")),
+    ("APA Hotel", ("apa hotel", "アパホテル")),
+    ("Super Hotel", ("super hotel", "スーパーホテル")),
+    ("Route Inn", ("route inn", "ルートイン")),
+    ("JR Inn", ("jr inn", "jrイン")),
+    ("Daiwa Roynet Hotel", ("daiwa roynet", "ダイワロイネット")),
+    ("Tokyu Stay", ("tokyu stay", "東急ステイ")),
+    ("三井花園飯店", ("mitsui garden", "三井ガーデン")),
+    ("Comfort Hotel", ("comfort hotel", "コンフォートホテル")),
+)
+
 # Categories are inferred only from purchased-item wording.  Payment methods
 # (for example Japanese transit IC money) are deliberately not included.
 ITEM_KEYWORDS = (
@@ -130,9 +145,16 @@ GENERIC_DOCUMENT_TITLES = frozenset({
 
 def _description(lines: list[str]) -> str | None:
     receipt_text = "\n".join(lines).casefold()
-    for label, keywords in MERCHANT_KEYWORDS + FOOD_MERCHANTS + ITEM_KEYWORDS:
+    for label, keywords in MERCHANT_KEYWORDS + FOOD_MERCHANTS + HOTEL_MERCHANTS + ITEM_KEYWORDS:
         if any(keyword.casefold() in receipt_text for keyword in keywords):
             return label
+
+    # Look for explicit hotel or lodging names in the text
+    for line in lines:
+        cleaned = line.strip("=<- >*#:")
+        if re.search(r"(?:[A-Za-z\u4e00-\u9fff\s]+(?:HOTEL|ホテル|INN|旅館|民宿|HOTELS))", cleaned, re.I):
+            if len(cleaned) >= 4 and cleaned.upper() not in {"HOTEL", "ホテル", "旅館", "民宿"}:
+                return cleaned
 
     # If the top line is clearly a brand name (not delimiter / receipt title), prefer it
     for line in lines[:3]:
@@ -167,6 +189,9 @@ def _category(lines: list[str]) -> str:
     for label, keywords in FOOD_MERCHANTS:
         if any(keyword.casefold() in receipt_text for keyword in keywords):
             return "food"
+    for label, keywords in HOTEL_MERCHANTS:
+        if any(keyword.casefold() in receipt_text for keyword in keywords):
+            return "lodging"
     for category, keywords in CATEGORY_ITEM_KEYWORDS:
         if any(keyword.casefold() in receipt_text for keyword in keywords):
             return category
