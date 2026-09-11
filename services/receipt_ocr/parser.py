@@ -208,7 +208,11 @@ def _total(lines: list[str]) -> int | float | None:
 
     candidates = [_amount(line) for line in lines if TOTAL_LABEL.search(compact(line))]
 
-    FINAL_TOTAL_LABELS = frozenset({"計", "计", "合計", "合计", "總計", "总计", "總額", "总额", "TOTAL", "TOTALAMOUNT", "AMOUNTDUE"})
+    FINAL_TOTAL_LABELS = frozenset({
+        "計", "计", "合計", "合计", "總計", "总计", "總額", "总额",
+        "TOTAL", "TOTALAMOUNT", "AMOUNTDUE",
+        "台計", "台计", "税合計", "税合计",
+    })
     EXCLUDE_ROW = re.compile(r"(?:支払|支|還元|返金|値引|割引|PAYMENT|CHANGE|お預|お釣|預|预|釣|钓|cash|現金|現計|現计|クレ計|電計|掛計)", re.I)
     CASH_TENDERED_LABEL = re.compile(r"(?:現計|現计|お預|お預り|預|预|cash|現金|PAYMENT)", re.I)
 
@@ -319,12 +323,16 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
             data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json", "Authorization": "Bearer tweiautoteam"},
         )
-        with urllib.request.urlopen(req, timeout=25) as resp:
+        with urllib.request.urlopen(req, timeout=35) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             raw = data["choices"][0]["message"]["content"].strip()
-            raw = re.sub(r"^```(?:json)?\s*", "", raw)
-            raw = re.sub(r"\s*```$", "", raw)
-            parsed = json.loads(raw)
+            match = re.search(r"\[\s*\{.*\}\s*\]", raw, re.DOTALL)
+            if match:
+                parsed = json.loads(match.group(0))
+            else:
+                match_arr = re.search(r"\[.*\]", raw, re.DOTALL)
+                parsed = json.loads(match_arr.group(0)) if match_arr else json.loads(raw)
+
             if isinstance(parsed, list):
                 result = []
                 for item in parsed:
@@ -348,9 +356,10 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
                             "amount": clean_amt,
                             "quantity": max(1, qty),
                         })
+                print(f"Extracted {len(result)} items successfully", flush=True)
                 return result
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Extract items error: {e}", flush=True)
     return []
 
 
