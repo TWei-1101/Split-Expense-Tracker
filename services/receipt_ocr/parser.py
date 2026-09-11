@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-TOTAL_LABEL = re.compile(r"(?:總(?:計|額)|合計|應付(?:金額)?|TOTAL(?:\s*AMOUNT)?|AMOUNT\s+DUE)", re.I)
+TOTAL_LABEL = re.compile(r"(?:總(?:計|額)|总[计额]|合計|合计|應付(?:金額)?|应付(?:金额)?|TOTAL(?:\s*AMOUNT)?|AMOUNT\s+DUE)", re.I)
 AMOUNT = re.compile(r"(?<!\d)(\d{1,3}(?:,\d{3})+|\d+(?:\.\d{1,2})?)(?!\d)")
 YEN_AMOUNT = re.compile(
     r"(?:(?:￥|¥|JPY\s*)(\d{1,3}(?:[，,.]\d{3})+|\d+(?:\.\d{1,2})?)|(?<!\d)(\d{1,3}(?:[，,.]\d{3})+|\d+(?:\.\d{1,2})?)\s*(?:yen|円))",
@@ -40,6 +40,7 @@ FOOD_MERCHANTS = (
     ("一蘭", ("一蘭", "ichiran")),
     ("鳥貴族", ("鳥貴族", "torikizoku")),
     ("敘敘苑", ("敘敘苑", "叙々苑", "jojoen")),
+    ("Cranberry", ("cranberry", "クランベリー", "t5460101000476")),
 )
 
 # Categories are inferred only from purchased-item wording.  Payment methods
@@ -66,7 +67,7 @@ CATEGORY_ITEM_KEYWORDS = (
         "菓子", "パイ", "アイス", "サンド", "ケーキ", "デザート", "スイーツ", "プリン", "クッキー",
         "チョコ", "パフェ", "和菓子", "洋菓子", "シュークリーム", "甜點", "點心", "冰淇淋", "蛋糕",
         "燒肉", "定食", "丼", "うどん", "そば", "カレー", "バーガー", "ピザ", "パスタ", "飲食",
-        "テーブル", "減税率", "减税率", "軽減税率", "外食", "喫茶",
+        "テーブル", "減税率", "减税率", "軽減税率", "外食", "喫茶", "8%対象", "内税8%", "税率8%", "消費税等8%", "ポテト",
     )),
     ("transport", ("機票", "flight", "airline", "飛行機", "纜車", "cable car", "ropeway", "ロープウェイ", "租車", "rental car", "レンタカー", "計程車", "taxi", "タクシー", "地鐵", "捷運", "metro", "subway", "地下鉄", "巴士", "公車", "bus", "バス", "火車", "train", "電車", "新幹線")),
     ("lodging", ("飯店", "hotel", "ホテル", "旅館", "民宿", "hostel", "ryokan", "宿泊")),
@@ -138,7 +139,7 @@ def _total(lines: list[str]) -> int | float | None:
 
     candidates = [_amount(line) for line in lines if TOTAL_LABEL.search(compact(line))]
 
-    FINAL_TOTAL_LABELS = frozenset({"計", "合計", "總計", "總額", "TOTAL", "TOTALAMOUNT", "AMOUNTDUE"})
+    FINAL_TOTAL_LABELS = frozenset({"計", "计", "合計", "合计", "總計", "总计", "總額", "总额", "TOTAL", "TOTALAMOUNT", "AMOUNTDUE"})
     for index, line in enumerate(lines):
         # RapidOCR can split a final-total label and its value onto two lines,
         # sometimes inserting spaces inside 合計.  Restrict this to explicit
@@ -185,13 +186,13 @@ def _total(lines: list[str]) -> int | float | None:
     skip_next = False
     for line in lines:
         compact_line = compact(line)
-        if re.search(r"(?:支払|支|還元|返金|値引|割引|PAYMENT|CHANGE|お預|お釣)", compact_line, re.I):
+        if re.search(r"(?:支払|支|還元|返金|値引|割引|PAYMENT|CHANGE|お預|お釣|預|预|釣|钓)", compact_line, re.I):
             skip_next = True
             continue
         if skip_next:
             skip_next = False
             continue
-        if re.search(r"(?:cash|現金|お預|お釣)", compact_line, re.I):
+        if re.search(r"(?:cash|現金|お預|お釣|預|预|釣|钓)", compact_line, re.I):
             continue
         for match in YEN_AMOUNT.findall(line):
             raw_value = match[0] or match[1]
