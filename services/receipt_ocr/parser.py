@@ -44,7 +44,7 @@ MERCHANT_KEYWORDS = (
 
 # Food-specific brands and stores whose purchases are unambiguously food/dining.
 FOOD_MERCHANTS = (
-    ("六花亭", ("六花亭", "六花亨", "rokkatei")),
+    ("六花亭", ("六花亭", "六花亨", "rokkatei", "マルセイ", "サクサクパイ", "醍醐", "t9460101001966", "0120-12-6666")),
     ("北菓樓", ("北菓樓", "北菓楼", "kitakaro")),
     ("柳月", ("柳月", "ryugetsu")),
     ("星巴克", ("星巴克", "starbucks", "スターバックス")),
@@ -164,6 +164,7 @@ def _description(lines: list[str]) -> str | None:
     for line in lines[:3]:
         cleaned = re.sub(r"[\s\u3000=<-]+", "", line).upper()
         if (cleaned not in GENERIC_DOCUMENT_TITLES
+                and not re.search(r"^[\d\s\-()]+$", line.strip("=<- >*#:"))
                 and re.search(r"^[A-Za-z0-9\s\-+&.']+$", line.strip("=<- >*#:"))
                 and len(line.strip("=<- >*#:")) >= 3
                 and not re.search(r"^(?:receipt|no\.|tel|fax|date|領収|领收)", line.strip("=<- >*#:"), re.I)):
@@ -341,6 +342,7 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "請將以下日本/外國收據的購買品項擷取為 JSON 陣列，商品名稱請務必翻譯成精準、道地的繁體中文（台灣習慣用語）：\n"
         "特別注意事項：\n"
         "- 若為 WORKMAN Plus 等戶外與服飾專賣店，商品皆為服飾、毛巾、腰帶、襪子、內衣等，請勿翻譯為化妝品或一般代碼（例如：MEDIHEAL 是其疲勞修復機能服飾系列；ふわふわフェイスタ 是蓬鬆洗臉毛巾；GIベルト 是GI帆布腰帶；ドライメッシュ 是乾爽透氣網眼襪；シン・呼吸するインナー 是呼吸透氣內衣）。\n"
+        "- 若為 六花亭 (Rokkatei) 等北海道知名甜點伴手禮店，商品請翻譯為台灣習慣之道地中文（例如：マルセイアイスサンド 是丸成冰淇淋夾心三明治；サクサクパイ 是現烤酥脆派；醍醐 是醍醐生藍莓夾心蛋糕）。\n"
         "- 不要包含稅金（税額、消費税、税合計）、小計、總計、找零或店鋪資訊。\n"
         "輸出格式必須是純 JSON 陣列，欄位如下：\n"
         "- \"name\": 繁體中文商品名稱 (例如：蓬鬆洗臉毛巾, 黑色GI帆布腰帶, MEDIHEAL 疲勞修復機能服, 乾爽網眼短襪 5入組, 乾爽機能短襪, 會呼吸的圓領短袖內衣)\n"
