@@ -1347,7 +1347,7 @@ async function _getStorage() {
                           value={newExpense.description}
                           onChange={handleInputChange}
                           placeholder="例如: 晚餐，電影票"
-                          className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                          className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500 disabled:bg-gray-100 disabled:cursor-not-allowed bg-white text-gray-900 caret-primaryColor-600"
                           disabled={isFormDisabled}
                         />
                       </div>
@@ -1396,7 +1396,7 @@ async function _getStorage() {
                             value={newExpense.originalAmount}
                             onChange={handleInputChange}
                             placeholder="100.00"
-                            className="block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                            className="block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500 disabled:bg-gray-100 disabled:cursor-not-allowed bg-white text-gray-900 caret-primaryColor-600"
                             disabled={isFormDisabled}
                           />
                         </div>
@@ -1425,7 +1425,7 @@ async function _getStorage() {
                         type="datetime-local"
                         value={newExpense.occurredAt}
                         onChange={handleInputChange}
-                        className="mt-1 block w-full max-w-64 rounded-lg border border-gray-300 p-3 shadow-sm focus:border-primaryColor-500 focus:ring-primaryColor-500 sm:max-w-none"
+                        className="mt-1 block w-full max-w-64 rounded-lg border border-gray-300 p-3 shadow-sm focus:border-primaryColor-500 focus:ring-primaryColor-500 sm:max-w-none bg-white text-gray-900 caret-primaryColor-600"
                         disabled={isReadOnly}
                       />
                     </div>
