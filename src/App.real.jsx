@@ -784,6 +784,7 @@ async function _getStorage() {
             const [modalError, setModalError] = useState(null);
             const [uploadStatus, setUploadStatus] = useState('');
             const [receiptOcrStatus, setReceiptOcrStatus] = useState('');
+            const [isReceiptOcrLoading, setIsReceiptOcrLoading] = useState(false);
             // 暫時保留 OCR 金額資料流，讓行動裝置可直接辨別是服務沒回傳、
             // 前端沒接受，或是受控欄位沒有渲染。只顯示金額，不顯示收據文字。
             const [receiptOcrDiagnostic, setReceiptOcrDiagnostic] = useState(null);
@@ -1027,6 +1028,7 @@ async function _getStorage() {
                     setReceiptOcrStatus('目前離線，已保留收據圖片；恢復連線後可重新選取圖片辨識。');
                     return;
                 }
+                setIsReceiptOcrLoading(true);
                 setReceiptOcrStatus('正在辨識收據並預填欄位…');
                 try {
                     let uploadBlob = file;
@@ -1069,6 +1071,8 @@ async function _getStorage() {
                 } catch (error) {
                     setReceiptOcrDiagnostic(null);
                     setReceiptOcrStatus(`收據未能自動辨識：${error.message}`);
+                } finally {
+                    setIsReceiptOcrLoading(false);
                 }
             };
 
@@ -1301,7 +1305,7 @@ async function _getStorage() {
               <div 
                 key={isEditing && expenseToEdit ? expenseToEdit.id : 'add-new'} 
                 className={`app-modal-backdrop items-start overflow-y-auto ${isExpenseModalEntering ? 'app-modal-backdrop--enter' : ''} ${isExpenseModalExiting ? 'app-modal-backdrop--exit' : ''}`}
-                onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}
+                onMouseDown={(event) => { if (event.target === event.currentTarget && !isReceiptOcrLoading) onClose(); }}
               >
                 {/* 修正：新增 h-full 和 flex flex-col 讓內容可以獨立滾動 */}
                 <div role="dialog" aria-modal="true" aria-label={modalTitle} className={`app-modal-surface bg-white rounded-xl w-full max-w-lg shadow-2xl my-4 h-full sm:h-auto sm:max-h-[95vh] flex flex-col force-gpu ${isExpenseModalEntering ? 'app-modal-surface--enter' : ''} ${isExpenseModalExiting ? 'app-modal-surface--exit' : ''}`}>
@@ -1311,7 +1315,7 @@ async function _getStorage() {
                     <h3 className="text-xl font-bold text-gray-800">
                         {modalTitle} {isReadOnly && <span className="text-red-500 ml-2">(唯讀)</span>}
                     </h3>
-                    <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-100 text-gray-600 transition hover:scale-110 transform">
+                    <button onClick={onClose} disabled={isReceiptOcrLoading} className="p-1 rounded-full hover:bg-gray-100 text-gray-600 transition hover:scale-110 transform disabled:opacity-30 disabled:hover:scale-100">
                       <X className="w-6 h-6" />
                     </button>
                   </div>
@@ -1688,10 +1692,10 @@ async function _getStorage() {
 				  <div className="p-6 border-t flex justify-end flex-shrink-0">
 					  <button
 						onClick={saveExpense}
-						disabled={isReadOnly || isLoadingModal || !newExpense.description.trim() || newExpense.originalAmount <= 0 || !newExpense.payerName}
+						disabled={isReadOnly || isLoadingModal || isReceiptOcrLoading || !newExpense.description.trim() || newExpense.originalAmount <= 0 || !newExpense.payerName}
 						className={
 						  "flex items-center px-6 py-3 rounded-full text-white font-semibold transition duration-150 shadow-md " +
-						  ((isReadOnly || isLoadingModal || !newExpense.description.trim() || newExpense.originalAmount <= 0 || !newExpense.payerName)
+						  ((isReadOnly || isLoadingModal || isReceiptOcrLoading || !newExpense.description.trim() || newExpense.originalAmount <= 0 || !newExpense.payerName)
 							? "bg-gray-400 cursor-not-allowed"
 							: "bg-primaryColor-600 hover:bg-primaryColor-700 hover:shadow-lg")
 						}
@@ -1705,6 +1709,35 @@ async function _getStorage() {
 					  </button>
 				  </div>
                 </div>
+                {isReceiptOcrLoading && (
+                  <div 
+                    className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 select-none animate-in fade-in duration-200"
+                    role="alertdialog"
+                    aria-modal="true"
+                    aria-label="收據辨識中"
+                    data-testid="receipt-ocr-loading-overlay"
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                  >
+                    <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-xs w-full flex flex-col items-center text-center space-y-4 animate-in zoom-in-95 duration-200">
+                      <div className="relative w-16 h-16 flex items-center justify-center">
+                        <div className="absolute inset-0 rounded-full border-4 border-primaryColor-200 border-t-primaryColor-600 animate-spin" />
+                        <span className="text-3xl animate-pulse">🧾</span>
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className="text-base font-bold text-gray-900">正在辨識收據…</h4>
+                        <p className="text-xs text-primaryColor-700 font-medium">
+                          {receiptOcrStatus || 'AI 正在解析品項、金額與翻譯明細'}
+                        </p>
+                      </div>
+                      <div className="rounded-lg bg-gray-50 border border-gray-100 p-2.5 w-full">
+                        <p className="text-[11px] text-gray-500 leading-relaxed">
+                          辨識完成前畫面暫時鎖定以避免資料衝突，請稍候…
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {duplicateCandidates.length > 0 && (
                   <div className="fixed inset-0 z-[60] flex items-center justify-center bg-gray-900/75 p-4">
                     <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
