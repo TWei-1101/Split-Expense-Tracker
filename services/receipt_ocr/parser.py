@@ -386,29 +386,7 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
             return result
         return []
 
-    # 1. 優先嘗試區域網路 autoteam
-    try:
-        payload = {
-            "model": "gemini-3.8-flash-high",
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
-        }
-        req = urllib.request.Request(
-            "http://192.168.68.181:8317/v1/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json", "Authorization": "Bearer tweiautoteam"},
-        )
-        with urllib.request.urlopen(req, timeout=2) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            raw = data["choices"][0]["message"]["content"].strip()
-            items = parse_items_json(raw)
-            if items:
-                print(f"Extracted {len(items)} items via autoteam", flush=True)
-                return items
-    except Exception as e:
-        print(f"Autoteam failed ({e}), falling back to MiniMax...", flush=True)
-
-    # 2. 自動備援：MiniMax 雲端 API (100% 穩定高可用)
+    # 1. 主要引擎：MiniMax 雲端 API（極速、精確、繁中翻譯道地）
     minimax_key = _get_minimax_key()
     if minimax_key:
         try:
@@ -422,15 +400,37 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
                 data=json.dumps(payload).encode("utf-8"),
                 headers={"Content-Type": "application/json", "x-api-key": minimax_key, "anthropic-version": "2023-06-01"},
             )
-            with urllib.request.urlopen(req, timeout=45) as resp:
+            with urllib.request.urlopen(req, timeout=35) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 raw = data["content"][0]["text"].strip()
                 items = parse_items_json(raw)
                 if items:
-                    print(f"Extracted {len(items)} items via MiniMax fallback", flush=True)
+                    print(f"Extracted {len(items)} items via MiniMax (primary)", flush=True)
                     return items
         except Exception as mm_err:
-            print(f"MiniMax fallback error: {mm_err}", flush=True)
+            print(f"MiniMax failed ({mm_err}), falling back to local omlx...", flush=True)
+
+    # 2. 本地備援：本機 omlx (Qwen3.6-35B，斷網/API 異常時 100% 本地離線接手)
+    try:
+        payload = {
+            "model": "Qwen3.6-35B-A3B-Uncensored-Heretic-MLX-4bit",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+        }
+        req = urllib.request.Request(
+            "http://127.0.0.1:8000/v1/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            raw = data["choices"][0]["message"]["content"].strip()
+            items = parse_items_json(raw)
+            if items:
+                print(f"Extracted {len(items)} items via local omlx fallback", flush=True)
+                return items
+    except Exception as omlx_err:
+        print(f"Local omlx fallback failed: {omlx_err}", flush=True)
 
     return []
 
