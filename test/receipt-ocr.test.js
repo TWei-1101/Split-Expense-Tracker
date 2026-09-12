@@ -174,9 +174,9 @@ test('所有支出以左滑移至回收桶，保留編輯但不顯示每筆垃�
 
 test('收據辨識進行時顯示鎖定遮罩且不可操作', () => {
   assert.match(appSource, /const \[isReceiptOcrLoading, setIsReceiptOcrLoading\] = useState\(false\)/);
-  assert.match(appSource, /setIsReceiptOcrLoading\(true\)/);
-  assert.match(appSource, /setIsReceiptOcrLoading\(false\)/);
-  assert.match(appSource, /data-testid="receipt-ocr-loading-overlay"/);
-  assert.match(appSource, /disabled=\{isReadOnly \|\| isLoadingModal \|\| isReceiptOcrLoading/);
+  assert.match(appSource, /const \[isReceiptScanning, setIsReceiptScanning\] = useState\(false\)/);
+  assert.match(appSource, /data-testid="receipt-ocr-global-loading-overlay"/);
+  assert.match(appSource, /setIsReceiptScanning\(true\)/);
+  assert.match(appSource, /setIsReceiptScanning\?\.\(false\)/);
 });
 

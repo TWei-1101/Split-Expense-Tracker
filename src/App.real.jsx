@@ -759,7 +759,7 @@ async function _getStorage() {
 		/**
          * 支出 Modal (核心邏輯獨立)
          */
-        const ExpenseModal = memo(({ db, auth, currentUserId, members, expenses, luggage, getInitialShares, state, onClose, getDisplayName, isReadOnly, canManageMembers, onManageMembers, onManageLuggage, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel, isOnline, onExpenseSaved, onExpenseSaveFailed }) => {
+        const ExpenseModal = memo(({ db, auth, currentUserId, members, expenses, luggage, getInitialShares, state, onClose, getDisplayName, isReadOnly, canManageMembers, onManageMembers, onManageLuggage, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel, isOnline, onExpenseSaved, onExpenseSaveFailed, isReceiptScanning, setIsReceiptScanning, setReceiptScanStatus }) => {
             const [newExpense, setNewExpense] = useState({
                 description: '',
                 originalAmount: '',
@@ -799,6 +799,7 @@ async function _getStorage() {
             const isEditing = state.isEditing;
             const expenseToEdit = state.editingExpense;
             const isReceiptOcrEntry = Boolean(state.isReceiptOcr) && !isEditing;
+            const isFormDisabled = isReadOnly || isReceiptOcrLoading || Boolean(isReceiptScanning);
             const modalTitle = isEditing ? '編輯支出記錄' : (isReceiptOcrEntry ? '拍照／選取收據' : '新增支出記錄');
             const submitText = isEditing ? '儲存修改' : '確認新增支出';
             
@@ -1023,13 +1024,19 @@ async function _getStorage() {
             });
 
             const recognizeReceipt = async (file) => {
-                if (!auth?.currentUser) return;
+                if (!auth?.currentUser) {
+                    setIsReceiptScanning?.(false);
+                    return;
+                }
                 if (!isOnline) {
                     setReceiptOcrStatus('目前離線，已保留收據圖片；恢復連線後可重新選取圖片辨識。');
+                    setIsReceiptScanning?.(false);
                     return;
                 }
                 setIsReceiptOcrLoading(true);
+                setIsReceiptScanning?.(true);
                 setReceiptOcrStatus('正在辨識收據並預填欄位…');
+                setReceiptScanStatus?.('正在辨識收據並預填欄位…');
                 try {
                     let uploadBlob = file;
                     try {
@@ -1073,6 +1080,7 @@ async function _getStorage() {
                     setReceiptOcrStatus(`收據未能自動辨識：${error.message}`);
                 } finally {
                     setIsReceiptOcrLoading(false);
+                    setIsReceiptScanning?.(false);
                 }
             };
 
@@ -1109,10 +1117,12 @@ async function _getStorage() {
                     // The browser supplies this file outside React; reject a non-image before any OCR or preview work starts.
                     // eslint-disable-next-line react-hooks/set-state-in-effect
                     setModalError('請選擇圖片檔。');
+                    setIsReceiptScanning?.(false);
                     return;
                 }
                 if (file.size > 20 * 1024 * 1024) {
                     setModalError('圖片檔案請小於 20MB。');
+                    setIsReceiptScanning?.(false);
                     return;
                 }
                 setImageFile(file);
@@ -1305,7 +1315,7 @@ async function _getStorage() {
               <div 
                 key={isEditing && expenseToEdit ? expenseToEdit.id : 'add-new'} 
                 className={`app-modal-backdrop items-start overflow-y-auto ${isExpenseModalEntering ? 'app-modal-backdrop--enter' : ''} ${isExpenseModalExiting ? 'app-modal-backdrop--exit' : ''}`}
-                onMouseDown={(event) => { if (event.target === event.currentTarget && !isReceiptOcrLoading) onClose(); }}
+                onMouseDown={(event) => { if (event.target === event.currentTarget && !isReceiptOcrLoading && !isReceiptScanning) onClose(); }}
               >
                 {/* 修正：新增 h-full 和 flex flex-col 讓內容可以獨立滾動 */}
                 <div role="dialog" aria-modal="true" aria-label={modalTitle} className={`app-modal-surface bg-white rounded-xl w-full max-w-lg shadow-2xl my-4 h-full sm:h-auto sm:max-h-[95vh] flex flex-col force-gpu ${isExpenseModalEntering ? 'app-modal-surface--enter' : ''} ${isExpenseModalExiting ? 'app-modal-surface--exit' : ''}`}>
@@ -1315,7 +1325,7 @@ async function _getStorage() {
                     <h3 className="text-xl font-bold text-gray-800">
                         {modalTitle} {isReadOnly && <span className="text-red-500 ml-2">(唯讀)</span>}
                     </h3>
-                    <button onClick={onClose} disabled={isReceiptOcrLoading} className="p-1 rounded-full hover:bg-gray-100 text-gray-600 transition hover:scale-110 transform disabled:opacity-30 disabled:hover:scale-100">
+                    <button onClick={onClose} disabled={isReceiptOcrLoading || Boolean(isReceiptScanning)} className="p-1 rounded-full hover:bg-gray-100 text-gray-600 transition hover:scale-110 transform disabled:opacity-30 disabled:hover:scale-100">
                       <X className="w-6 h-6" />
                     </button>
                   </div>
@@ -1337,8 +1347,8 @@ async function _getStorage() {
                           value={newExpense.description}
                           onChange={handleInputChange}
                           placeholder="例如: 晚餐，電影票"
-                          className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500"
-                          disabled={isReadOnly}
+                          className="mt-1 block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                          disabled={isFormDisabled}
                         />
                       </div>
                       
@@ -1360,8 +1370,8 @@ async function _getStorage() {
                               newExpense.currency === DEFAULT_CURRENCY
                                 ? 'bg-primaryColor-600 text-white border-primaryColor-600 shadow-sm'
                                 : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                            }`}
-                            disabled={isReadOnly}
+                            } disabled:opacity-50 disabled:cursor-not-allowed`}
+                            disabled={isFormDisabled}
                             title="點擊切換 TWD ↔ 最後選的幣值（不影響下次預設）"
                           >
                             TW
@@ -1371,8 +1381,8 @@ async function _getStorage() {
                               name="currency"
                               value={newExpense.currency === DEFAULT_CURRENCY ? lastForeignCurrency : newExpense.currency}
                               onChange={handleCurrencyChange}
-                              className="block flex-shrink-0 w-auto border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500 bg-white disabled:bg-gray-100"
-                              disabled={isReadOnly}
+                              className="block flex-shrink-0 w-auto border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500 bg-white disabled:bg-gray-100 disabled:cursor-not-allowed"
+                              disabled={isFormDisabled}
                           >
                             {nonTwdCurrencies.map(code => (
                                 <option key={code} value={code}>{code}</option>
@@ -1386,8 +1396,8 @@ async function _getStorage() {
                             value={newExpense.originalAmount}
                             onChange={handleInputChange}
                             placeholder="100.00"
-                            className="block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500"
-                            disabled={isReadOnly}
+                            className="block w-full border border-gray-300 rounded-lg shadow-sm p-3 focus:ring-primaryColor-500 focus:border-primaryColor-500 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                            disabled={isFormDisabled}
                           />
                         </div>
                         
@@ -1692,10 +1702,10 @@ async function _getStorage() {
 				  <div className="p-6 border-t flex justify-end flex-shrink-0">
 					  <button
 						onClick={saveExpense}
-						disabled={isReadOnly || isLoadingModal || isReceiptOcrLoading || !newExpense.description.trim() || newExpense.originalAmount <= 0 || !newExpense.payerName}
+						disabled={isReadOnly || isLoadingModal || isReceiptOcrLoading || Boolean(isReceiptScanning) || !newExpense.description.trim() || newExpense.originalAmount <= 0 || !newExpense.payerName}
 						className={
 						  "flex items-center px-6 py-3 rounded-full text-white font-semibold transition duration-150 shadow-md " +
-						  ((isReadOnly || isLoadingModal || isReceiptOcrLoading || !newExpense.description.trim() || newExpense.originalAmount <= 0 || !newExpense.payerName)
+						  ((isReadOnly || isLoadingModal || isReceiptOcrLoading || Boolean(isReceiptScanning) || !newExpense.description.trim() || newExpense.originalAmount <= 0 || !newExpense.payerName)
 							? "bg-gray-400 cursor-not-allowed"
 							: "bg-primaryColor-600 hover:bg-primaryColor-700 hover:shadow-lg")
 						}
@@ -2137,6 +2147,8 @@ async function _getStorage() {
           const [isGuest, setIsGuest] = useState(false); // NEW: 追蹤是否為匿名訪客
           const [isAuthModalOpen, setIsAuthModalOpen] = useState(false); // NEW: 控制 AuthModal 顯示
 		  const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false);
+          const [isReceiptScanning, setIsReceiptScanning] = useState(false);
+          const [receiptScanStatus, setReceiptScanStatus] = useState('');
           const [userProfiles, setUserProfiles] = useState({});
 		  const [lastExchangeUpdate, setLastExchangeUpdate] = useState(null);
           const [liveExchangeRates, setLiveExchangeRates] = useState(DEFAULT_EXCHANGE_RATES);
@@ -3223,6 +3235,8 @@ async function _getStorage() {
               setError('圖片檔案請小於 20MB。');
               return;
             }
+            setIsReceiptScanning(true);
+            setReceiptScanStatus('正在辨識收據並預填欄位…');
             setExpenseModalState({
                 isOpen: true,
                 editingExpense: null,
@@ -3247,6 +3261,7 @@ async function _getStorage() {
           }, [isReadOnly]);
 
           const closeExpenseModal = useCallback(() => {
+            setIsReceiptScanning(false);
             setExpenseModalState({
                 isOpen: false,
                 editingExpense: null,
@@ -4377,6 +4392,9 @@ async function _getStorage() {
 					defaultCurrency={defaultCurrency}
 					currentUserLabel={currentUserLabel}
                     isOnline={isOnline}
+                    isReceiptScanning={isReceiptScanning}
+                    setIsReceiptScanning={setIsReceiptScanning}
+                    setReceiptScanStatus={setReceiptScanStatus}
                     onExpenseSaved={({ queued, isEditing }) => setToastMessage(queued
                       ? `📥 ${isEditing ? '修改' : '新增'}已儲存於本機，恢復連線後會自動同步。`
                       : `✅ 支出${isEditing ? '修改' : '新增'}完成。`)}
@@ -4469,6 +4487,38 @@ async function _getStorage() {
                        onClose={() => setIsAuthModalOpen(false)} 
                      />
                  )}
+
+              {/* 全域收據辨識鎖定遮罩 (置頂於所有畫面與 Modal 之上，相機拍完返回即刻鎖定) */}
+              {isReceiptScanning && (
+                <div 
+                  className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/75 backdrop-blur-xs p-4 select-none"
+                  role="alertdialog"
+                  aria-modal="true"
+                  aria-label="收據辨識中"
+                  data-testid="receipt-ocr-global-loading-overlay"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                  onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                  onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                >
+                  <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-xs w-full flex flex-col items-center text-center space-y-4 animate-in zoom-in-95 duration-200">
+                    <div className="relative w-16 h-16 flex items-center justify-center">
+                      <div className="absolute inset-0 rounded-full border-4 border-primaryColor-200 border-t-primaryColor-600 animate-spin" />
+                      <span className="text-3xl animate-pulse">🧾</span>
+                    </div>
+                    <div className="space-y-1">
+                      <h4 className="text-base font-bold text-gray-900">正在辨識收據…</h4>
+                      <p className="text-xs text-primaryColor-700 font-medium">
+                        {receiptScanStatus || 'AI 正在解析品項、金額與翻譯明細'}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-gray-50 border border-gray-100 p-2.5 w-full">
+                      <p className="text-[11px] text-gray-500 leading-relaxed">
+                        辨識完成前畫面已全面鎖定，請稍候…
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               </div>
 
