@@ -49,6 +49,63 @@ def verify_firebase_id_token(authorization: str | None) -> dict:
     return auth.verify_id_token(token, check_revoked=True)
 
 
+def extract_text_apple_vision(image_path: str) -> str | None:
+    try:
+        import Vision
+        from Cocoa import NSURL
+
+        url = NSURL.fileURLWithPath_(image_path)
+        req = Vision.VNRecognizeTextRequest.alloc().init()
+        req.setRecognitionLanguages_(["ja-JP", "zh-Hant", "en-US"])
+        req.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
+        req.setUsesLanguageCorrection_(True)
+
+        handler = Vision.VNImageRequestHandler.alloc().initWithURL_options_(url, None)
+        success = handler.performRequests_error_([req], None)
+        if success:
+            results = req.results() or []
+            boxes = []
+            for r in results:
+                cand = r.topCandidates_(1)
+                if cand:
+                    bbox = r.boundingBox()
+                    y_top = 1.0 - (bbox.origin.y + bbox.size.height)
+                    boxes.append({
+                        "text": cand[0].string().strip(),
+                        "y": y_top,
+                        "x": bbox.origin.x,
+                        "h": bbox.size.height,
+                    })
+
+            if not boxes:
+                return None
+
+            boxes.sort(key=lambda b: b["y"])
+            lines = []
+            current_line = []
+            last_y = None
+
+            for b in boxes:
+                if last_y is None or abs(b["y"] - last_y) < 0.012:
+                    current_line.append(b)
+                    last_y = b["y"]
+                else:
+                    current_line.sort(key=lambda x: x["x"])
+                    lines.append(" ".join(x["text"] for x in current_line))
+                    current_line = [b]
+                    last_y = b["y"]
+
+            if current_line:
+                current_line.sort(key=lambda x: x["x"])
+                lines.append(" ".join(x["text"] for x in current_line))
+
+            if len(lines) >= 3:
+                return "\n".join(lines)
+    except Exception as e:
+        print(f"Apple Vision OCR error: {e}", flush=True)
+    return None
+
+
 def extract_text(image_path: str) -> str:
     try:
         from PIL import Image, ImageOps
@@ -58,6 +115,13 @@ def extract_text(image_path: str) -> str:
                 transposed.save(image_path)
     except Exception:
         pass
+
+    # 1. On macOS, Apple Vision OCR has superior accuracy for Japanese, Traditional Chinese, and English
+    vision_text = extract_text_apple_vision(image_path)
+    if vision_text:
+        return vision_text
+
+    # 2. Fallback to RapidOCR
     try:
         from rapidocr_onnxruntime import RapidOCR
     except ImportError as error:
@@ -137,7 +201,7 @@ def make_handler(token_verifier=verify_firebase_id_token, ocr=extract_text):
                     image_file.write(image)
                     image_file.flush()
                     ocr_text = ocr(image_file.name)
-                    fields = parse_receipt_text(ocr_text)
+                    fields = parse_receipt_text(ocr_text, extract_items=True)
                     print(f"[{self.date_time_string()}] Parsed receipt: {fields}", flush=True)
             except RuntimeError as error:
                 self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": str(error)})

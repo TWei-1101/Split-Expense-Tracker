@@ -22,6 +22,7 @@ class ReceiptParserTests(unittest.TestCase):
             "originalAmount": 85,
             "currency": "TWD",
             "occurredAt": "2026-08-12",
+            "items": [],
         })
 
     def test_prefers_labeled_total_over_line_item_amounts(self):
@@ -67,6 +68,7 @@ nanaco支
             "originalAmount": 1161,
             "currency": "JPY",
             "occurredAt": "2019-10-01T08:45",
+            "items": [],
         })
 
     def test_parses_japanese_total_when_ocr_inserts_spaces_and_fullwidth_comma(self):
@@ -323,6 +325,7 @@ Total
             "originalAmount": None,
             "currency": "TWD",
             "occurredAt": None,
+            "items": [],
         })
 
 
