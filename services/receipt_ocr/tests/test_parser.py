@@ -318,6 +318,27 @@ Total
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-11T21:18")
 
+    def test_parses_japanese_toll_road_receipt(self):
+        text = """ご利用ありがとうございます。
+NEXCO
+東日本
+料金所では一旦停車してください。
+領 収 書
+料金所 池田
+26年 9月12日11時56分
+車種 普通
+通行料金 ¥630-
+※通行料金の消費税率は10％です
+（現金）
+東日本高速道路株式会社
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["description"], "交通通行費")
+        self.assertEqual(result["category"], "transport")
+        self.assertEqual(result["originalAmount"], 630)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-12T11:56")
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",
