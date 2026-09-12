@@ -339,6 +339,27 @@ NEXCO
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-12T11:56")
 
+    def test_prefers_cjk_brand_over_english_subtitle_for_parks(self):
+        text = """釧路市丹頂鶴自然公園
+Japanese Crane Reserve
+釧路市鶴丘112
+TEL:0154-56-2219
+2026-09-12 13:10
+3 点 @480
+個人 大人 ¥1,440
+対象計 10.0% ¥1,440
+消費税 ¥130
+合計 ¥1,440
+お預り ¥1,500
+お釣 ¥60
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["description"], "釧路市丹頂鶴自然公園")
+        self.assertEqual(result["category"], "other")
+        self.assertEqual(result["originalAmount"], 1440)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-12T13:10")
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",
