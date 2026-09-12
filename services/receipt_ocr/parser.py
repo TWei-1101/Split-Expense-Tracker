@@ -15,7 +15,7 @@ YEN_AMOUNT = re.compile(
     re.I,
 )
 DATE = re.compile(
-    r"(?<!\d)(\d{4})(?:[/-]|年)(\d{1,2})(?:[/-]|月)(\d{1,2})(?:日)?(?!\d)"
+    r"(?<!\d)(\d{2}|\d{4})(?:[/-]|年)\s*(\d{1,2})(?:[/-]|月)\s*(\d{1,2})(?:日)?(?!\d)"
 )
 TIME = re.compile(r"(?<!\d)([01]?\d|2[0-3])(?::|時)([0-5]\d)(?:分)?(?!\d)")
 
@@ -76,6 +76,7 @@ HOTEL_MERCHANTS = (
 # Categories are inferred only from purchased-item wording.  Payment methods
 # (for example Japanese transit IC money) are deliberately not included.
 ITEM_KEYWORDS = (
+    ("交通通行費", ("通行料金", "通行料", "高速道路", "料金所", "nexco", "首都高", "阪神高速", "過路費", "通行費")),
     ("拉麵", ("拉麵", "ラーメン", "ramen")),
     ("壽司", ("壽司", "寿司", "sushi")),
     ("爐端燒", ("炉端", "ろばた", "炉ばた", "robatayaki", "robata", "姿焼き", "姿焼")),
@@ -101,7 +102,7 @@ CATEGORY_ITEM_KEYWORDS = (
         "テーブル", "減税率", "减税率", "軽減税率", "外食", "喫茶", "8%対象", "内税8%", "税率8%", "消費税等8%", "ポテト",
         "串", "梅酒", "酒", "居酒屋", "炉端", "お通し", "やきとり", "焼き鳥", "焼鳥", "ウーロン茶", "烏龍茶", "刺身", "ビール", "サワー", "ハイボール",
     )),
-    ("transport", ("機票", "flight", "airline", "飛行機", "纜車", "cable car", "ropeway", "ロープウェイ", "租車", "rental car", "レンタカー", "計程車", "taxi", "タクシー", "地鐵", "捷運", "metro", "subway", "地下鉄", "巴士", "公車", "bus", "バス", "火車", "train", "電車", "新幹線")),
+    ("transport", ("通行料金", "通行料", "高速道路", "料金所", "etc", "nexco", "過路費", "通行費", "高速公路", "機票", "flight", "airline", "飛行機", "纜車", "cable car", "ropeway", "ロープウェイ", "租車", "rental car", "レンタカー", "計程車", "taxi", "タクシー", "地鐵", "捷運", "metro", "subway", "地下鉄", "巴士", "公車", "bus", "バス", "火車", "train", "電車", "新幹線")),
     ("lodging", ("飯店", "hotel", "ホテル", "旅館", "民宿", "hostel", "ryokan", "宿泊", "termofstay", "term of stay", "roomno", "room no", "accommodation")),
 )
 
@@ -442,6 +443,8 @@ def parse_receipt_text(text: str, extract_items: bool = False) -> dict:
         m = DATE.search(line)
         if m:
             year, month, day = map(int, m.groups())
+            if year < 100:
+                year += 2000
             if not (1 <= month <= 12 and 1 <= day <= 31):
                 continue
             # 1. Check same line

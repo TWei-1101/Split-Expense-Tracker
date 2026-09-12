@@ -19,9 +19,9 @@ const CATEGORY_KEYWORDS = Object.freeze({
     'レストラン', 'カフェ', 'コーヒー', '朝食', '昼食', '夕食', 'ラーメン', '寿司', '食事', '菓子', 'ケーキ', 'スイーツ', 'アイス', 'パイ', 'クランベリー', 'ポテト',
   ],
   [EXPENSE_CATEGORIES.TRANSPORT]: [
-    '交通', '車票', '計程車', '捷運', '地鐵', '公車', '巴士', '火車', '高鐵', '機票', '租車', '停車', '加油', 'jr', '地鐵',
-    'taxi', 'uber', 'train', 'bus', 'metro', 'subway', 'flight', 'airline', 'airport', 'express', 'rental car', 'parking', 'fuel',
-    '電車', '地下鉄', '新幹線', 'バス', 'タクシー', '飛行機', '空港', 'レンタカー', '駐車',
+    '交通', '通行費', '過路費', '車票', '計程車', '捷運', '地鐵', '公車', '巴士', '火車', '高鐵', '機票', '租車', '停車', '加油', 'jr', '地鐵',
+    'taxi', 'uber', 'train', 'bus', 'metro', 'subway', 'flight', 'airline', 'airport', 'express', 'rental car', 'parking', 'fuel', 'toll', 'nexco', 'etc',
+    '通行料金', '高速道路', '料金所', '電車', '地下鉄', '新幹線', 'バス', 'タクシー', '飛行機', '空港', 'レンタカー', '駐車',
   ],
   [EXPENSE_CATEGORIES.LODGING]: [
     '住宿', '飯店', '旅館', '酒店', '民宿', '旅店', 'hotel', 'hostel', 'lodging', 'accommodation', 'airbnb',
