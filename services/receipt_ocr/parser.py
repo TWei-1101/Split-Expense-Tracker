@@ -160,15 +160,32 @@ def _description(lines: list[str]) -> str | None:
             if len(cleaned) >= 4 and cleaned.upper() not in {"HOTEL", "ホテル", "旅館", "民宿"}:
                 return cleaned
 
-    # If the top line is clearly a brand name (not delimiter / receipt title), prefer it
-    for line in lines[:3]:
+    # If the top lines contain a brand or facility name, prefer Chinese/Japanese over English subtitle
+    cand_cjk = None
+    cand_en = None
+    for line in lines[:4]:
+        stripped = line.strip("=<- >*#:")
         cleaned = re.sub(r"[\s\u3000=<-]+", "", line).upper()
-        if (cleaned not in GENERIC_DOCUMENT_TITLES
-                and not re.search(r"^[\d\s\-()]+$", line.strip("=<- >*#:"))
-                and re.search(r"^[A-Za-z0-9\s\-+&.']+$", line.strip("=<- >*#:"))
-                and len(line.strip("=<- >*#:")) >= 3
-                and not re.search(r"^(?:receipt|no\.|tel|fax|date|領収|领收)", line.strip("=<- >*#:"), re.I)):
-            return line.strip("=<- >*#:")
+        if (cleaned in GENERIC_DOCUMENT_TITLES
+                or len(stripped) < 2
+                or DATE.search(line)
+                or TOTAL_LABEL.search(line)
+                or re.search(r"^[\d\s\-()]+$", stripped)
+                or re.search(r"^(?:receipt|no\.|tel|fax|date|領収|领收|登録番号|登錄番号|登绿番号)", stripped, re.I)
+                or re.search(r"(?:[0-9０-９]+(?:丁目|番|号|線)|[0-9０-９\-]{3,}$)", stripped)):
+            continue
+
+        if re.search(r"[\u4e00-\u9fff\u3040-\u30ff]", stripped):
+            if cand_cjk is None and len(stripped) <= 48:
+                cand_cjk = stripped
+        elif re.search(r"^[A-Za-z0-9\s\-+&.']+$", stripped):
+            if cand_en is None and len(stripped) >= 3:
+                cand_en = stripped
+
+    if cand_cjk:
+        return cand_cjk
+    if cand_en:
+        return cand_en
 
     # Japanese convenience-store receipts commonly print a branch name ending
     # in 店. Prefer it over misrecognised brand text and the following address.
@@ -343,6 +360,7 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "特別注意事項：\n"
         "- 若為 WORKMAN Plus 等戶外與服飾專賣店，商品皆為服飾、毛巾、腰帶、襪子、內衣等，請勿翻譯為化妝品或一般代碼（例如：MEDIHEAL 是其疲勞修復機能服飾系列；ふわふわフェイスタ 是蓬鬆洗臉毛巾；GIベルト 是GI帆布腰帶；ドライメッシュ 是乾爽透氣網眼襪；シン・呼吸するインナー 是呼吸透氣內衣）。\n"
         "- 若為 六花亭 (Rokkatei) 等北海道知名甜點伴手禮店，商品請翻譯為台灣習慣之道地中文（例如：マルセイアイスサンド 是丸成冰淇淋夾心三明治；サクサクパイ 是現烤酥脆派；醍醐 是醍醐生藍莓夾心蛋糕）。\n"
+        "- 若為 門票/風景區/設施入場券（例如：個人 大人 是成人門票/全票），請精準擷取門票項目與數量，嚴禁將 稅額（消費税、対象計、内税、外税、税合計）、小計、合計、找零、店鋪資訊、電話、地址、法人登錄番號（登録番号）提取為商品。\n"
         "- 不要包含稅金（税額、消費税、税合計）、小計、總計、找零或店鋪資訊。\n"
         "輸出格式必須是純 JSON 陣列，欄位如下：\n"
         "- \"name\": 繁體中文商品名稱 (例如：蓬鬆洗臉毛巾, 黑色GI帆布腰帶, MEDIHEAL 疲勞修復機能服, 乾爽網眼短襪 5入組, 乾爽機能短襪, 會呼吸的圓領短袖內衣)\n"
