@@ -395,7 +395,7 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
             data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json", "Authorization": "Bearer tweiautoteam"},
         )
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=2) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             raw = data["choices"][0]["message"]["content"].strip()
             items = parse_items_json(raw)
@@ -411,7 +411,7 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         try:
             payload = {
                 "model": "MiniMax-Text-01",
-                "max_tokens": 1200,
+                "max_tokens": 1500,
                 "messages": [{"role": "user", "content": prompt}],
             }
             req = urllib.request.Request(
@@ -419,7 +419,7 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
                 data=json.dumps(payload).encode("utf-8"),
                 headers={"Content-Type": "application/json", "x-api-key": minimax_key, "anthropic-version": "2023-06-01"},
             )
-            with urllib.request.urlopen(req, timeout=15) as resp:
+            with urllib.request.urlopen(req, timeout=45) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 raw = data["content"][0]["text"].strip()
                 items = parse_items_json(raw)
