@@ -30,6 +30,7 @@ MERCHANT_KEYWORDS = (
     )),
     ("全家", ("全家", "familymart", "ファミリーマート")),
     ("Lawson", ("lawson", "ローソン")),
+    ("Big House 超市", ("bighouse", "ビッグハウス", "株式会社福原", "株式会社 福原")),
     ("Seicomart", ("seicomart", "セイコーマート", "セコマ")),
     ("WORKMAN Plus", ("workman", "ワークマン")),
     ("UNIQLO", ("uniqlo", "ユニクロ")),
