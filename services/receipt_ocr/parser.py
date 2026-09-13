@@ -77,12 +77,12 @@ HOTEL_MERCHANTS = (
 
 # Transport and gas station brands
 TRANSPORT_MERCHANTS = (
-    ("オカモトセルフ 根室", ("オカモト", "セルフ根室", "0153-29-2125")),
-    ("オカモトセルフ", ("オカモトセルフ", "株式会社オカモト", "オカモト")),
-    ("ENEOS", ("eneos", "エネオス")),
-    ("出光 apollostation", ("apollostation", "アポロステーション", "出光")),
+    ("オカモトセルフ 根室 (加油站)", ("オカモト", "セルフ根室", "0153-29-2125")),
+    ("オカモトセルフ 加油站", ("オカモトセルフ", "株式会社オカモト", "オカモト")),
+    ("ENEOS 加油站", ("eneos", "エネオス")),
+    ("出光 apollostation 加油站", ("apollostation", "アポロステーション", "出光")),
     ("Cosmo 加油站", ("コスモ石油", "cosmo石油", "コスモ")),
-    ("ホクレンSS", ("ホクレンss", "ホクレン")),
+    ("ホクレンSS 加油站", ("ホクレンss", "ホクレン")),
 )
 
 # Categories are inferred only from purchased-item wording.  Payment methods
