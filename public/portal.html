@@ -270,6 +270,12 @@
       const tg = window.Telegram.WebApp;
       tg.ready();
       tg.expand();
+      if (tg.requestFullscreen) {
+        try { tg.requestFullscreen(); } catch (_) {}
+      }
+      if (tg.disableVerticalSwipes) {
+        try { tg.disableVerticalSwipes(); } catch (_) {}
+      }
       if (tg.disableClosingConfirmation) {
         tg.disableClosingConfirmation();
       }

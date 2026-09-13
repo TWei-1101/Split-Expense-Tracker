@@ -45,6 +45,12 @@ export function applyTelegramTheme() {
   if (tg.backgroundColor) root.style.background = tg.backgroundColor;
   tg.ready();
   tg.expand();
+  if (tg.requestFullscreen) {
+    try { tg.requestFullscreen(); } catch (_) {}
+  }
+  if (tg.disableVerticalSwipes) {
+    try { tg.disableVerticalSwipes(); } catch (_) {}
+  }
 }
 
 // Wait for Telegram SDK to be ready (it's a tiny script that loads before main.jsx).
