@@ -21,6 +21,9 @@
       --blue-bg: #eff6ff;
       --blue-border: #dbeafe;
       --blue-accent: #2563eb;
+      --purple-bg: #faf5ff;
+      --purple-border: #f3e8ff;
+      --purple-accent: #9333ea;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -38,6 +41,9 @@
         --blue-bg: #1e3a8a22;
         --blue-border: #1e40af;
         --blue-accent: #60a5fa;
+        --purple-bg: #581c8722;
+        --purple-border: #6b21a8;
+        --purple-accent: #c084fc;
       }
     }
 
@@ -145,6 +151,12 @@
       color: var(--blue-accent);
     }
 
+    .card-quota .card-icon {
+      background: var(--purple-bg);
+      border: 1px solid var(--purple-border);
+      color: var(--purple-accent);
+    }
+
     .card-content {
       flex: 1;
       min-width: 0;
@@ -182,6 +194,11 @@
       background: rgba(13, 148, 136, 0.12);
       color: var(--teal-accent);
       margin-left: 4px;
+    }
+
+    .badge-purple {
+      background: rgba(147, 51, 234, 0.12) !important;
+      color: var(--purple-accent) !important;
     }
 
     .footer {
@@ -225,6 +242,19 @@
           <span class="badge">Live</span>
         </div>
         <div class="card-desc">攝影機即時串流、事件錄影、AI 物件偵測</div>
+      </div>
+      <div class="arrow">›</div>
+    </div>
+
+    <!-- 3. 模型用量監控 -->
+    <div class="app-card card-quota" onclick="launchApp('https://usage-monitor.pages.dev/')">
+      <div class="card-icon">⚡️</div>
+      <div class="card-content">
+        <div class="card-title">
+          模型額度監控
+          <span class="badge badge-purple">Quota</span>
+        </div>
+        <div class="card-desc">Codex、MiniMax 即時剩餘用量與重置倒數</div>
       </div>
       <div class="arrow">›</div>
     </div>
