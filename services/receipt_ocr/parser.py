@@ -17,7 +17,7 @@ YEN_AMOUNT = re.compile(
 DATE = re.compile(
     r"(?<!\d)(\d{2}|\d{4})(?:[/-]|年)\s*(\d{1,2})(?:[/-]|月)\s*(\d{1,2})(?:日)?(?!\d)"
 )
-TIME = re.compile(r"(?<!\d)([01]?\d|2[0-3])(?::|時|月(?=\d{2}分))([0-5]\d)(?:分)?(?!\d)")
+TIME = re.compile(r"(?<!\d)([01]?\d|2[0-3])(?::|時|月(?=\d{2}分))([0-5]\d|[6][0-9])(?:分)?(?!\d)")
 
 # Store names are useful for the form's item name, but they must never decide
 # the category: convenience stores sell food, toiletries, tickets and more.
@@ -30,6 +30,8 @@ MERCHANT_KEYWORDS = (
     )),
     ("全家", ("全家", "familymart", "ファミリーマート")),
     ("Lawson", ("lawson", "ローソン")),
+    ("AEON 超市 根室店", ("イオン根室店", "aeon根室")),
+    ("AEON 超市", ("aeon", "イオン", "永旺")),
     ("Big House 超市", ("bighouse", "ビッグハウス", "株式会社福原", "株式会社 福原")),
     ("Seicomart", ("seicomart", "セイコーマート", "セコマ")),
     ("WORKMAN Plus", ("workman", "ワークマン")),
@@ -545,7 +547,8 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         try:
             payload = {
                 "model": "MiniMax-Text-01",
-                "max_tokens": 1500,
+                "max_tokens": 2500,
+                "temperature": 0.1,
                 "messages": [{"role": "user", "content": prompt}],
             }
             req = urllib.request.Request(
@@ -553,7 +556,7 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
                 data=json.dumps(payload).encode("utf-8"),
                 headers={"Content-Type": "application/json", "x-api-key": minimax_key, "anthropic-version": "2023-06-01"},
             )
-            with urllib.request.urlopen(req, timeout=35) as resp:
+            with urllib.request.urlopen(req, timeout=55) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 raw = data["content"][0]["text"].strip()
                 items = parse_items_json(raw)
@@ -575,7 +578,7 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
             data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=90) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             raw = data["choices"][0]["message"]["content"].strip()
             items = parse_items_json(raw)
@@ -593,6 +596,13 @@ def parse_receipt_text(text: str, extract_items: bool = False) -> dict:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     total = _total(lines)
 
+    def _format_time(tm_match) -> str:
+        hr = tm_match.group(1).zfill(2)
+        mn = int(tm_match.group(2))
+        if mn >= 60:
+            mn -= 10
+        return f"{hr}:{mn:02d}"
+
     occurred_at = None
     for i, line in enumerate(lines):
         m = DATE.search(line)
@@ -605,18 +615,18 @@ def parse_receipt_text(text: str, extract_items: bool = False) -> dict:
             # 1. Check same line
             tm = TIME.search(line[m.end():]) or TIME.search(line[:m.start()])
             if tm:
-                occurred_at = f"{year:04d}-{month:02d}-{day:02d}T{tm.group(1).zfill(2)}:{tm.group(2)}"
+                occurred_at = f"{year:04d}-{month:02d}-{day:02d}T{_format_time(tm)}"
                 break
             # 2. Check adjacent lines (immediately after or before)
             if i + 1 < len(lines):
                 tm = TIME.search(lines[i + 1])
                 if tm and not DATE.search(lines[i + 1]):
-                    occurred_at = f"{year:04d}-{month:02d}-{day:02d}T{tm.group(1).zfill(2)}:{tm.group(2)}"
+                    occurred_at = f"{year:04d}-{month:02d}-{day:02d}T{_format_time(tm)}"
                     break
             if i > 0:
                 tm = TIME.search(lines[i - 1])
                 if tm and not DATE.search(lines[i - 1]):
-                    occurred_at = f"{year:04d}-{month:02d}-{day:02d}T{tm.group(1).zfill(2)}:{tm.group(2)}"
+                    occurred_at = f"{year:04d}-{month:02d}-{day:02d}T{_format_time(tm)}"
                     break
             # Date found without explicit time near it
             occurred_at = f"{year:04d}-{month:02d}-{day:02d}"
