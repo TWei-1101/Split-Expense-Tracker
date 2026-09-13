@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>管家小龍蝦應用中心</title>
+  <meta name="color-scheme" content="light dark">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+      --shadow-hover: 0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.05);
+      --teal-bg: #f0fdfa;
+      --teal-border: #ccfbf1;
+      --teal-accent: #0d9488;
+      --blue-bg: #eff6ff;
+      --blue-border: #dbeafe;
+      --blue-accent: #2563eb;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f172a;
+        --card-bg: #1e293b;
+        --text: #f8fafc;
+        --text-muted: #94a3b8;
+        --border: #334155;
+        --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.3);
+        --shadow-hover: 0 10px 15px -3px rgb(0 0 0 / 0.4);
+        --teal-bg: #134e4a22;
+        --teal-border: #115e59;
+        --teal-accent: #2dd4bf;
+        --blue-bg: #1e3a8a22;
+        --blue-border: #1e40af;
+        --blue-accent: #60a5fa;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 20px;
+      padding-top: max(24px, env(safe-area-inset-top));
+      padding-bottom: max(24px, env(safe-area-inset-bottom));
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+
+    .avatar-wrap {
+      width: 68px;
+      height: 68px;
+      background: linear-gradient(135deg, #0d9488, #14b8a6);
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 14px;
+      box-shadow: 0 8px 16px -4px rgba(13, 148, 136, 0.35);
+      font-size: 34px;
+    }
+
+    .title {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .cards-container {
+      width: 100%;
+      max-width: 440px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .app-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 18px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      text-decoration: none;
+      color: inherit;
+      box-shadow: var(--shadow);
+      transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .app-card:active {
+      transform: scale(0.97);
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+
+    .card-icon {
+      width: 52px;
+      height: 52px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 26px;
+      flex-shrink: 0;
+    }
+
+    .card-expense .card-icon {
+      background: var(--teal-bg);
+      border: 1px solid var(--teal-border);
+      color: var(--teal-accent);
+    }
+
+    .card-cctv .card-icon {
+      background: var(--blue-bg);
+      border: 1px solid var(--blue-border);
+      color: var(--blue-accent);
+    }
+
+    .card-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .card-desc {
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    .arrow {
+      color: var(--text-muted);
+      font-size: 18px;
+      font-weight: 700;
+      opacity: 0.5;
+      padding-left: 4px;
+    }
+
+    .badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: rgba(13, 148, 136, 0.12);
+      color: var(--teal-accent);
+      margin-left: 4px;
+    }
+
+    .footer {
+      margin-top: auto;
+      padding-top: 32px;
+      font-size: 11px;
+      color: var(--text-muted);
+      text-align: center;
+      opacity: 0.8;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="avatar-wrap">🦞</div>
+    <h1 class="title">管家小龍蝦應用中心</h1>
+    <p class="subtitle">點擊直接啟動獨立應用程式</p>
+  </div>
+
+  <div class="cards-container">
+    <!-- 1. 分帳記帳本 -->
+    <div class="app-card card-expense" onclick="launchApp('https://expense.771101.xyz/')">
+      <div class="card-icon">💳</div>
+      <div class="card-content">
+        <div class="card-title">
+          分帳記帳簿
+          <span class="badge">即時換算</span>
+        </div>
+        <div class="card-desc">旅遊分帳結算、收據 OCR 自動辨識、多幣別</div>
+      </div>
+      <div class="arrow">›</div>
+    </div>
+
+    <!-- 2. Frigate 居家監控 -->
+    <div class="app-card card-cctv" onclick="launchApp('https://frigate.twei-ha.com/')">
+      <div class="card-icon">📹</div>
+      <div class="card-content">
+        <div class="card-title">
+          Frigate 居家監控
+          <span class="badge">Live</span>
+        </div>
+        <div class="card-desc">攝影機即時串流、事件錄影、AI 物件偵測</div>
+      </div>
+      <div class="arrow">›</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    TWei Personal Workspace • Zero Latency
+  </div>
+
+  <script>
+    // 初始化 Telegram Mini App
+    if (window.Telegram && window.Telegram.WebApp) {
+      const tg = window.Telegram.WebApp;
+      tg.ready();
+      tg.expand();
+      if (tg.enableClosingConfirmation) {
+        tg.enableClosingConfirmation();
+      }
+    }
+
+    function launchApp(url) {
+      if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.HapticFeedback) {
+        window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+      }
+      window.location.href = url;
+    }
+  </script>
+</body>
+</html>
