@@ -46,6 +46,8 @@ MERCHANT_KEYWORDS = (
 # Food-specific brands and stores whose purchases are unambiguously food/dining.
 FOOD_MERCHANTS = (
     ("厚岸味覚ターミナル コンキリエ", ("厚岸味覚ターミナル", "コンキリエ", "conchiglie", "オイスターカフェ", "oyster cafe", "oystercafe", "0153-52-4139", "味覚ターミナル", "フンキリエ")),
+    ("根室花まる 根室店", ("花まる根室店", "0153-24-1444")),
+    ("根室花まる", ("根室花まる", "根室れまる", "花まる", "hanamaru")),
     ("六花亭", ("六花亭", "六花亨", "rokkatei", "マルセイ", "サクサクパイ", "醍醐", "t9460101001966", "0120-12-6666")),
     ("北菓樓", ("北菓樓", "北菓楼", "kitakaro")),
     ("柳月", ("柳月", "ryugetsu")),
@@ -398,6 +400,10 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "     軽油 ➔ 柴油 (若有公升數標註，如 柴油 (35.26L) )\n"
         "     レギュラー ➔ 無鉛汽油\n"
         "     ハイオク ➔ 高級無鉛汽油\n"
+        "     青皿 ➔ 藍盤壽司 (青皿)\n"
+        "     ピンク皿 ➔ 粉紅盤壽司 (粉紅皿)\n"
+        "     緑皿 ➔ 綠盤壽司 (綠皿)\n"
+        "     花火皿 ➔ 花火盤壽司 (花火皿)\n"
         "     かき（生） ➔ 生牡蠣 (生蠔)\n"
         "     かき（蒸し焼き） ➔ 蒸烤牡蠣\n"
         "     お通し ➔ 開胃小菜\n"
@@ -419,13 +425,17 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "     GIベルト ➔ 黑色GI帆布腰帶\n"
         "     ドライメッシュ ➔ 乾爽網眼短襪\n"
         "     シン・呼吸するインナー ➔ 呼吸透氣內衣）。\n"
-        "2. \"originalName\" 欄位保留收據上的原始日文名稱（去掉分類代碼或符號）。\n"
-        "3. 收據開頭的店名/設施名（如 まるとも水産、六花亭 等）是店名，不是購買商品！\n"
-        "4. 嚴格禁止將稅額（外消費税、内消費税、税率、小計、合計、点数、お預り、找零おつり）、店鋪資訊、電話、地址、法人登錄番號（登録番号）提取為商品！\n\n"
+        "2. 【金額 \"amount\" 必須是該品項的「小計總金額」（Line Total），嚴禁填寫單價】！\n"
+        "   - 例如「@165x 5 ¥825」：quantity 為 5，amount 必須填寫 825（絕對不能填單價 165）！\n"
+        "   - 例如「@286x 16 ¥4,576」：quantity 為 16，amount 必須填寫 4576！\n"
+        "   - 所有品項的 amount 加總必須等於收據總額！\n"
+        "3. \"originalName\" 欄位保留收據上的原始日文名稱（去掉分類代碼或符號）。\n"
+        "4. 收據開頭的店名/設施名（如 まるとも水産、六花亭 等）是店名，不是購買商品！\n"
+        "5. 嚴格禁止將稅額（外消費税、内消費税、税率、小計、合計、点数、お預り、找零おつり）、店鋪資訊、電話、地址、法人登錄番號（登録番号）提取為商品！\n\n"
         "輸出格式必須是純 JSON 陣列，欄位如下：\n"
         "- \"name\": 繁體中文商品名稱 (嚴禁出現日文假名)\n"
         "- \"originalName\": 收據上的原始名稱\n"
-        "- \"amount\": 原幣金額數值 (不含貨幣符號，必須大於 0)\n"
+        "- \"amount\": 該項小計總額數值 (必須是總額而非單價，不含貨幣符號，必須大於 0)\n"
         "- \"quantity\": 數量整數 (預設 1)\n\n"
         "只輸出純 JSON 陣列，不要任何額外說明或 Markdown 標籤：\n" + ocr_text
     )
@@ -460,6 +470,10 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "羊葉小": "北海道小豆紅豆羊羹",
         "金のかき醤油入クイー": "黃金牡蠣醬油風味餅乾 (厚岸限定)",
         "金のかき醤油入クッキー": "黃金牡蠣醬油風味餅乾 (厚岸限定)",
+        "青皿": "藍盤壽司 (青皿)",
+        "ピンク皿": "粉紅盤壽司 (粉紅皿)",
+        "緑皿": "綠盤壽司 (綠皿)",
+        "花火皿": "花火盤壽司 (花火皿)",
         "軽油": "柴油",
         "レギュラー": "無鉛汽油",
         "ハイオク": "高級無鉛汽油",
@@ -503,6 +517,11 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
                 except (ValueError, TypeError):
                     qty = 1
                 if (name or orig) and amt > 0:
+                    # 若 amount 是單價（例如 amount * qty 的數值存在於收據文本中），自動修正為小計總額
+                    if qty > 1 and amt > 0:
+                        line_total = round(amt * qty)
+                        if f"{line_total:,}" in ocr_text or str(line_total) in ocr_text:
+                            amt = line_total
                     clean_amt = int(amt) if amt.is_integer() else amt
                     # 雙重防護：若 LLM 輸出遺漏翻譯仍保留日文平假/片假名，或翻譯不精確
                     final_name = name or orig
@@ -619,7 +638,7 @@ def parse_receipt_text(text: str, extract_items: bool = False) -> dict:
                     it["name"] = f"{it['name']} ({l_str})"
 
         items_sum = sum(it["amount"] for it in items if isinstance(it.get("amount"), (int, float)))
-        if items_sum > 0 and (total is None or total == 10000 or total == 5000 or total > items_sum * 1.15):
+        if items_sum > 0 and (total is None or (total in (5000, 10000, 20000, 50000) and items_sum < total and any(re.search(r"(?:お預|お釣|おつり)", l) for l in lines))):
             total = int(items_sum) if isinstance(items_sum, float) and items_sum.is_integer() else items_sum
 
     return {
