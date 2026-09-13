@@ -17,7 +17,7 @@ YEN_AMOUNT = re.compile(
 DATE = re.compile(
     r"(?<!\d)(\d{2}|\d{4})(?:[/-]|年)\s*(\d{1,2})(?:[/-]|月)\s*(\d{1,2})(?:日)?(?!\d)"
 )
-TIME = re.compile(r"(?<!\d)([01]?\d|2[0-3])(?::|時)([0-5]\d)(?:分)?(?!\d)")
+TIME = re.compile(r"(?<!\d)([01]?\d|2[0-3])(?::|時|月(?=\d{2}分))([0-5]\d)(?:分)?(?!\d)")
 
 # Store names are useful for the form's item name, but they must never decide
 # the category: convenience stores sell food, toiletries, tickets and more.
@@ -45,6 +45,7 @@ MERCHANT_KEYWORDS = (
 
 # Food-specific brands and stores whose purchases are unambiguously food/dining.
 FOOD_MERCHANTS = (
+    ("厚岸味覚ターミナル コンキリエ", ("厚岸味覚ターミナル", "コンキリエ", "conchiglie", "オイスターカフェ", "oyster cafe", "oystercafe", "0153-52-4139")),
     ("六花亭", ("六花亭", "六花亨", "rokkatei", "マルセイ", "サクサクパイ", "醍醐", "t9460101001966", "0120-12-6666")),
     ("北菓樓", ("北菓樓", "北菓楼", "kitakaro")),
     ("柳月", ("柳月", "ryugetsu")),
@@ -367,6 +368,10 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "     じゃがバター ➔ 奶油馬鈴薯\n"
         "     かに汁 ➔ 螃蟹味噌湯\n"
         "     十カン盛 / ＋カン盛 ➔ 綜合握壽司十貫盛合\n"
+        "     蒸し牡蠣2個 / 蒸し牡蠣 ➔ 清蒸牡蠣 (2顆) (注意：蒸し 是清蒸，非蒸烤)\n"
+        "     生牡蠣2個 / 生牡蠣 ➔ 鮮生牡蠣 (2顆)\n"
+        "     カキコロバーガー ➔ 酥炸牡蠣可樂餅漢堡\n"
+        "     牡蠣の空（から）あげ ➔ 酥炸牡蠣唐揚 (厚岸炸牡蠣)\n"
         "     かき（生） ➔ 生牡蠣 (生蠔)\n"
         "     かき（蒸し焼き） ➔ 蒸烤牡蠣\n"
         "     お通し ➔ 開胃小菜\n"
@@ -408,6 +413,11 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "十カン盛": "綜合握壽司十貫盛合",
         "＋カン盛": "綜合握壽司十貫盛合",
         "カン盛": "綜合握壽司十貫盛合",
+        "蒸し牡蠣": "清蒸牡蠣 (2顆)",
+        "生牡蠣": "鮮生牡蠣 (2顆)",
+        "カキコロバーガー": "酥炸牡蠣可樂餅漢堡",
+        "牡蠣の空": "酥炸牡蠣唐揚 (厚岸炸牡蠣)",
+        "空（から）あげ": "酥炸牡蠣唐揚 (厚岸炸牡蠣)",
         "かき（生）": "生牡蠣",
         "かき（蒸し焼き）": "蒸烤牡蠣",
         "お通し": "開胃小菜",
@@ -449,9 +459,9 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
                     qty = 1
                 if (name or orig) and amt > 0:
                     clean_amt = int(amt) if amt.is_integer() else amt
-                    # 雙重防護：若 LLM 輸出遺漏翻譯仍保留日文平假/片假名，透過料理字典自動轉成繁體中文
+                    # 雙重防護：若 LLM 輸出遺漏翻譯仍保留日文平假/片假名，或翻譯不精確
                     final_name = name or orig
-                    if final_name == orig or re.search(r"[\u3040-\u309f\u30a0-\u30ff]", final_name):
+                    if final_name == orig or re.search(r"[\u3040-\u309f\u30a0-\u30ff]", final_name) or "蒸烤" in final_name:
                         for k, v in DISH_MAP.items():
                             if k in orig:
                                 final_name = v
