@@ -46,10 +46,10 @@ export function applyTelegramTheme() {
   tg.ready();
   tg.expand();
   if (tg.requestFullscreen) {
-    try { tg.requestFullscreen(); } catch (_) {}
+    try { tg.requestFullscreen(); } catch { /* ignore */ }
   }
   if (tg.disableVerticalSwipes) {
-    try { tg.disableVerticalSwipes(); } catch (_) {}
+    try { tg.disableVerticalSwipes(); } catch { /* ignore */ }
   }
 }
 

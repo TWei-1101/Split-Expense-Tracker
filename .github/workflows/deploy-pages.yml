@@ -41,6 +41,8 @@ jobs:
         run: npm run build
 
       - name: Deploy (main → prod, other → preview)
+        if: ${{ env.CF_TOKEN != '' }}
+        continue-on-error: true
         env:
           CF_ACCOUNT_ID: db273682e79e3ece0509cac24fae67e1
         uses: cloudflare/wrangler-action@v3
