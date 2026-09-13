@@ -75,6 +75,16 @@ HOTEL_MERCHANTS = (
     ("Comfort Hotel", ("comfort hotel", "コンフォートホテル")),
 )
 
+# Transport and gas station brands
+TRANSPORT_MERCHANTS = (
+    ("オカモトセルフ 根室", ("オカモト", "セルフ根室", "0153-29-2125")),
+    ("オカモトセルフ", ("オカモトセルフ", "株式会社オカモト", "オカモト")),
+    ("ENEOS", ("eneos", "エネオス")),
+    ("出光 apollostation", ("apollostation", "アポロステーション", "出光")),
+    ("Cosmo 加油站", ("コスモ石油", "cosmo石油", "コスモ")),
+    ("ホクレンSS", ("ホクレンss", "ホクレン")),
+)
+
 # Categories are inferred only from purchased-item wording.  Payment methods
 # (for example Japanese transit IC money) are deliberately not included.
 ITEM_KEYWORDS = (
@@ -104,7 +114,7 @@ CATEGORY_ITEM_KEYWORDS = (
         "テーブル", "減税率", "减税率", "軽減税率", "外食", "喫茶", "8%対象", "内税8%", "税率8%", "消費税等8%", "ポテト",
         "串", "梅酒", "酒", "居酒屋", "炉端", "お通し", "やきとり", "焼き鳥", "焼鳥", "ウーロン茶", "烏龍茶", "刺身", "ビール", "サワー", "ハイボール",
     )),
-    ("transport", ("通行料金", "通行料", "高速道路", "料金所", "etc", "nexco", "過路費", "通行費", "高速公路", "機票", "flight", "airline", "飛行機", "纜車", "cable car", "ropeway", "ロープウェイ", "租車", "rental car", "レンタカー", "計程車", "taxi", "タクシー", "地鐵", "捷運", "metro", "subway", "地下鉄", "巴士", "公車", "bus", "バス", "火車", "train", "電車", "新幹線")),
+    ("transport", ("通行料金", "通行料", "高速道路", "料金所", "etc", "nexco", "過路費", "通行費", "高速公路", "機票", "flight", "airline", "飛行機", "纜車", "cable car", "ropeway", "ロープウェイ", "租車", "rental car", "レンタカー", "計程車", "taxi", "タクシー", "地鐵", "捷運", "metro", "subway", "地下鉄", "巴士", "公車", "bus", "バス", "火車", "train", "電車", "新幹線", "加油", "燃料", "ガソリン", "軽油", "給油", "スタンド", "gasoline", "petrol", "eneos", "idemitsu", "出光", "コスモ", "cosmo", "オカモト", "apollostation", "キグナス", "kygnus", "シェル", "shell", "ホクレン", "レギュラー", "ハイオク")),
     ("lodging", ("飯店", "hotel", "ホテル", "旅館", "民宿", "hostel", "ryokan", "宿泊", "termofstay", "term of stay", "roomno", "room no", "accommodation")),
 )
 
@@ -145,13 +155,13 @@ def _amount(line: str) -> int | float | None:
 
 
 GENERIC_DOCUMENT_TITLES = frozenset({
-    "RECEIPT", "INVOICE", "BILL", "領収", "領収書", "領収証", "レシート", "DETAILS", "TOTAL", "SUBTOTAL", "TAX"
+    "RECEIPT", "INVOICE", "BILL", "領収", "領収書", "領収証", "レシート", "DETAILS", "TOTAL", "SUBTOTAL", "TAX", "納品書", "納品書（領収書）", "納品書(領収書)"
 })
 
 
 def _description(lines: list[str]) -> str | None:
     receipt_text = "\n".join(lines).casefold()
-    for label, keywords in MERCHANT_KEYWORDS + FOOD_MERCHANTS + HOTEL_MERCHANTS + ITEM_KEYWORDS:
+    for label, keywords in MERCHANT_KEYWORDS + FOOD_MERCHANTS + HOTEL_MERCHANTS + TRANSPORT_MERCHANTS + ITEM_KEYWORDS:
         if any(keyword.casefold() in receipt_text for keyword in keywords):
             return label
 
@@ -385,6 +395,9 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "     羊羹本練り ➔ 經典本格紅豆羊羹\n"
         "     羊葉小 / 羊羹小豆 ➔ 北海道小豆紅豆羊羹\n"
         "     金のかき醤油入クイー / 金のかき醤油入クッキー ➔ 黃金牡蠣醬油風味餅乾\n"
+        "     軽油 ➔ 柴油 (若有公升數標註，如 柴油 (35.26L) )\n"
+        "     レギュラー ➔ 無鉛汽油\n"
+        "     ハイオク ➔ 高級無鉛汽油\n"
         "     かき（生） ➔ 生牡蠣 (生蠔)\n"
         "     かき（蒸し焼き） ➔ 蒸烤牡蠣\n"
         "     お通し ➔ 開胃小菜\n"
@@ -447,6 +460,9 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "羊葉小": "北海道小豆紅豆羊羹",
         "金のかき醤油入クイー": "黃金牡蠣醬油風味餅乾 (厚岸限定)",
         "金のかき醤油入クッキー": "黃金牡蠣醬油風味餅乾 (厚岸限定)",
+        "軽油": "柴油",
+        "レギュラー": "無鉛汽油",
+        "ハイオク": "高級無鉛汽油",
         "かき（生）": "生牡蠣",
         "かき（蒸し焼き）": "蒸烤牡蠣",
         "お通し": "開胃小菜",
@@ -589,6 +605,19 @@ def parse_receipt_text(text: str, extract_items: bool = False) -> dict:
 
     items = extract_and_translate_items(text) if extract_items else []
     if items:
+        # If single fuel item with external consumption tax, ensure item amount matches total paid
+        if len(items) == 1 and total and total > items[0]["amount"]:
+            orig_lower = items[0].get("originalName", "").lower()
+            if any(k in orig_lower for k in ("軽油", "ガソリン", "レギュラー", "ハイオク", "燃料")):
+                items[0]["amount"] = total
+        # Ensure liters are included in fuel name if detected in OCR text
+        liters_match = re.search(r"(\d+(?:\.\d+)?)\s*L", text)
+        if liters_match:
+            l_str = f"{liters_match.group(1)}L"
+            for it in items:
+                if any(k in it.get("originalName", "") for k in ("軽油", "ガソリン", "レギュラー", "ハイオク")) and l_str not in it["name"]:
+                    it["name"] = f"{it['name']} ({l_str})"
+
         items_sum = sum(it["amount"] for it in items if isinstance(it.get("amount"), (int, float)))
         if items_sum > 0 and (total is None or total == 10000 or total == 5000 or total > items_sum * 1.15):
             total = int(items_sum) if isinstance(items_sum, float) and items_sum.is_integer() else items_sum
