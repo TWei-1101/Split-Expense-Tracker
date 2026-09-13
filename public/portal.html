@@ -265,17 +265,10 @@
   </div>
 
   <script>
-    // 初始化 Telegram Mini App
+    // 初始化 Telegram Mini App（快捷入口維持原生抽屜選單，不強制全螢幕）
     if (window.Telegram && window.Telegram.WebApp) {
       const tg = window.Telegram.WebApp;
       tg.ready();
-      tg.expand();
-      if (tg.requestFullscreen) {
-        try { tg.requestFullscreen(); } catch (_) {}
-      }
-      if (tg.disableVerticalSwipes) {
-        try { tg.disableVerticalSwipes(); } catch (_) {}
-      }
       if (tg.disableClosingConfirmation) {
         tg.disableClosingConfirmation();
       }
