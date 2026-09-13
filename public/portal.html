@@ -280,10 +280,6 @@
         if (tg.HapticFeedback) {
           tg.HapticFeedback.impactOccurred('medium');
         }
-        tg.expand();
-        if (tg.requestFullscreen) {
-          try { tg.requestFullscreen(); } catch (_) {}
-        }
       }
       window.location.href = url;
     }
