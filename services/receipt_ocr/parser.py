@@ -45,7 +45,7 @@ MERCHANT_KEYWORDS = (
 
 # Food-specific brands and stores whose purchases are unambiguously food/dining.
 FOOD_MERCHANTS = (
-    ("厚岸味覚ターミナル コンキリエ", ("厚岸味覚ターミナル", "コンキリエ", "conchiglie", "オイスターカフェ", "oyster cafe", "oystercafe", "0153-52-4139")),
+    ("厚岸味覚ターミナル コンキリエ", ("厚岸味覚ターミナル", "コンキリエ", "conchiglie", "オイスターカフェ", "oyster cafe", "oystercafe", "0153-52-4139", "味覚ターミナル", "フンキリエ")),
     ("六花亭", ("六花亭", "六花亨", "rokkatei", "マルセイ", "サクサクパイ", "醍醐", "t9460101001966", "0120-12-6666")),
     ("北菓樓", ("北菓樓", "北菓楼", "kitakaro")),
     ("柳月", ("柳月", "ryugetsu")),
@@ -319,7 +319,7 @@ def _total(lines: list[str]) -> int | float | None:
     # exclude payment/refund rows, so it cannot replace a normal labeled total.
     yen_candidates = []
     skip_next = False
-    for line in lines:
+    for index, line in enumerate(lines):
         compact_line = compact(line)
         if re.search(r"(?:支払|支|還元|返金|値引|割引|PAYMENT|CHANGE|お預|お釣|預|预|釣|钓)", compact_line, re.I):
             skip_next = True
@@ -328,6 +328,8 @@ def _total(lines: list[str]) -> int | float | None:
             skip_next = False
             continue
         if re.search(r"(?:cash|現金|お預|お釣|預|预|釣|钓)", compact_line, re.I):
+            continue
+        if index + 1 < len(lines) and re.match(r"^(?:お預|お釣|おつり)", compact(lines[index + 1])):
             continue
         for match in YEN_AMOUNT.findall(line):
             raw_value = match[0] or match[1]
@@ -372,6 +374,17 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "     生牡蠣2個 / 生牡蠣 ➔ 鮮生牡蠣 (2顆)\n"
         "     カキコロバーガー ➔ 酥炸牡蠣可樂餅漢堡\n"
         "     牡蠣の空（から）あげ ➔ 酥炸牡蠣唐揚 (厚岸炸牡蠣)\n"
+        "     ぷちまるDX牡蠣 ➔ 厚岸小圓米果仙貝 (牡蠣風味)\n"
+        "     燻じゃが ➔ 煙燻馬鈴薯脆塊 (盒裝)\n"
+        "     厚岸昆布 ➔ 厚岸天然昆布 (120g)\n"
+        "     ほたてわかめとろ ➔ 干貝海帶芽昆布絲湯包\n"
+        "     かき最中 ➔ 厚岸牡蠣造型最中餅\n"
+        "     根布入とろろ昆 / 根昆布 ➔ 根昆布極細昆布絲\n"
+        "     金のオイスターソース ➔ 黃金特級蠔油 (厚岸特製)\n"
+        "     金のかき醤油 ➔ 黃金厚岸牡蠣醬油\n"
+        "     羊羹本練り ➔ 經典本格紅豆羊羹\n"
+        "     羊葉小 / 羊羹小豆 ➔ 北海道小豆紅豆羊羹\n"
+        "     金のかき醤油入クイー / 金のかき醤油入クッキー ➔ 黃金牡蠣醬油風味餅乾\n"
         "     かき（生） ➔ 生牡蠣 (生蠔)\n"
         "     かき（蒸し焼き） ➔ 蒸烤牡蠣\n"
         "     お通し ➔ 開胃小菜\n"
@@ -418,6 +431,22 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "カキコロバーガー": "酥炸牡蠣可樂餅漢堡",
         "牡蠣の空": "酥炸牡蠣唐揚 (厚岸炸牡蠣)",
         "空（から）あげ": "酥炸牡蠣唐揚 (厚岸炸牡蠣)",
+        "ぷちまるDX牡蠣": "厚岸小圓米果仙貝 (牡蠣風味)",
+        "ぷちまる": "厚岸小圓米果仙貝 (牡蠣風味)",
+        "燻じゃが": "Calbee 煙燻馬鈴薯脆塊 (盒裝)",
+        "厚岸昆布": "厚岸天然昆布 (120g)",
+        "ほたてわかめとろ": "干貝海帶芽昆布絲湯包",
+        "かき最中": "厚岸牡蠣造型最中餅",
+        "根布入とろろ昆": "根昆布極細昆布絲",
+        "根昆布": "根昆布極細昆布絲",
+        "金のオイスターソース": "黃金特級蠔油 (厚岸特製)",
+        "金のかき醤油": "黃金厚岸牡蠣醬油",
+        "羊羹本練り": "經典本格紅豆羊羹",
+        "羊羹 本練り": "經典本格紅豆羊羹",
+        "羊羹小豆": "北海道小豆紅豆羊羹",
+        "羊葉小": "北海道小豆紅豆羊羹",
+        "金のかき醤油入クイー": "黃金牡蠣醬油風味餅乾 (厚岸限定)",
+        "金のかき醤油入クッキー": "黃金牡蠣醬油風味餅乾 (厚岸限定)",
         "かき（生）": "生牡蠣",
         "かき（蒸し焼き）": "蒸烤牡蠣",
         "お通し": "開胃小菜",
@@ -558,11 +587,17 @@ def parse_receipt_text(text: str, extract_items: bool = False) -> dict:
             occurred_at = f"{year:04d}-{month:02d}-{day:02d}"
             break
 
+    items = extract_and_translate_items(text) if extract_items else []
+    if items:
+        items_sum = sum(it["amount"] for it in items if isinstance(it.get("amount"), (int, float)))
+        if items_sum > 0 and (total is None or total == 10000 or total == 5000 or total > items_sum * 1.15):
+            total = int(items_sum) if isinstance(items_sum, float) and items_sum.is_integer() else items_sum
+
     return {
         "description": _description(lines),
         "category": _category(lines),
         "originalAmount": total,
         "currency": _currency(text),
         "occurredAt": occurred_at,
-        "items": extract_and_translate_items(text) if extract_items else [],
+        "items": items,
     }
