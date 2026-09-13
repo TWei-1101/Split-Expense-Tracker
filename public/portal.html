@@ -234,7 +234,7 @@
     </div>
 
     <!-- 2. Frigate 居家監控 -->
-    <div class="app-card card-cctv" onclick="launchApp('https://frigate.twei-ha.com/')">
+    <div class="app-card card-cctv" onclick="launchApp('/cctv.html')">
       <div class="card-icon">📹</div>
       <div class="card-content">
         <div class="card-title">
@@ -275,8 +275,15 @@
     }
 
     function launchApp(url) {
-      if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.HapticFeedback) {
-        window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+      if (window.Telegram && window.Telegram.WebApp) {
+        const tg = window.Telegram.WebApp;
+        if (tg.HapticFeedback) {
+          tg.HapticFeedback.impactOccurred('medium');
+        }
+        tg.expand();
+        if (tg.requestFullscreen) {
+          try { tg.requestFullscreen(); } catch (_) {}
+        }
       }
       window.location.href = url;
     }
