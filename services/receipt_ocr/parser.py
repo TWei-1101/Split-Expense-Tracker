@@ -62,6 +62,7 @@ FOOD_MERCHANTS = (
     ("敘敘苑", ("敘敘苑", "叙々苑", "jojoen")),
     ("Cranberry", ("cranberry", "クランベリー", "t5460101000476")),
     ("炉端 KORONAGIRAI", ("koronagirai", "koronagirat", "0155-67-5604")),
+    ("別海町 レストランNOTSUKE", ("レストランnotsuke", "notsuke", "野付", "別海町観光開発公社", "0153-82-1270")),
 )
 
 # Hotel and lodging brands
@@ -377,6 +378,11 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "請將以下收據中「實際購買的商品明細」擷取為 JSON 陣列，並將商品名稱【務必翻譯成精準、道地的繁體中文（台灣習慣用語）】：\n"
         "重要翻譯與格式規則：\n"
         "1. 【\"name\" 欄位必須是繁體中文，嚴格禁止直接複製日文原名或保留平假名/片假名】！\n"
+        "   - 【消費稅率標記去除規則】：日文收據中各品項名稱前面的「内10」、「内8」、「外10」、「外8」、「※10」、「※8」、「※」、「*」、「軽」是日本消費稅率標記（例如「内10 カツカレー」代表含10%內稅），【嚴格禁止將「内10 / 內10 / 内8」當成商品名稱的一部分】！請將「内10」去除：\n"
+        "     内10 カツカレー ➔ originalName: \"カツカレー\", name: \"炸豬排咖哩飯\"\n"
+        "     内10 単品バーガー ➔ originalName: \"単品バーガー\", name: \"單點漢堡\"\n"
+        "     内10セット500 ➔ originalName: \"セット500\", name: \"500號特選套餐\"\n"
+        "   - 【嚴格忠於收據文字，禁止幻覺】：品項名稱必須直接對應收據中的商品文字！收據有幾項就輸出幾項，嚴禁腦補收據上不存在的海鮮或菜名！\n"
         "   - 所有日語菜色、海鮮水產、食物、飲品與各類商品必須翻譯成繁體中文（例如：\n"
         "     紅ずわい ➔ 紅楚蟹 / 紅松葉蟹\n"
         "     真ほっけ / ほっけ ➔ 烤真花魚一夜干\n"
@@ -493,6 +499,10 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "サクサクパイ": "現烤酥脆派",
         "マルセイアイスサンド": "丸成冰淇淋夾心三明治",
         "醍醐": "醍醐生藍莓夾心蛋糕",
+        "カツカレー": "炸豬排咖哩飯",
+        "単品バーガー": "單點漢堡",
+        "セット500": "500號特選套餐",
+        "バーガー": "漢堡",
     }
 
     def parse_items_json(raw_text: str) -> list[dict]:
@@ -510,6 +520,10 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
                     continue
                 name = str(item.get("name", "")).strip()
                 orig = str(item.get("originalName", "")).strip()
+
+                # 自動去除日本發票常見的稅率前綴標記 (如: 内10, 内8, 外10, 外8, ※, 軽)
+                orig = re.sub(r"^(?:内10|内8|外10|外8|※10|※8|※|＊|\*|軽)\s*", "", orig).strip()
+                name = re.sub(r"^(?:內10|内10|內8|内8|外10|外8|※10|※8|※|＊|\*|輕|軽)\s*", "", name).strip()
                 try:
                     amt = float(item.get("amount", 0))
                 except (ValueError, TypeError):
