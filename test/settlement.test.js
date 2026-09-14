@@ -40,6 +40,30 @@ test('calculateBalances：空 expenses 回傳全 0', () => {
   assert.deepEqual(calculateBalances(['A', 'B', 'C'], []), { A: 0, B: 0, C: 0 });
 });
 
+test('calculateBalances：多人共同付款/部分代墊（payers 存在）且守恆', () => {
+  // 總額 2600 (例 13,000 JPY)，A 付 12000 JPY，B 付 1000 JPY
+  // shares: A 2 股, B 1 股 (共 3 股)
+  // A 付出 TWD 2600 * (12/13) = 2400；負擔 2600 * (2/3) = 1733.33 -> 結餘 +666.67
+  // B 付出 TWD 2600 * (1/13) = 200；負擔 2600 * (1/3) = 866.67 -> 結餘 -666.67
+  const balances = calculateBalances(['A', 'B'], [
+    {
+      payerName: 'A',
+      amountInTWD: 2600,
+      originalAmount: 13000,
+      payers: { A: 12000, B: 1000 },
+      shares: { A: 2, B: 1 },
+    },
+  ]);
+  assert.ok(Math.abs(balances.A - (2400 - 2600 * 2 / 3)) < 1e-9);
+  assert.ok(Math.abs(balances.B - (200 - 2600 / 3)) < 1e-9);
+  // 結餘守恆：A + B = 0
+  assert.ok(Math.abs(balances.A + balances.B) < 1e-9);
+
+  // 結清建議：B 應付 A 667
+  const settlements = calculateSettlements(balances);
+  assert.deepEqual(settlements, [{ from: 'B', to: 'A', amount: 667 }]);
+});
+
 test('calculateBalances：守恆 — 多人多筆 expense 總和 = 0', () => {
   // 4 筆：付 100/200/300/500 給不同分攤者，總付出 1100
   // 最終所有人餘額總和 = 0

@@ -34,6 +34,7 @@ import {
   serverTimestamp,
   arrayUnion,
   arrayRemove,
+  deleteField,
 } from 'firebase/firestore';
 import { getOfflineSyncStatus } from './lib/offline-sync-status.js';
 import { createTaxRefund, getTaxRefundProfileByCountry, pendingTaxRefundTotalInTWD, TAX_REFUND_PROFILES } from './lib/tax-refund.js';
@@ -776,6 +777,8 @@ async function _getStorage() {
                 occurredAt: formatExpenseDateTimeLocal(),
                 items: [],
             });
+            const [isMultiPayer, setIsMultiPayer] = useState(false);
+            const [customPayers, setCustomPayers] = useState({});
             const [categoryWasManuallySelected, setCategoryWasManuallySelected] = useState(false);
             const [imageFile, setImageFile] = useState(null);
             const [imagePreviewUrl, setImagePreviewUrl] = useState('');
@@ -850,6 +853,13 @@ async function _getStorage() {
                         });
                         setCategoryWasManuallySelected(true);
                         setImagePreviewUrl(expenseToEdit.imageUrl || expenseToEdit.imageDataUrl || '');
+                        if (expenseToEdit.payers && typeof expenseToEdit.payers === 'object' && Object.keys(expenseToEdit.payers).length > 1) {
+                            setIsMultiPayer(true);
+                            setCustomPayers({ ...expenseToEdit.payers });
+                        } else {
+                            setIsMultiPayer(false);
+                            setCustomPayers({});
+                        }
 					} else {
 					  // 決定預設的付款人：
 					  // 1. 如果 members 裡包含 currentUserId，優先用 currentUserId
@@ -901,6 +911,8 @@ async function _getStorage() {
 					  });
                       setCategoryWasManuallySelected(false);
                       setImagePreviewUrl('');
+                      setIsMultiPayer(false);
+                      setCustomPayers({});
 					}
 
                     setImageFile(null);
@@ -924,15 +936,68 @@ async function _getStorage() {
 
             const handleInputChange = (e) => {
                 const { name, value } = e.target;
+                const parsedVal = name === 'originalAmount' ? (value === '' ? '' : parseFloat(value) || '') : value;
                 setNewExpense(prev => {
                     const nextExpense = {
                         ...prev,
-                        [name]: name === 'originalAmount' ? (value === '' ? '' : parseFloat(value) || '') : value,
+                        [name]: parsedVal,
                     };
                     if (name === 'description' && !isEditing && !categoryWasManuallySelected) {
                         nextExpense.category = inferExpenseCategory(value);
                     }
                     return nextExpense;
+                });
+                if (name === 'originalAmount' && isMultiPayer) {
+                    const total = parseFloat(value) || 0;
+                    setCustomPayers(prev => {
+                        const otherTotal = Object.entries(prev)
+                            .filter(([k]) => k !== newExpense.payerName)
+                            .reduce((sum, [, v]) => sum + (Number(v) || 0), 0);
+                        return {
+                            ...prev,
+                            [newExpense.payerName]: Math.max(0, Math.round((total - otherTotal) * 100) / 100),
+                        };
+                    });
+                }
+                if (name === 'payerName' && isMultiPayer) {
+                    const total = Number(newExpense.originalAmount) || 0;
+                    setCustomPayers(prev => {
+                        const otherTotal = Object.entries(prev)
+                            .filter(([k]) => k !== value)
+                            .reduce((sum, [, v]) => sum + (Number(v) || 0), 0);
+                        return {
+                            ...prev,
+                            [value]: Math.max(0, Math.round((total - otherTotal) * 100) / 100),
+                        };
+                    });
+                }
+            };
+
+            const toggleMultiPayer = () => {
+                setIsMultiPayer(prev => {
+                    const next = !prev;
+                    if (next) {
+                        const amt = Number(newExpense.originalAmount) || 0;
+                        setCustomPayers({ [newExpense.payerName]: amt });
+                    } else {
+                        setCustomPayers({});
+                    }
+                    return next;
+                });
+            };
+
+            const handleCustomPayerChange = (memberId, val) => {
+                const numVal = val === '' ? '' : Math.max(0, Number(val) || 0);
+                setCustomPayers(prev => {
+                    const updated = { ...prev, [memberId]: numVal };
+                    if (memberId !== newExpense.payerName) {
+                        const total = Number(newExpense.originalAmount) || 0;
+                        const otherTotal = Object.entries(updated)
+                            .filter(([k]) => k !== newExpense.payerName)
+                            .reduce((sum, [, v]) => sum + (Number(v) || 0), 0);
+                        updated[newExpense.payerName] = Math.max(0, Math.round((total - otherTotal) * 100) / 100);
+                    }
+                    return updated;
                 });
             };
 
@@ -1264,6 +1329,28 @@ async function _getStorage() {
                         setUploadStatus('');
                     }
 
+                    let validPayers = null;
+                    if (isMultiPayer && newExpense.payerName !== SELF_PAYER_KEY) {
+                        const cleanPayers = {};
+                        let sumPayers = 0;
+                        members.forEach(m => {
+                            const v = Number(customPayers[m]) || 0;
+                            if (v > 0) {
+                                cleanPayers[m] = v;
+                                sumPayers += v;
+                            }
+                        });
+                        const totalAmt = Number(newExpense.originalAmount) || 0;
+                        if (Object.keys(cleanPayers).length > 1) {
+                            if (Math.abs(sumPayers - totalAmt) > 0.05) {
+                                setModalError(`共同付款金額總和 (${sumPayers}) 與總金額 (${totalAmt}) 不符，請確認金額！`);
+                                setIsLoadingModal(false);
+                                return;
+                            }
+                            validPayers = cleanPayers;
+                        }
+                    }
+
                     const expenseToSave = {
                         description: newExpense.description,
                         originalAmount: newExpense.originalAmount,
@@ -1274,6 +1361,7 @@ async function _getStorage() {
                         luggageId: String(newExpense.luggageId || '').trim(),
                         taxRefund: taxRefundPreview || { eligible: false, status: 'pending' },
                         payerName: newExpense.payerName,
+                        ...(validPayers ? { payers: validPayers } : (isEditing && expenseToEdit?.payers ? { payers: deleteField() } : {})),
                         shares: Object.entries(newExpense.shares).reduce((acc, [name, share]) => {
                             if (share > 0) acc[name] = share;
                             return acc;
@@ -1617,7 +1705,18 @@ async function _getStorage() {
 
                     {/* 2. 付款人 */}
                     <div>
-                      <label htmlFor="payerName" className="block text-sm font-medium text-gray-700">付款人</label>
+                      <div className="flex justify-between items-center mb-1">
+                        <label htmlFor="payerName" className="block text-sm font-medium text-gray-700">付款人</label>
+                        {newExpense.payerName !== SELF_PAYER_KEY && members.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={toggleMultiPayer}
+                            className="text-xs font-semibold text-primaryColor-600 hover:text-primaryColor-800 transition"
+                          >
+                            {isMultiPayer ? '✕ 取消他人代墊' : '＋ 他人代墊 / 共同付款'}
+                          </button>
+                        )}
+                      </div>
                       <select
                         id="payerName"
                         name="payerName"
@@ -1633,6 +1732,60 @@ async function _getStorage() {
                         ))}
                         <option value={SELF_PAYER_KEY}>各自付款</option>
                       </select>
+
+                      {isMultiPayer && newExpense.payerName !== SELF_PAYER_KEY && (
+                        <div className="mt-3 p-3 bg-primaryColor-50/50 border border-primaryColor-200 rounded-xl space-y-2.5">
+                          <div className="flex justify-between items-center text-xs">
+                            <span className="font-semibold text-gray-700">各成員實際出資 ({newExpense.currency})：</span>
+                            {(() => {
+                              const total = Number(newExpense.originalAmount) || 0;
+                              const currentSum = members.reduce((s, m) => s + (Number(customPayers[m]) || 0), 0);
+                              const diff = Math.round((currentSum - total) * 100) / 100;
+                              if (diff === 0 && total > 0) {
+                                return <span className="text-green-600 font-bold">✓ 金額吻合 ({newExpense.currency} {total.toLocaleString()})</span>;
+                              }
+                              return (
+                                <span className={diff > 0 ? "text-red-600 font-bold" : "text-amber-600 font-bold"}>
+                                  {diff > 0 ? `超出 ${diff.toLocaleString()}` : `尚差 ${Math.abs(diff).toLocaleString()}`}
+                                </span>
+                              );
+                            })()}
+                          </div>
+                          <div className="space-y-2">
+                            {members.map(member => {
+                              const isMainPayer = member === newExpense.payerName;
+                              return (
+                                <div key={member} className="flex items-center justify-between gap-2 bg-white p-2 rounded-lg border border-gray-200 shadow-2xs">
+                                  <span className="text-sm font-medium text-gray-800 truncate flex items-center gap-1">
+                                    {getDisplayName(member)}
+                                    {isMainPayer && (
+                                      <span className="text-[10px] bg-primaryColor-100 text-primaryColor-700 font-bold px-1.5 py-0.5 rounded">
+                                        主付
+                                      </span>
+                                    )}
+                                  </span>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-xs text-gray-400">{newExpense.currency}</span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="any"
+                                      value={customPayers[member] ?? ''}
+                                      onChange={(e) => handleCustomPayerChange(member, e.target.value)}
+                                      placeholder="0"
+                                      className="w-28 border border-gray-300 rounded-md p-1 text-right font-mono text-sm focus:ring-1 focus:ring-primaryColor-500 focus:border-primaryColor-500"
+                                      disabled={isReadOnly}
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <p className="text-[11px] text-gray-500">
+                            💡 提示：輸入代墊成員付的金額，其餘金額會自動分配給主付款人。
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     {/* 3. 分帳份數設定 */}
@@ -4585,8 +4738,14 @@ async function _getStorage() {
                 // (其他 expense — payer 不是 user，但他有份 — 不應該帶出來；
                 //  user 只是「成本有分攤」，實際沒有先付)
                 return categoryFiltered.filter(exp => {
-                    // Case 1: user is the payer
+                    // Case 1: user is the primary payer
                     if (getPayerLabel(exp.payerName) === filterPayer) return true;
+                    // Case 1.5: user is one of the co-payers in exp.payers
+                    if (exp.payers && typeof exp.payers === 'object') {
+                        for (const [pId, pAmt] of Object.entries(exp.payers)) {
+                            if (Number(pAmt) > 0 && getPayerLabel(pId) === filterPayer) return true;
+                        }
+                    }
                     // Case 2: 各自付款 + user has shares > 0
                     if (exp.payerName === SELF_PAYER_KEY) {
                         const shares = exp.shares || {};
@@ -4944,7 +5103,20 @@ async function _getStorage() {
                                   {displayAmount}
                               </p>
                               <p className="text-sm text-gray-600">
-                                <span className="font-medium text-primaryColor-700">付款人:</span> {getPayerLabel(exp.payerName)}
+                                <span className="font-medium text-primaryColor-700">付款人:</span>{' '}
+                                {exp.payers && typeof exp.payers === 'object' && Object.keys(exp.payers).length > 1 ? (
+                                  <span>
+                                    <span className="inline-flex items-center rounded-md bg-blue-50 px-1.5 py-0.5 text-xs font-semibold text-blue-700 mr-1.5">
+                                      共同付款
+                                    </span>
+                                    {Object.entries(exp.payers)
+                                      .filter(([, amt]) => Number(amt) > 0)
+                                      .map(([pId, amt]) => `${getDisplayName(pId)} ${exp.currency} ${Math.round(amt).toLocaleString('zh-TW')}`)
+                                      .join('、')}
+                                  </span>
+                                ) : (
+                                  getPayerLabel(exp.payerName)
+                                )}
                                 {exp.payerName === SELF_PAYER_KEY && (
                                   <span className="ml-2 inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">不計入結餘總結</span>
                                 )}

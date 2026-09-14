@@ -8,7 +8,8 @@ export const DEFAULT_SELF_PAYER_KEY = '__self__';
 // 規則：
 //   1. payerName === selfPayerKey（各自付款）的 expense 跳過，不進結算
 //   2. totalShares === 0 的 expense 跳過（防 NaN）
-//   3. 付款人 += amount；每位參與者 -= costPerShare * shareCount
+//   3. 付款端：若有 payers 共同付款且出資總和 > 0，依各成員出資比例計入付款；否則由 payerName 100% 支付
+//   4. 分攤端：每位參與者扣除 costPerShare * shareCount
 export function calculateBalances(members, expenses, { selfPayerKey = DEFAULT_SELF_PAYER_KEY } = {}) {
   const balances = members.reduce((acc, name) => ({ ...acc, [name]: 0 }), {});
 
@@ -16,18 +17,32 @@ export function calculateBalances(members, expenses, { selfPayerKey = DEFAULT_SE
     if (expense.payerName === selfPayerKey) return;
 
     const amount = expense.amountInTWD;
-    const { payerName, shares } = expense;
-    const totalShares = Object.values(shares).reduce((sum, s) => sum + s, 0);
+    const { payerName, shares, payers } = expense;
+    const totalShares = Object.values(shares || {}).reduce((sum, s) => sum + s, 0);
 
     if (totalShares === 0) return;
 
     const costPerShare = amount / totalShares;
 
-    if (balances[payerName] !== undefined) {
+    // 付款端：若有 payers（多人共同付款/代墊），依比例計入已付金額
+    if (payers && typeof payers === 'object' && Object.keys(payers).length > 0) {
+      const totalOriginalPaid = Object.values(payers).reduce((sum, v) => sum + (Number(v) || 0), 0);
+      if (totalOriginalPaid > 0) {
+        Object.entries(payers).forEach(([pMember, pAmount]) => {
+          const ratio = (Number(pAmount) || 0) / totalOriginalPaid;
+          const pAmountTWD = amount * ratio;
+          if (balances[pMember] !== undefined) {
+            balances[pMember] += pAmountTWD;
+          }
+        });
+      } else if (balances[payerName] !== undefined) {
+        balances[payerName] += amount;
+      }
+    } else if (balances[payerName] !== undefined) {
       balances[payerName] += amount;
     }
 
-    Object.entries(shares).forEach(([member, shareCount]) => {
+    Object.entries(shares || {}).forEach(([member, shareCount]) => {
       const memberCost = costPerShare * shareCount;
       if (balances[member] !== undefined) {
         balances[member] -= memberCost;
