@@ -17,12 +17,15 @@ export function calculateBalances(members, expenses, { selfPayerKey = DEFAULT_SE
     if (expense.payerName === selfPayerKey) return;
 
     const amount = expense.amountInTWD;
-    const { payerName, shares, payers } = expense;
+    const { payerName, shares, payers, customSplits } = expense;
+
+    const hasCustomSplits = customSplits && typeof customSplits === 'object' && Object.keys(customSplits).length > 0;
     const totalShares = Object.values(shares || {}).reduce((sum, s) => sum + s, 0);
 
-    if (totalShares === 0) return;
-
-    const costPerShare = amount / totalShares;
+    // 若既無 customSplits 且 totalShares === 0，跳過（防 NaN）
+    if (!hasCustomSplits) {
+      if (totalShares === 0) return;
+    }
 
     // 付款端：若有 payers（多人共同付款/代墊），依比例計入已付金額
     if (payers && typeof payers === 'object' && Object.keys(payers).length > 0) {
@@ -41,6 +44,23 @@ export function calculateBalances(members, expenses, { selfPayerKey = DEFAULT_SE
     } else if (balances[payerName] !== undefined) {
       balances[payerName] += amount;
     }
+
+    // 分攤端：若有 customSplits（自訂/依品項分配金額），依比例扣除各成員應負擔金額
+    if (hasCustomSplits) {
+      const totalCustom = Object.values(customSplits).reduce((sum, v) => sum + (Number(v) || 0), 0);
+      if (totalCustom > 0) {
+        Object.entries(customSplits).forEach(([member, memberAmt]) => {
+          const ratio = (Number(memberAmt) || 0) / totalCustom;
+          const memberCost = amount * ratio;
+          if (balances[member] !== undefined) {
+            balances[member] -= memberCost;
+          }
+        });
+        return;
+      }
+    }
+
+    const costPerShare = amount / totalShares;
 
     Object.entries(shares || {}).forEach(([member, shareCount]) => {
       const memberCost = costPerShare * shareCount;
