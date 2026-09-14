@@ -1786,7 +1786,7 @@ async function _getStorage() {
                             onClick={toggleMultiPayer}
                             className="text-xs font-semibold text-primaryColor-600 hover:text-primaryColor-800 transition"
                           >
-                            {isMultiPayer ? '✕ 取消他人代墊' : '＋ 他人代墊 / 共同付款'}
+                            {isMultiPayer ? '✕ 取消共同付款' : '＋ 共同付款'}
                           </button>
                         )}
                       </div>
@@ -1855,7 +1855,7 @@ async function _getStorage() {
                             })}
                           </div>
                           <p className="text-[11px] text-gray-500">
-                            💡 提示：輸入代墊成員付的金額，其餘金額會自動分配給主付款人。
+                            💡 提示：輸入共同付款成員出資的金額，其餘金額會自動分配給主付款人。
                           </p>
                         </div>
                       )}
