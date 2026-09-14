@@ -64,6 +64,29 @@ test('calculateBalances：多人共同付款/部分代墊（payers 存在）且�
   assert.deepEqual(settlements, [{ from: 'B', to: 'A', amount: 667 }]);
 });
 
+test('calculateBalances：多人出資 + 依品項自訂分攤（payers + customSplits 組合場景）且守恆', () => {
+  // 總額 10592 JPY (折合 TWD 2118.4，匯率 0.2)
+  // 付款端：廷瑋 9592 JPY, 郁傑 1000 JPY
+  // 分攤端：郁傑買若元錠 2728 + OK繃半份 822 = 3550 JPY；廷瑋買其餘 7042 JPY
+  // 郁傑淨結餘：1000 付出 - 3550 負擔 = -2550 JPY (折合 TWD -510)
+  // 廷瑋淨結餘：9592 付出 - 7042 負擔 = +2550 JPY (折合 TWD +510)
+  const balances = calculateBalances(['廷瑋', '郁傑'], [
+    {
+      payerName: '廷瑋',
+      amountInTWD: 2118.4,
+      originalAmount: 10592,
+      payers: { '廷瑋': 9592, '郁傑': 1000 },
+      customSplits: { '廷瑋': 7042, '郁傑': 3550 },
+    },
+  ]);
+  assert.ok(Math.abs(balances['廷瑋'] - 510) < 1e-9);
+  assert.ok(Math.abs(balances['郁傑'] - (-510)) < 1e-9);
+  assert.ok(Math.abs(balances['廷瑋'] + balances['郁傑']) < 1e-9);
+
+  const settlements = calculateSettlements(balances);
+  assert.deepEqual(settlements, [{ from: '郁傑', to: '廷瑋', amount: 510 }]);
+});
+
 test('calculateBalances：守恆 — 多人多筆 expense 總和 = 0', () => {
   // 4 筆：付 100/200/300/500 給不同分攤者，總付出 1100
   // 最終所有人餘額總和 = 0

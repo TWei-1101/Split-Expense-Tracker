@@ -779,6 +779,8 @@ async function _getStorage() {
             });
             const [isMultiPayer, setIsMultiPayer] = useState(false);
             const [customPayers, setCustomPayers] = useState({});
+            const [splitMode, setSplitMode] = useState('shares'); // 'shares' | 'items'
+            const [itemAssignments, setItemAssignments] = useState({});
             const [categoryWasManuallySelected, setCategoryWasManuallySelected] = useState(false);
             const [imageFile, setImageFile] = useState(null);
             const [imagePreviewUrl, setImagePreviewUrl] = useState('');
@@ -860,6 +862,13 @@ async function _getStorage() {
                             setIsMultiPayer(false);
                             setCustomPayers({});
                         }
+                        if (expenseToEdit.itemAssignments && typeof expenseToEdit.itemAssignments === 'object' && Object.keys(expenseToEdit.itemAssignments).length > 0) {
+                            setSplitMode('items');
+                            setItemAssignments({ ...expenseToEdit.itemAssignments });
+                        } else {
+                            setSplitMode('shares');
+                            setItemAssignments({});
+                        }
 					} else {
 					  // 決定預設的付款人：
 					  // 1. 如果 members 裡包含 currentUserId，優先用 currentUserId
@@ -913,6 +922,8 @@ async function _getStorage() {
                       setImagePreviewUrl('');
                       setIsMultiPayer(false);
                       setCustomPayers({});
+                      setSplitMode('shares');
+                      setItemAssignments({});
 					}
 
                     setImageFile(null);
@@ -998,6 +1009,59 @@ async function _getStorage() {
                         updated[newExpense.payerName] = Math.max(0, Math.round((total - otherTotal) * 100) / 100);
                     }
                     return updated;
+                });
+            };
+
+            const computeItemSplits = useCallback((items, assignments, payerId, memberList, originalAmount) => {
+                const splits = {};
+                memberList.forEach(m => { splits[m] = 0; });
+                let itemSum = 0;
+                (items || []).forEach((item, idx) => {
+                    const amt = Number(item.amount) || 0;
+                    itemSum += amt;
+                    const assign = assignments?.[idx];
+                    if (!assign) {
+                        const target = payerId || memberList[0];
+                        splits[target] = (splits[target] || 0) + amt;
+                    } else if (assign === 'all') {
+                        const shareAmt = amt / memberList.length;
+                        memberList.forEach(m => { splits[m] = (splits[m] || 0) + shareAmt; });
+                    } else if (memberList.includes(assign)) {
+                        splits[assign] = (splits[assign] || 0) + amt;
+                    } else {
+                        const target = payerId || memberList[0];
+                        splits[target] = (splits[target] || 0) + amt;
+                    }
+                });
+
+                const total = Number(originalAmount) || itemSum;
+                const diff = total - itemSum;
+                if (Math.abs(diff) > 0.01) {
+                    const target = payerId || memberList[0];
+                    splits[target] = (splits[target] || 0) + diff;
+                }
+
+                const rounded = {};
+                Object.entries(splits).forEach(([k, v]) => {
+                    rounded[k] = Math.round(v * 100) / 100;
+                });
+                return rounded;
+            }, []);
+
+            const currentItemSplits = useMemo(() => {
+                if (splitMode !== 'items' || !Array.isArray(newExpense.items) || newExpense.items.length === 0) return null;
+                return computeItemSplits(newExpense.items, itemAssignments, newExpense.payerName, members, newExpense.originalAmount);
+            }, [splitMode, newExpense.items, itemAssignments, newExpense.payerName, members, newExpense.originalAmount, computeItemSplits]);
+
+            const toggleItemAssignment = (idx, target) => {
+                setItemAssignments(prev => {
+                    const current = prev[idx];
+                    if (current === target) {
+                        const next = { ...prev };
+                        delete next[idx];
+                        return next;
+                    }
+                    return { ...prev, [idx]: target };
                 });
             };
 
@@ -1351,6 +1415,14 @@ async function _getStorage() {
                         }
                     }
 
+                    let customSplitsToSave = null;
+                    let itemAssignmentsToSave = null;
+
+                    if (splitMode === 'items' && currentItemSplits) {
+                        customSplitsToSave = currentItemSplits;
+                        itemAssignmentsToSave = itemAssignments;
+                    }
+
                     const expenseToSave = {
                         description: newExpense.description,
                         originalAmount: newExpense.originalAmount,
@@ -1362,7 +1434,8 @@ async function _getStorage() {
                         taxRefund: taxRefundPreview || { eligible: false, status: 'pending' },
                         payerName: newExpense.payerName,
                         ...(validPayers ? { payers: validPayers } : (isEditing && expenseToEdit?.payers ? { payers: deleteField() } : {})),
-                        shares: Object.entries(newExpense.shares).reduce((acc, [name, share]) => {
+                        ...(customSplitsToSave ? { customSplits: customSplitsToSave, itemAssignments: itemAssignmentsToSave } : (isEditing && expenseToEdit?.customSplits ? { customSplits: deleteField(), itemAssignments: deleteField() } : {})),
+                        shares: customSplitsToSave ? customSplitsToSave : Object.entries(newExpense.shares).reduce((acc, [name, share]) => {
                             if (share > 0) acc[name] = share;
                             return acc;
                         }, {}),
@@ -1790,28 +1863,131 @@ async function _getStorage() {
 
                     {/* 3. 分帳份數設定 */}
                     <div className="pt-4 border-t border-gray-100">
-                      <div className="flex justify-between items-center mb-3">
-                        <label className="text-lg font-bold text-gray-700">分帳份數</label>
-                        <button
-                          onClick={onManageMembers}
-                          type="button"
-                          className="text-sm text-primaryColor-600 hover:text-primaryColor-800 font-medium disabled:text-gray-400 disabled:cursor-not-allowed"
-                          disabled={!canManageMembers}
-                          title={canManageMembers ? '管理分帳成員與預設份數' : '只有記帳簿擁有者可以操作'}
-                        >
-                          [管理分帳成員]
-                        </button>
-                        <button
-                          onClick={setToPersonalExpense}
-                          type="button"
-                          className="text-sm text-primaryColor-600 hover:text-primaryColor-800 font-medium disabled:opacity-50"
-                          disabled={isReadOnly}
-                        >
-                          [設為個人記帳]
-                        </button>
+                      <div className="flex flex-wrap justify-between items-center gap-2 mb-3">
+                        <label className="text-lg font-bold text-gray-700">
+                          {splitMode === 'items' ? '依品項分配分帳' : '分帳份數'}
+                        </label>
+                        <div className="flex items-center gap-2">
+                          {Array.isArray(newExpense.items) && newExpense.items.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setSplitMode(m => (m === 'items' ? 'shares' : 'items'))}
+                              className="text-xs font-semibold px-2.5 py-1 rounded-lg border border-purple-300 text-purple-700 bg-purple-50 hover:bg-purple-100 transition shadow-2xs cursor-pointer"
+                            >
+                              {splitMode === 'items' ? '切回份數分帳' : '📦 依收據品項分配'}
+                            </button>
+                          )}
+                          {splitMode !== 'items' && (
+                            <>
+                              <button
+                                onClick={onManageMembers}
+                                type="button"
+                                className="text-sm text-primaryColor-600 hover:text-primaryColor-800 font-medium disabled:text-gray-400 disabled:cursor-not-allowed"
+                                disabled={!canManageMembers}
+                                title={canManageMembers ? '管理分帳成員與預設份數' : '只有記帳簿擁有者可以操作'}
+                              >
+                                [管理分帳成員]
+                              </button>
+                              <button
+                                onClick={setToPersonalExpense}
+                                type="button"
+                                className="text-sm text-primaryColor-600 hover:text-primaryColor-800 font-medium disabled:opacity-50"
+                                disabled={isReadOnly}
+                              >
+                                [設為個人記帳]
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </div>
-                      {/* 移除 max-h-48，讓 flex-1 負責滾動 */}
-                      <div className="space-y-3 pr-2">
+
+                      {splitMode === 'items' ? (
+                        <div className="space-y-3">
+                          <div className="bg-purple-50/70 border border-purple-200 rounded-xl p-3 space-y-2">
+                            <p className="text-xs font-semibold text-purple-950 leading-relaxed">
+                              點選各品項歸屬成員（未標記者自動全歸主付款人）：
+                            </p>
+                            <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+                              {newExpense.items.map((item, idx) => {
+                                const currentAssign = itemAssignments[idx]; // undefined | 'all' | memberId
+                                return (
+                                  <div key={idx} className="bg-white p-2.5 rounded-lg border border-gray-200 shadow-2xs space-y-2">
+                                    <div className="flex justify-between items-start text-xs">
+                                      <div className="min-w-0 flex-1 pr-2">
+                                        <span className="font-semibold text-gray-800">{item.name}</span>
+                                        {item.originalName && item.originalName !== item.name && (
+                                          <span className="text-gray-400 ml-1">({item.originalName})</span>
+                                        )}
+                                        {item.quantity > 1 && (
+                                          <span className="ml-1 text-primaryColor-600 font-bold">x{item.quantity}</span>
+                                        )}
+                                      </div>
+                                      <span className="font-bold text-gray-800 flex-shrink-0 font-mono">
+                                        {newExpense.currency} {Number(item.amount).toLocaleString('zh-TW')}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center flex-wrap gap-1.5 pt-1.5 border-t border-gray-100">
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleItemAssignment(idx, 'all')}
+                                        className={`px-2 py-1 text-xs rounded-md border font-medium transition cursor-pointer ${
+                                          currentAssign === 'all'
+                                            ? 'bg-purple-600 text-white border-purple-600 shadow-xs'
+                                            : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                                        }`}
+                                      >
+                                        平分
+                                      </button>
+                                      {members.map(m => {
+                                        const isAssigned = currentAssign === m;
+                                        const isPayerDefault = !currentAssign && m === newExpense.payerName;
+                                        return (
+                                          <button
+                                            key={m}
+                                            type="button"
+                                            onClick={() => toggleItemAssignment(idx, m)}
+                                            className={`px-2 py-1 text-xs rounded-md border font-medium transition cursor-pointer ${
+                                              isAssigned
+                                                ? 'bg-primaryColor-600 text-white border-primaryColor-600 shadow-xs'
+                                                : isPayerDefault
+                                                ? 'bg-primaryColor-50 text-primaryColor-700 border-primaryColor-300 font-semibold'
+                                                : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                                            }`}
+                                            title={isPayerDefault ? '未指定，自動歸主付款人' : undefined}
+                                          >
+                                            {getDisplayName(m)} {isPayerDefault && '(預設)'}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* 即時分配小計 */}
+                          {currentItemSplits && (
+                            <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2 text-xs">
+                              <div className="flex justify-between items-center font-bold text-gray-700 border-b border-gray-200 pb-1.5">
+                                <span>分攤金額小計</span>
+                                <span className="text-green-600">✓ 合計 {newExpense.currency} {Number(newExpense.originalAmount).toLocaleString('zh-TW')}</span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 pt-0.5">
+                                {members.map(m => (
+                                  <div key={m} className="flex justify-between items-center bg-white p-2 rounded-lg border border-gray-200 shadow-2xs">
+                                    <span className="text-gray-700 font-medium truncate mr-1">{getDisplayName(m)}</span>
+                                    <span className="font-bold text-primaryColor-700 font-mono">
+                                      {newExpense.currency} {Math.round(currentItemSplits[m] || 0).toLocaleString('zh-TW')}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="space-y-3 pr-2">
                         {members.map(member => {
                           const currentShares = newExpense.shares[member] || 0;
                           const displayMember = getDisplayName(member);
@@ -1848,6 +2024,7 @@ async function _getStorage() {
                           );
                         })}
                       </div>
+                      )}
                     </div>
 				  </div>
 
@@ -4763,11 +4940,21 @@ async function _getStorage() {
             const memberSpending = useMemo(() => {
                 const totals = {};
                 for (const exp of spendingExpenses) {
+                    const amountTwd = exp.amountInTWD || 0;
+                    if (amountTwd <= 0) continue;
+                    if (exp.customSplits && typeof exp.customSplits === 'object' && Object.keys(exp.customSplits).length > 0) {
+                        const totalSplit = Object.values(exp.customSplits).reduce((s, v) => s + (Number(v) || 0), 0);
+                        if (totalSplit > 0) {
+                            for (const [uid, amt] of Object.entries(exp.customSplits)) {
+                                if (Number(amt) <= 0) continue;
+                                totals[uid] = (totals[uid] || 0) + amountTwd * (Number(amt) / totalSplit);
+                            }
+                            continue;
+                        }
+                    }
                     const shares = exp.shares || {};
                     const totalShares = Object.values(shares).reduce((s, n) => s + n, 0);
                     if (totalShares <= 0) continue;
-                    const amountTwd = exp.amountInTWD || 0;
-                    if (amountTwd <= 0) continue;
                     for (const [uid, share] of Object.entries(shares)) {
                         if (share <= 0) continue;
                         totals[uid] = (totals[uid] || 0) + amountTwd * (share / totalShares);
@@ -5131,7 +5318,20 @@ async function _getStorage() {
                                 </p>
                               )}
                               <p className="text-xs text-gray-500 mt-1">
-                                <span className="font-medium">分帳:</span> {sharesDetail || '無人分帳'} (總份數: {totalShares})
+                                <span className="font-medium">分帳:</span>{' '}
+                                {exp.customSplits && typeof exp.customSplits === 'object' && Object.keys(exp.customSplits).length > 0 ? (
+                                  <span>
+                                    <span className="inline-flex items-center rounded-md bg-purple-50 px-1.5 py-0.5 text-xs font-semibold text-purple-700 mr-1.5">
+                                      依品項分配
+                                    </span>
+                                    {Object.entries(exp.customSplits)
+                                      .filter(([, amt]) => Number(amt) > 0)
+                                      .map(([pId, amt]) => `${getDisplayName(pId)} (${exp.currency} ${Math.round(amt).toLocaleString('zh-TW')})`)
+                                      .join('、')}
+                                  </span>
+                                ) : (
+                                  `${sharesDetail || '無人分帳'} (總份數: ${totalShares})`
+                                )}
                               </p>
                               <p className="text-xs text-gray-400 mt-1">
                                 <span className="font-medium">時間:</span> {formatTimestamp(exp.timestamp)}
