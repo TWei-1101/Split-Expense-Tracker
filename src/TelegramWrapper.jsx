@@ -13,7 +13,16 @@ export default function TelegramWrapper({ children }) {
     applyTelegramTheme();
 
     if (tg.BackButton) {
-      tg.BackButton.onClick(() => telegramClose());
+      tg.BackButton.onClick(() => {
+        if (tg.exitFullscreen) {
+          try { tg.exitFullscreen(); } catch { /* ignore */ }
+        }
+        if (document.referrer && document.referrer.includes('portal')) {
+          window.location.href = '/portal.html';
+        } else {
+          telegramClose();
+        }
+      });
       try { tg.BackButton.show(); } catch { /* ignore */ }
     }
 

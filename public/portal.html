@@ -265,14 +265,33 @@
   </div>
 
   <script>
-    // 初始化 Telegram Mini App（快捷入口維持原生抽屜選單，不強制全螢幕）
-    if (window.Telegram && window.Telegram.WebApp) {
-      const tg = window.Telegram.WebApp;
-      tg.ready();
-      if (tg.disableClosingConfirmation) {
-        tg.disableClosingConfirmation();
+    // 初始化 Telegram Mini App（快捷入口維持原生抽屜選單，不全螢幕）
+    function ensureDrawerMode() {
+      if (window.Telegram && window.Telegram.WebApp) {
+        const tg = window.Telegram.WebApp;
+        tg.ready();
+        if (tg.exitFullscreen) {
+          try { tg.exitFullscreen(); } catch { /* ignore */ }
+        }
+        if (tg.enableVerticalSwipes) {
+          try { tg.enableVerticalSwipes(); } catch { /* ignore */ }
+        }
+        if (tg.BackButton) {
+          try { tg.BackButton.hide(); } catch { /* ignore */ }
+        }
+        if (tg.disableClosingConfirmation) {
+          tg.disableClosingConfirmation();
+        }
       }
     }
+
+    ensureDrawerMode();
+    window.addEventListener('pageshow', ensureDrawerMode);
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'visible') {
+        ensureDrawerMode();
+      }
+    });
 
     function launchApp(url) {
       if (window.Telegram && window.Telegram.WebApp) {
