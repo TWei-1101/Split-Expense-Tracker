@@ -416,6 +416,32 @@ Wウォッシャブルニットワンピース ¥1,990
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-14T14:41")
 
+    def test_parses_tsuruha_drugstore_receipt(self):
+        text = """しんせつ第一
+ツルス ドラック ツルハドラッグ
+www.tsuruha.co.jp
+中標津東店
+TEL 0153-78-7576
+2026年09月14日（月）15:34
+*BPバイオマス袋白L ¥7内
+強力わかもと1000錠 ¥2,728内
+アベンヌシカルFPR CR ¥1,980内
+リュウバンヘラツキ 10ml ¥1,644内
+イトコラコラーゲン低分子ヒアル306 ¥2,678※
+パイタルプロテインズ 120g ¥1,555※
+小計 7点 ¥10,592
+合計 ¥10,592
+お預り合計 ¥11,000
+お釣り ¥408
+※印は軽減税率適用商品です。
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["description"], "鶴羽藥妝 中標津東店")
+        self.assertEqual(result["category"], "other")
+        self.assertEqual(result["originalAmount"], 10592)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-14T15:34")
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",
