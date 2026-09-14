@@ -110,10 +110,12 @@ HOTEL_MERCHANTS = (
     ("Tokyu Stay", ("tokyu stay", "東急ステイ")),
     ("三井花園飯店", ("mitsui garden", "三井ガーデン")),
     ("Comfort Hotel", ("comfort hotel", "コンフォートホテル")),
+    ("知床サライ", ("知床サライ", "shiretoko sarai", "0153-85-8800")),
 )
 
 # Transport and gas station brands
 TRANSPORT_MERCHANTS = (
+    ("交通通行費", ("nexco", "高速道路", "通行料金", "料金所", "首都高", "阪神高速")),
     ("オカモトセルフ 根室 (加油站)", ("オカモト", "セルフ根室", "0153-29-2125")),
     ("オカモトセルフ 加油站", ("オカモトセルフ", "株式会社オカモト", "オカモト")),
     ("ENEOS 加油站", ("eneos", "エネオス")),
@@ -149,10 +151,10 @@ CATEGORY_ITEM_KEYWORDS = (
         "チョコ", "パフェ", "和菓子", "洋菓子", "シュークリーム", "甜點", "點心", "冰淇淋", "蛋糕",
         "燒肉", "定食", "丼", "うどん", "そば", "カレー", "バーガー", "ピザ", "パスタ", "飲食",
         "テーブル", "減税率", "减税率", "軽減税率", "外食", "喫茶", "8%対象", "内税8%", "税率8%", "消費税等8%", "税拔8%", "税抜8%", "ポテト",
-        "串", "梅酒", "酒", "居酒屋", "炉端", "お通し", "やきとり", "焼き鳥", "焼鳥", "ウーロン茶", "烏龍茶", "刺身", "ビール", "サワー", "ハイボール",
+        "串", "梅酒", "日本酒", "地酒", "清酒", "お酒", "焼酎", "ワイン", "ウイスキー", "居酒屋", "炉端", "お通し", "やきとり", "焼き鳥", "焼鳥", "ウーロン茶", "烏龍茶", "刺身", "ビール", "サワー", "ハイボール",
     )),
     ("transport", ("通行料金", "通行料", "高速道路", "料金所", "etc", "nexco", "過路費", "通行費", "高速公路", "機票", "flight", "airline", "飛行機", "纜車", "cable car", "ropeway", "ロープウェイ", "租車", "rental car", "レンタカー", "計程車", "taxi", "タクシー", "地鐵", "捷運", "metro", "subway", "地下鉄", "巴士", "公車", "bus", "バス", "火車", "train", "電車", "新幹線", "加油", "燃料", "ガソリン", "軽油", "給油", "スタンド", "gasoline", "petrol", "eneos", "idemitsu", "出光", "コスモ", "cosmo", "オカモト", "apollostation", "キグナス", "kygnus", "シェル", "shell", "ホクレン", "レギュラー", "ハイオク")),
-    ("lodging", ("飯店", "hotel", "ホテル", "旅館", "民宿", "hostel", "ryokan", "宿泊", "termofstay", "term of stay", "roomno", "room no", "accommodation")),
+    ("lodging", ("飯店", "hotel", "ホテル", "旅館", "民宿", "hostel", "ryokan", "宿泊", "宿泊税", "termofstay", "term of stay", "roomno", "room no", "accommodation")),
 )
 
 
@@ -193,13 +195,13 @@ def _amount(line: str) -> int | float | None:
 
 GENERIC_DOCUMENT_TITLES = frozenset({
     "RECEIPT", "INVOICE", "BILL", "領収", "領収書", "領収証", "レシート", "DETAILS", "TOTAL", "SUBTOTAL", "TAX", "納品書", "納品書（領収書）", "納品書(領収書)",
-    "しんせつ第一", "親切第一", "いらっしゃいませ", "毎度ありがとうございます",
+    "しんせつ第一", "親切第一", "いらっしゃいませ", "毎度ありがとうございます", "ご利用ありがとうございます", "ご利用ありがとうございます。", "ありがとうございます",
 })
 
 
 def _description(lines: list[str]) -> str | None:
     receipt_text = "\n".join(lines).casefold()
-    for label, keywords in MERCHANT_KEYWORDS + FOOD_MERCHANTS + HOTEL_MERCHANTS + TRANSPORT_MERCHANTS + ITEM_KEYWORDS:
+    for label, keywords in MERCHANT_KEYWORDS + FOOD_MERCHANTS + HOTEL_MERCHANTS + TRANSPORT_MERCHANTS:
         if any(keyword.casefold() in receipt_text for keyword in keywords):
             return label
 
@@ -242,6 +244,10 @@ def _description(lines: list[str]) -> str | None:
     for line in lines:
         if re.fullmatch(r"[\u4e00-\u9fff\u3040-\u30ff]+店", line):
             return line
+
+    for label, keywords in ITEM_KEYWORDS:
+        if any(keyword.casefold() in receipt_text for keyword in keywords):
+            return label
 
     for line in lines:
         # A merchant is generally at the top, contains letters, and is not a
