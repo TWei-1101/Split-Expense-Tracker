@@ -45,17 +45,13 @@ export function applyTelegramTheme() {
   if (tg.backgroundColor) root.style.background = tg.backgroundColor;
 
   const updateFullscreenStatus = () => {
-    const isFs = typeof tg.isFullscreen === 'boolean' ? tg.isFullscreen : Boolean(tg.requestFullscreen);
-    root.dataset.tgFullscreen = isFs ? 'true' : 'false';
+    root.dataset.tgFullscreen = tg.isFullscreen ? 'true' : 'false';
   };
 
   tg.ready();
   tg.expand();
-  if (tg.requestFullscreen) {
-    try { tg.requestFullscreen(); } catch { /* ignore */ }
-  }
-  if (tg.disableVerticalSwipes) {
-    try { tg.disableVerticalSwipes(); } catch { /* ignore */ }
+  if (tg.exitFullscreen) {
+    try { tg.exitFullscreen(); } catch { /* ignore */ }
   }
 
   updateFullscreenStatus();
