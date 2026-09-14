@@ -466,6 +466,30 @@ ARCS
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-14T16:19")
 
+    def test_parses_shiretoko_sarai_lodging_tax_receipt(self):
+        text = """知床サライ
+ROOM & DINING
+<領収書>
+知床サライ
+登録番号:T7010001017572
+TEL:0153-85-8800
+北海道目梨郡羅臼町礼文町41-5
+2026/09/14 17:38
+北海道宿泊税
+@100x 3 ¥300非
+小計 3点 ¥300
+合計 ¥300
+(内消費税等 ¥0)
+お預かり ¥500
+お釣 ¥200
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["description"], "知床サライ")
+        self.assertEqual(result["category"], "lodging")
+        self.assertEqual(result["originalAmount"], 300)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-14T17:38")
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",
