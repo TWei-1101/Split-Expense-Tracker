@@ -45,6 +45,21 @@ MERCHANT_KEYWORDS = (
     ("松本清", ("matsumoto kiyoshi", "matsukiyo", "マツモトキヨシ", "マツキヨ")),
 )
 
+# Retail, clothing, electronics and general goods stores whose purchases are 'other'
+RETAIL_MERCHANTS = (
+    ("UNIQLO", ("uniqlo", "ユニクロ")),
+    ("GU", (r"\bgu\b", "ジーユー")),
+    ("無印良品", ("無印良品", "muji")),
+    ("WORKMAN Plus", ("workman", "ワークマン")),
+    ("大創", ("daiso", "ダイソー")),
+    ("Bic Camera", ("bic camera", "biccamera", "ビックカメラ")),
+    ("Yodobashi Camera", ("yodobashi", "ヨドバシ")),
+    ("松本清", ("matsumoto kiyoshi", "matsukiyo", "マツモトキヨシ", "マツキヨ")),
+    ("唐吉訶德", ("don quijote", "donki", "ドン・キホーテ", "ドンキ", "唐吉訶德")),
+    ("ニトリ", ("ニトリ", "nitori", "宜得利")),
+    ("ABC-MART", ("abc-mart", "abcmart", "abcマート")),
+)
+
 # Food-specific brands and stores whose purchases are unambiguously food/dining.
 FOOD_MERCHANTS = (
     ("厚岸味覚ターミナル コンキリエ", ("厚岸味覚ターミナル", "コンキリエ", "conchiglie", "オイスターカフェ", "oyster cafe", "oystercafe", "0153-52-4139", "味覚ターミナル", "フンキリエ")),
@@ -112,7 +127,7 @@ ITEM_KEYWORDS = (
 CATEGORY_ITEM_KEYWORDS = (
     ("food", (
         "拉麵", "ラーメン", "ramen", "壽司", "寿司", "sushi", "咖啡", "カフェ", "coffee", "cafe", "とうきび", "とうきび茶", "お茶", "緑茶", "麦茶",
-        "飯", "便當", "おにぎり", "手卷", "手巻", "明太子", "弁当", "飲料", "飲み物", "麵包", "パン",
+        "飯", "便當", "おにぎり", "手卷", "手巻", "明太子", "弁当", "飲料", "飲み物", "麵包", "食パン", "菓子パン", "惣菜パン", "総菜パン", "あんパン", "アンパン", "メロンパン", "クロワッサン", "ベーカリー", "bakery", "bread",
         "菓子", "パイ", "アイス", "サンド", "ケーキ", "デザート", "スイーツ", "プリン", "クッキー",
         "チョコ", "パフェ", "和菓子", "洋菓子", "シュークリーム", "甜點", "點心", "冰淇淋", "蛋糕",
         "燒肉", "定食", "丼", "うどん", "そば", "カレー", "バーガー", "ピザ", "パスタ", "飲食",
@@ -223,14 +238,20 @@ def _description(lines: list[str]) -> str | None:
 
 
 def _category(lines: list[str]) -> str:
-    """Classify product detail text and food merchants; unknown receipts are safely other."""
+    """Classify product detail text and merchants; unknown receipts are safely other."""
     receipt_text = "\n".join(lines).casefold()
+    for label, keywords in RETAIL_MERCHANTS:
+        if any(keyword.casefold() in receipt_text for keyword in keywords):
+            return "other"
     for label, keywords in FOOD_MERCHANTS:
         if any(keyword.casefold() in receipt_text for keyword in keywords):
             return "food"
     for label, keywords in HOTEL_MERCHANTS:
         if any(keyword.casefold() in receipt_text for keyword in keywords):
             return "lodging"
+    for label, keywords in TRANSPORT_MERCHANTS:
+        if any(keyword.casefold() in receipt_text for keyword in keywords):
+            return "transport"
     for category, keywords in CATEGORY_ITEM_KEYWORDS:
         if any(keyword.casefold() in receipt_text for keyword in keywords):
             return category
