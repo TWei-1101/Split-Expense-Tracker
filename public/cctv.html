@@ -45,6 +45,9 @@
       if (tg.BackButton) {
         tg.BackButton.show();
         tg.BackButton.onClick(function() {
+          if (tg.exitFullscreen) {
+            try { tg.exitFullscreen(); } catch { /* ignore */ }
+          }
           if (document.referrer && document.referrer.includes('portal')) {
             window.location.href = '/portal.html';
           } else {
