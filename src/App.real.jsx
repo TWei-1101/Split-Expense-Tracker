@@ -1325,7 +1325,7 @@ async function _getStorage() {
                     <h3 className="text-xl font-bold text-gray-800">
                         {modalTitle} {isReadOnly && <span className="text-red-500 ml-2">(唯讀)</span>}
                     </h3>
-                    <button onClick={onClose} disabled={isReceiptOcrLoading || Boolean(isReceiptScanning)} className="p-1 rounded-full hover:bg-gray-100 text-gray-600 transition hover:scale-110 transform disabled:opacity-30 disabled:hover:scale-100">
+                    <button onClick={onClose} disabled={isReceiptOcrLoading || Boolean(isReceiptScanning)} className="p-2 rounded-full hover:bg-gray-100 text-gray-600 transition hover:scale-110 transform disabled:opacity-30 disabled:hover:scale-100" aria-label="關閉視窗">
                       <X className="w-6 h-6" />
                     </button>
                   </div>
@@ -1914,7 +1914,7 @@ async function _getStorage() {
                           <h3 className="text-xl font-bold text-gray-800">
                             管理分帳成員與預設份數 {isReadOnly && <span className="text-red-500 ml-2">(唯讀)</span>}
                           </h3>
-                          <button onClick={() => setIsMemberModalOpen(false)} className="p-1 rounded-full hover:bg-gray-100 text-gray-600 transition hover:scale-110 transform">
+                          <button onClick={() => setIsMemberModalOpen(false)} className="p-2 rounded-full hover:bg-gray-100 text-gray-600 transition hover:scale-110 transform" aria-label="關閉視窗">
                               <X className="w-6 h-6" />
                           </button>
                       </div>

@@ -32,6 +32,18 @@ input[type='number']::-webkit-outer-spin-button {
   top: max(calc(env(safe-area-inset-top, 0px) + 88px + 0.5rem), 6.5rem);
 }
 
+/* 彈出視窗（Modal）全螢幕安全邊界：確保頂部「X」按鈕與標題完全避開 Telegram 浮動膠囊按鈕與動態島 */
+[data-tg-fullscreen='true'] .app-modal-backdrop {
+  padding-top: max(calc(env(safe-area-inset-top, 0px) + 40px), 92px) !important;
+  padding-bottom: max(calc(env(safe-area-inset-bottom, 0px) + 16px), 24px) !important;
+}
+
+[data-tg-fullscreen='true'] .app-modal-backdrop .app-modal-surface {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  max-height: 100% !important;
+}
+
 /* 確保輸入框游標在 iOS / Telegram Mini App 深色模式下仍清晰可見 */
 input,
 textarea,
