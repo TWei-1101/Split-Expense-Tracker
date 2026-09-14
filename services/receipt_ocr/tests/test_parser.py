@@ -442,6 +442,30 @@ TEL 0153-78-7576
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-14T15:34")
 
+    def test_parses_super_arcs_supermarket_receipt_with_item_count_in_total(self):
+        text = """SUPER
+ARCS
+株式会社福原
+スーパーアークス 中標津店
+0153-79-2980
+領収証
+2026年09月14日（月）16:19
+小計 ¥3,912
+税率8%課税対象額 ¥4,220
+税率8％税額 ¥312
+税率10%課税対象額 ¥4
+（税合計 ¥312）
+合計／ 18点 ¥4,224
+お預り ¥10,789
+お釣り ¥6.565
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["description"], "SUPER ARCS 超市 中標津店")
+        self.assertEqual(result["category"], "food")
+        self.assertEqual(result["originalAmount"], 4224)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-14T16:19")
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",

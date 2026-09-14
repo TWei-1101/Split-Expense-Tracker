@@ -32,6 +32,8 @@ MERCHANT_KEYWORDS = (
     ("Lawson", ("lawson", "ローソン")),
     ("AEON 超市 根室店", ("イオン根室店", "aeon根室")),
     ("AEON 超市", ("aeon", "イオン", "永旺")),
+    ("SUPER ARCS 超市 中標津店", ("スーパーアークス 中標津店", "スーパーアークス中標津店", "0153-79-2980")),
+    ("SUPER ARCS 超市", ("super arcs", "superarcs", "スーパーアークス")),
     ("Big House 超市", ("bighouse", "ビッグハウス", "株式会社福原", "株式会社 福原")),
     ("Seicomart", ("seicomart", "セイコーマート", "セコマ")),
     ("WORKMAN Plus", ("workman", "ワークマン")),
@@ -285,7 +287,7 @@ def _total(lines: list[str]) -> int | float | None:
         "台計", "台计",
     })
     EXCLUDE_ROW = re.compile(
-        r"(?:支払|支|還元|返金|値引|割引|PAYMENT|CHANGE|お預|お釣|預|预|釣|钓|cash|現金|現計|現计|クレ計|電計|掛計|税合計|税合计|税額|税额|消費税|消费税|内税|外税|課税|课税|点数|点|件数)",
+        r"(?:支払|支|還元|返金|値引|割引|PAYMENT|CHANGE|お預|お釣|預|预|釣|钓|cash|現金|現計|現计|クレ計|電計|掛計|税合計|税合计|税額|税额|消費税|消费税|内税|外税|課税|课税)",
         re.I,
     )
     CASH_TENDERED_LABEL = re.compile(r"(?:現計|現计|お預|お預り|預|预|cash|現金|PAYMENT)", re.I)
