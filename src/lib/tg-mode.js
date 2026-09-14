@@ -43,6 +43,12 @@ export function applyTelegramTheme() {
   if (tp.button_text_color) root.style.setProperty('--tg-button-text-color', tp.button_text_color);
   if (tg.colorScheme) root.dataset.tgColorScheme = tg.colorScheme;
   if (tg.backgroundColor) root.style.background = tg.backgroundColor;
+
+  const updateFullscreenStatus = () => {
+    const isFs = typeof tg.isFullscreen === 'boolean' ? tg.isFullscreen : Boolean(tg.requestFullscreen);
+    root.dataset.tgFullscreen = isFs ? 'true' : 'false';
+  };
+
   tg.ready();
   tg.expand();
   if (tg.requestFullscreen) {
@@ -50,6 +56,11 @@ export function applyTelegramTheme() {
   }
   if (tg.disableVerticalSwipes) {
     try { tg.disableVerticalSwipes(); } catch { /* ignore */ }
+  }
+
+  updateFullscreenStatus();
+  if (tg.onEvent) {
+    try { tg.onEvent('fullscreenChanged', updateFullscreenStatus); } catch { /* ignore */ }
   }
 }
 
