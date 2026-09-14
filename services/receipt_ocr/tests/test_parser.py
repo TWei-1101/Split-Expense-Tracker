@@ -360,6 +360,36 @@ TEL:0154-56-2219
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-12T13:10")
 
+    def test_parses_notsuke_restaurant_receipt(self):
+        text = """別海町
+登録番号 T3462501000231
+レストランNOTSUKE
+株式会社 別海町観光開発公社
+北海道野付郡別海町野付63
+TEL：0153-82-1270
+2026年9月14日（月）12:15 #000001
+0000011レジ 2116
+内10セット500 ¥1,300
+内10 単品バーガー ¥980
+内10 カツカレー ¥1,500
+小計 ¥3,780
+（内税10%対象額 ¥3,780）
+買上点数 3点
+合計 ¥3,780
+（税率10%対象額 ¥3,780）
+（内消費税等10% ¥343）
+お預り ¥5,000
+（内消費税等 ¥343）
+お釣り ¥1,220
+外8、内8は軽減税率対象商品です。
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["description"], "別海町 レストランNOTSUKE")
+        self.assertEqual(result["category"], "food")
+        self.assertEqual(result["originalAmount"], 3780)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-14T12:15")
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",

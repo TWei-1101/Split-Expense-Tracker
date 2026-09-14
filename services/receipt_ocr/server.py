@@ -75,32 +75,38 @@ def extract_text_apple_vision(image_path: str) -> str | None:
                         "y": y_top,
                         "x": bbox.origin.x,
                         "h": bbox.size.height,
+                        "w": bbox.size.width,
+                        "y_center": y_top + bbox.size.height / 2,
                     })
 
             if not boxes:
                 return None
 
-            boxes.sort(key=lambda b: b["y"])
+            boxes.sort(key=lambda b: b["y_center"])
             lines = []
-            current_line = []
-            last_y = None
 
             for b in boxes:
-                if last_y is None or abs(b["y"] - last_y) < 0.012:
-                    current_line.append(b)
-                    last_y = b["y"]
+                matched_line = None
+                for line in lines:
+                    avg_center = sum(x["y_center"] for x in line) / len(line)
+                    if abs(b["y_center"] - avg_center) < 0.013:
+                        matched_line = line
+                        break
+                if matched_line is not None:
+                    matched_line.append(b)
                 else:
-                    current_line.sort(key=lambda x: x["x"])
-                    lines.append(" ".join(x["text"] for x in current_line))
-                    current_line = [b]
-                    last_y = b["y"]
+                    lines.append([b])
 
-            if current_line:
-                current_line.sort(key=lambda x: x["x"])
-                lines.append(" ".join(x["text"] for x in current_line))
+            sorted_lines = []
+            for line in lines:
+                line.sort(key=lambda x: x["x"])
+                avg_y = sum(x["y_center"] for x in line) / len(line)
+                text = " ".join(x["text"] for x in line)
+                sorted_lines.append((avg_y, text))
 
-            if len(lines) >= 3:
-                return "\n".join(lines)
+            sorted_lines.sort(key=lambda x: x[0])
+            if len(sorted_lines) >= 3:
+                return "\n".join(t for _, t in sorted_lines)
     except Exception as e:
         print(f"Apple Vision OCR error: {e}", flush=True)
     return None
@@ -126,7 +132,7 @@ def extract_text(image_path: str) -> str:
         from rapidocr_onnxruntime import RapidOCR
     except ImportError as error:
         raise RuntimeError("rapidocr_not_installed") from error
-    result, _elapsed = RapidOCR(det_limit_side_len=1500)(image_path)
+    result, _elapsed = RapidOCR()(image_path)
     return "\n".join(str(row[1]) for row in (result or []) if len(row) > 1 and row[1])
 
 
