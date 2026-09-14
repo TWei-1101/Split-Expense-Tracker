@@ -390,6 +390,32 @@ TEL：0153-82-1270
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-14T12:15")
 
+    def test_uniqlo_clothing_receipt_categorized_as_other(self):
+        text = """UNI
+QLO
+WWW.UNIQLO.COM
+ユニクロフレスポ中標津店
+TEL 050-3096-6127
+登録番号 T9250001001451
+** 領収証 **
+2026年09月14日
+<0878> [14:41]
+ストレッチイージーアンクルパンツ
+2000221249750 1 ¥1,990
+50ショクソックス 4点 ¥990
+Wウォッシャブルニットワンピース ¥1,990
+買上点数 13点
+小計 ¥18,440
+免税額 -¥1,676
+合計 ¥16,764
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["description"], "UNIQLO")
+        self.assertEqual(result["category"], "other")
+        self.assertEqual(result["originalAmount"], 16764)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-14T14:41")
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",
