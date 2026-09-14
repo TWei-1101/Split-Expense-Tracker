@@ -18,7 +18,7 @@ test('只有一位分帳者時，只顯示總金額而不顯示個人花費卡',
 });
 
 test('點選所有支出的分類時，每人花費金額與摘要都使用該分類支出，且可取消回到全部', () => {
-  assert.match(appSource, /const spendingExpenses = useMemo\(\(\) => filterExpensesByCategory\(expenses, filterCategory\), \[expenses, filterCategory\]\)/);
+  assert.match(appSource, /const spendingExpenses = useMemo\(\(\) => filterExpensesByCategory\(expenses.filter\(exp => !isSettlement\(exp\)\), filterCategory\), \[expenses, filterCategory\]\)/);
   assert.match(appSource, /for \(const exp of spendingExpenses\)/);
   assert.match(appSource, /總金額<\/p>[\s\S]*?TWD \{totalSpending\.toFixed\(0\)\}/);
   assert.match(appSource, /onClick=\{\(\) => toggleCategoryFilter\(option\.value\)\}/);

@@ -32,6 +32,8 @@ export function buildExpenseMemberList({
   expenses.forEach((expense) => {
     if (expense?.payerName && expense.payerName !== '__self__') addMember(expense.payerName);
     Object.keys(expense?.shares || {}).forEach(addMember);
+    Object.keys(expense?.payers || {}).forEach(addMember);
+    Object.keys(expense?.customSplits || {}).forEach(addMember);
   });
 
   return members;

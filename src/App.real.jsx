@@ -62,7 +62,7 @@ import {
 } from './lib/expense-categories.js';
 import { expenseTimestampToDate, findDuplicateExpenses } from './lib/duplicate-expenses.js';
 import { calculateBalances as calculateBalancesImpl, calculateSettlements as calculateSettlementsImpl } from './lib/settlement.js';
-import { convertToTWD as convertToTWDImpl, normalizeFrankfurterRates } from './lib/currency.js';
+import { normalizeFrankfurterRates } from './lib/currency.js';
 import { formatExpenseDateTimeLocal, parseExpenseDateTimeLocal } from './lib/expense-date-time.js';
 import {
   buildLuggageDeletionPlan,
@@ -79,6 +79,7 @@ import {
 import { shouldTriggerSwipeDelete } from './lib/swipe-delete.js';
 import { normalizeReceiptOcrResult, mergeReceiptOcrIntoExpense } from './lib/receipt-ocr.js';
 import { buildExpenseMemberList } from './lib/expense-members.js';
+import { computeItemSplits, isSettlement, migrateExpenseIdentity, resolveExpenseConversion, validatePayers, getSearchSpendingSummary } from './lib/expense-math.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
@@ -808,10 +809,10 @@ async function _getStorage() {
             const modalTitle = isEditing ? '編輯支出記錄' : (isReceiptOcrEntry ? '拍照／選取收據' : '新增支出記錄');
             const submitText = isEditing ? '儲存修改' : '確認新增支出';
             
-            const currentExchangeRate = liveExchangeRates[newExpense.currency] || DEFAULT_EXCHANGE_RATES[newExpense.currency] || 1.0;
-            const amountInTWD = useMemo(() => {
-                return convertToTWDImpl(newExpense.originalAmount, currentExchangeRate);
-            }, [newExpense.originalAmount, currentExchangeRate]);
+            const { rate: currentExchangeRate, amount: amountInTWD } = resolveExpenseConversion(
+                newExpense, isEditing ? expenseToEdit : null,
+                liveExchangeRates[newExpense.currency] || DEFAULT_EXCHANGE_RATES[newExpense.currency] || 1.0,
+            );
 
             // ✨ NEW: 選單不列 TWD（因為是預設幣），TWD 改用左邊的 TW 按鈕切換
             const nonTwdCurrencies = CURRENCIES.filter(c => c !== DEFAULT_CURRENCY);
@@ -855,7 +856,7 @@ async function _getStorage() {
                         });
                         setCategoryWasManuallySelected(true);
                         setImagePreviewUrl(expenseToEdit.imageUrl || expenseToEdit.imageDataUrl || '');
-                        if (expenseToEdit.payers && typeof expenseToEdit.payers === 'object' && Object.keys(expenseToEdit.payers).length > 1) {
+                        if (expenseToEdit.payers && typeof expenseToEdit.payers === 'object' && Object.keys(expenseToEdit.payers).length > 0) {
                             setIsMultiPayer(true);
                             setCustomPayers({ ...expenseToEdit.payers });
                         } else {
@@ -1012,46 +1013,11 @@ async function _getStorage() {
                 });
             };
 
-            const computeItemSplits = useCallback((items, assignments, payerId, memberList, originalAmount) => {
-                const splits = {};
-                memberList.forEach(m => { splits[m] = 0; });
-                let itemSum = 0;
-                (items || []).forEach((item, idx) => {
-                    const amt = Number(item.amount) || 0;
-                    itemSum += amt;
-                    const assign = assignments?.[idx];
-                    if (!assign) {
-                        const target = payerId || memberList[0];
-                        splits[target] = (splits[target] || 0) + amt;
-                    } else if (assign === 'all') {
-                        const shareAmt = amt / memberList.length;
-                        memberList.forEach(m => { splits[m] = (splits[m] || 0) + shareAmt; });
-                    } else if (memberList.includes(assign)) {
-                        splits[assign] = (splits[assign] || 0) + amt;
-                    } else {
-                        const target = payerId || memberList[0];
-                        splits[target] = (splits[target] || 0) + amt;
-                    }
-                });
-
-                const total = Number(originalAmount) || itemSum;
-                const diff = total - itemSum;
-                if (Math.abs(diff) > 0.01) {
-                    const target = payerId || memberList[0];
-                    splits[target] = (splits[target] || 0) + diff;
-                }
-
-                const rounded = {};
-                Object.entries(splits).forEach(([k, v]) => {
-                    rounded[k] = Math.round(v * 100) / 100;
-                });
-                return rounded;
-            }, []);
 
             const currentItemSplits = useMemo(() => {
                 if (splitMode !== 'items' || !Array.isArray(newExpense.items) || newExpense.items.length === 0) return null;
                 return computeItemSplits(newExpense.items, itemAssignments, newExpense.payerName, members, newExpense.originalAmount);
-            }, [splitMode, newExpense.items, itemAssignments, newExpense.payerName, members, newExpense.originalAmount, computeItemSplits]);
+            }, [splitMode, newExpense.items, itemAssignments, newExpense.payerName, members, newExpense.originalAmount]);
 
             const toggleItemAssignment = (idx, target) => {
                 setItemAssignments(prev => {
@@ -1393,27 +1359,8 @@ async function _getStorage() {
                         setUploadStatus('');
                     }
 
-                    let validPayers = null;
-                    if (isMultiPayer && newExpense.payerName !== SELF_PAYER_KEY) {
-                        const cleanPayers = {};
-                        let sumPayers = 0;
-                        members.forEach(m => {
-                            const v = Number(customPayers[m]) || 0;
-                            if (v > 0) {
-                                cleanPayers[m] = v;
-                                sumPayers += v;
-                            }
-                        });
-                        const totalAmt = Number(newExpense.originalAmount) || 0;
-                        if (Object.keys(cleanPayers).length > 1) {
-                            if (Math.abs(sumPayers - totalAmt) > 0.05) {
-                                setModalError(`共同付款金額總和 (${sumPayers}) 與總金額 (${totalAmt}) 不符，請確認金額！`);
-                                setIsLoadingModal(false);
-                                return;
-                            }
-                            validPayers = cleanPayers;
-                        }
-                    }
+                    const validPayers = isMultiPayer && newExpense.payerName !== SELF_PAYER_KEY
+                        ? validatePayers(customPayers, members, newExpense.originalAmount) : null;
 
                     let customSplitsToSave = null;
                     let itemAssignmentsToSave = null;
@@ -4021,24 +3968,8 @@ async function _getStorage() {
 
 				  for (const docSnap of expensesSnapshot.docs) {
 					const data = docSnap.data();
-					let needsUpdate = false;
-					const updateData = {};
-
-					if (data.payerName === oldName) {
-					  updateData.payerName = newId;
-					  needsUpdate = true;
-					}
-
-					const shares = data.shares || {};
-					if (shares[oldName] !== undefined) {
-					  const newShares = { ...shares };
-					  const shareValue = newShares[oldName];
-					  newShares[newId] = (newShares[newId] || 0) + shareValue;
-					  delete newShares[oldName];
-
-					  updateData.shares = newShares;
-					  needsUpdate = true;
-					}
+                    const updateData = migrateExpenseIdentity(data, oldName, newId);
+                    const needsUpdate = Object.keys(updateData).length > 0;
 
 					if (needsUpdate) {
 					  batch.update(docSnap.ref, updateData);
@@ -4118,6 +4049,7 @@ async function _getStorage() {
                           amountInTWD: roundedAmount,
                           payerName: debtorId,
                           shares: { [creditorId]: roundedAmount },
+                          kind: 'settlement',
                           timestamp: serverTimestamp(),
                           creatorId: userId,
                           appId: appId,
@@ -4936,7 +4868,7 @@ async function _getStorage() {
             }, [expenses, searchKeyword, filterCategory, filterPayer, getPayerLabel]); // ✨ 依賴篩選條件 + getPayerLabel
 
             // 每人分攤金額會跟隨「所有支出」的分類篩選；搜尋與付款人篩選只影響清單。
-            const spendingExpenses = useMemo(() => filterExpensesByCategory(expenses, filterCategory), [expenses, filterCategory]);
+            const spendingExpenses = useMemo(() => filterExpensesByCategory(expenses.filter(exp => !isSettlement(exp)), filterCategory), [expenses, filterCategory]);
             const memberSpending = useMemo(() => {
                 const totals = {};
                 for (const exp of spendingExpenses) {
@@ -5037,31 +4969,23 @@ async function _getStorage() {
                     </div>
                 </div>
                 
-                {/* ✨ NEW: 搜尋結果摘要 - 總金額 + 每份平均（用組內成員份額加總當分母，每個成員只計一次） */}
+                {/* 搜尋結果摘要：總金額與每人平均，排除結清轉帳。 */}
                 {searchKeyword.trim() !== '' && sortedExpenses.length > 0 && (() => {
-                    // 收集每個 user 第一次出現的 share value（dedup：廷瑋=2、郁傑=1 → 3，不乘上 7 筆）
-                    const memberShareMap = new Map();
+                    // 參與者去重計算，不把分帳權重或品項金額當作人數。
+                    const searchSummary = getSearchSpendingSummary(sortedExpenses);
                     // 收集搜尋結果內獨立日期（YYYY-MM-DD），用於「晚/天」單位
                     const distinctDates = new Set();
-                    for (const exp of sortedExpenses) {
-                        const shares = exp.shares || {};
-                        for (const [uid, share] of Object.entries(shares)) {
-                            if (share > 0 && !memberShareMap.has(uid)) {
-                                memberShareMap.set(uid, share);
-                            }
-                        }
+                    for (const exp of sortedExpenses.filter(exp => !isSettlement(exp))) {
                         const ts = exp.timestamp;
                         const date = ts instanceof Date ? ts : (ts && typeof ts.toDate === 'function' ? ts.toDate() : null);
                         if (date) {
                             distinctDates.add(date.toISOString().slice(0, 10));
                         }
                     }
-                    const memberShareValues = Array.from(memberShareMap.values());
-                    // 分母 = Σ(每位成員份額)，每人只算一次（不會乘上 expense 數量）
-                    const searchGroupShares = memberShareValues.reduce((s, n) => s + n, 0);
-                    const searchTotal = sortedExpenses.reduce((s, e) => s + (e.amountInTWD || 0), 0);
-                    // 總金額 / 組內份額加總 = 每份平均（例如 52008 / 3 = 17336）
-                    const searchPerShare = searchGroupShares > 0 ? searchTotal / searchGroupShares : 0;
+                    // 每人平均以實際參與人數計算，品項金額不當作份數。
+                    const searchGroupShares = searchSummary.count;
+                    const searchTotal = searchSummary.total;
+                    const searchPerShare = searchSummary.average;
                     // 住宿關鍵字 → 「每晚每人」, 其他 → 「每天每人」
                     const isAccommodation = /住宿/.test(searchKeyword);
                     // 住宿：parse description 內 M/D 或 M/D-M/D 字串（例「札幌住宿9/17-9/20」= 4 晚）
@@ -5291,7 +5215,7 @@ async function _getStorage() {
                               </p>
                               <p className="text-sm text-gray-600">
                                 <span className="font-medium text-primaryColor-700">付款人:</span>{' '}
-                                {exp.payers && typeof exp.payers === 'object' && Object.keys(exp.payers).length > 1 ? (
+                                {exp.payers && typeof exp.payers === 'object' && Object.keys(exp.payers).length > 0 ? (
                                   <span>
                                     <span className="inline-flex items-center rounded-md bg-blue-50 px-1.5 py-0.5 text-xs font-semibold text-blue-700 mr-1.5">
                                       共同付款
