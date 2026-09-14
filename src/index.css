@@ -23,6 +23,15 @@ input[type='number']::-webkit-outer-spin-button {
   --motion-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 }
 
+/* Telegram Mini App 全螢幕安全邊界：避免標題、修改帳本鈕與登出鈕被浮動 Back 鍵和動態島遮擋 */
+[data-tg-fullscreen='true'] .min-h-screen {
+  padding-top: max(env(safe-area-inset-top, 56px), 56px) !important;
+}
+
+[data-tg-fullscreen='true'] .app-toast {
+  top: max(calc(env(safe-area-inset-top, 56px) + 1rem), 4.5rem);
+}
+
 /* 確保輸入框游標在 iOS / Telegram Mini App 深色模式下仍清晰可見 */
 input,
 textarea,
