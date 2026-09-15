@@ -39,7 +39,17 @@
       }());
     </script>
     <!-- Telegram WebApp SDK: defer 讓一般瀏覽器不會被卡 (only used when launched inside Telegram Mini App) -->
-    <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script>
+      (function detectTelegramEarly() {
+        try {
+          var tg = window.Telegram && window.Telegram.WebApp;
+          if (tg && (tg.initData || tg.platform || tg.version)) {
+            document.documentElement.dataset.tgMode = 'true';
+          }
+        } catch (e) {}
+      }());
+    </script>
 </head>
 <body>
     <div id="root"></div>

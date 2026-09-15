@@ -5,9 +5,10 @@ export function detectTelegramMode() {
   if (typeof window === 'undefined') return null;
   // The telegram-web-app.js SDK attaches WebApp to window.Telegram.WebApp
   const tg = window.Telegram?.WebApp;
-  if (!tg || !tg.initData) return null;
-  // initData is only present when launched inside an actual Mini App
-  return tg;
+  if (!tg) return null;
+  // Detected if Telegram WebApp SDK is active (initData, platform or version present)
+  if (tg.initData || tg.platform || tg.version) return tg;
+  return null;
 }
 
 export function getTelegramInitData() {
@@ -34,6 +35,7 @@ export function applyTelegramTheme() {
   if (!tg) return;
   const tp = tg.themeParams || {};
   const root = document.documentElement;
+  root.dataset.tgMode = 'true';
   if (tp.bg_color) root.style.setProperty('--tg-bg-color', tp.bg_color);
   if (tp.secondary_bg_color) root.style.setProperty('--tg-secondary-bg-color', tp.secondary_bg_color);
   if (tp.text_color) root.style.setProperty('--tg-text-color', tp.text_color);
