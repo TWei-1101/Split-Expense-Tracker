@@ -490,6 +490,40 @@ TEL:0153-85-8800
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-14T17:38")
 
+    def test_parses_the_north_face_shiretoko_tax_free_receipt(self):
+        text = """NgるシエH®
+THE NORTH FACE HELLY HANSEN
+知床店
+TEL：0152-24-2410
+領収証
+***TAXFREE***
+2026年09月15日（火）13時44分 #8897
+4582738749247
+NT32660ST SP XXL
+SS SHIRETOKOTOKO T
+96,000 1 ¥6,000
+4550219837165
+NT32443R W L
+SHARI SOUVENIR T
+84,800 1 ¥4,800
+4550207451915
+#740752
+ショウヒンブクロギフトダイ
+@46 1 ¥46
+3点 小計 ¥10,846
+免税額戻り ¥1,084
+合計 ¥10,846
+（含む消費税等 ¥0）
+（10%対象 ¥11,930 消費税 ¥0）
+現金 ¥11,001
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["description"], "THE NORTH FACE / HELLY HANSEN 知床店")
+        self.assertEqual(result["category"], "other")
+        self.assertEqual(result["originalAmount"], 10846)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-15T13:44")
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",
