@@ -2,6 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildExpenseMemberList } from '../src/lib/expense-members.js';
 
+test('保留僅存在於共同付款及品項分帳的歷史成員', () => {
+  assert.deepEqual(buildExpenseMemberList({
+    ownerId: 'A',
+    expenses: [{ payerName: 'A', shares: { A: 1 }, payers: { B: 100 }, customSplits: { C: 100 } }],
+  }), ['A', 'B', 'C']);
+});
+
 test('自訂帳本只有擁有者時，不會把帳本 ID 視為額外分帳成員', () => {
   const members = buildExpenseMemberList({
     ownerId: 'owner-uid',
