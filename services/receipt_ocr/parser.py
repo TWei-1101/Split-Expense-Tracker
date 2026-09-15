@@ -32,6 +32,9 @@ MERCHANT_KEYWORDS = (
     ("Lawson", ("lawson", "ローソン")),
     ("AEON 超市 根室店", ("イオン根室店", "aeon根室")),
     ("AEON 超市", ("aeon", "イオン", "永旺")),
+    ("THE NORTH FACE / HELLY HANSEN 知床店", ("the north face", "helly hansen", "0152-24-2410")),
+    ("THE NORTH FACE", ("the north face", "north face")),
+    ("HELLY HANSEN", ("helly hansen",)),
     ("SUPER ARCS 超市 中標津店", ("スーパーアークス 中標津店", "スーパーアークス中標津店", "0153-79-2980")),
     ("SUPER ARCS 超市", ("super arcs", "superarcs", "スーパーアークス")),
     ("Big House 超市", ("bighouse", "ビッグハウス", "株式会社福原", "株式会社 福原")),
@@ -61,6 +64,9 @@ RETAIL_MERCHANTS = (
     ("GU", (r"\bgu\b", "ジーユー")),
     ("無印良品", ("無印良品", "muji")),
     ("WORKMAN Plus", ("workman", "ワークマン")),
+    ("THE NORTH FACE / HELLY HANSEN 知床店", ("the north face", "helly hansen", "0152-24-2410")),
+    ("THE NORTH FACE", ("the north face", "north face")),
+    ("HELLY HANSEN", ("helly hansen",)),
     ("大創", ("daiso", "ダイソー")),
     ("Bic Camera", ("bic camera", "biccamera", "ビックカメラ")),
     ("Yodobashi Camera", ("yodobashi", "ヨドバシ")),
@@ -483,7 +489,10 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "     ふわふわフェイスタ ➔ 蓬鬆洗臉毛巾\n"
         "     GIベルト ➔ 黑色GI帆布腰帶\n"
         "     ドライメッシュ ➔ 乾爽網眼短襪\n"
-        "     シン・呼吸するインナー ➔ 呼吸透氣內衣）。\n"
+        "     シン・呼吸するインナー ➔ 呼吸透氣內衣\n"
+        "     SS SHIRETOKOTOKO T / SHIRETOKOTOKO ➔ The North Face 知床限定 Toko 熊短袖 T 恤 (注意：SS 是短袖 Short Sleeve，SHIRETOKOTOKO 是知床 Toko 熊)\n"
+        "     SHARI SOUVENIR T / SOUVENIR T ➔ The North Face 斜里限定紀念短袖 T 恤 (注意：SHARI 是斜里町，SOUVENIR 是紀念品)\n"
+        "     ショウヒンブクロギフトダイ / ギフトダイ ➔ 商品禮品紙袋 (大) (注意：ショウヒンブクロ是商品袋，ギフトダイ是禮品大)）。\n"
         "2. 【金額 \"amount\" 必須是該品項的「小計總金額」（Line Total），嚴禁填寫單價】！\n"
         "   - 例如「@165x 5 ¥825」：quantity 為 5，amount 必須填寫 825（絕對不能填單價 165）！\n"
         "   - 例如「@286x 16 ¥4,576」：quantity 為 16，amount 必須填寫 4576！\n"
@@ -564,6 +573,13 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "パイタルプロテインズ": "Vital Proteins 膠原蛋白胜肽粉 (120g)",
         "バイタルプロテインズ": "Vital Proteins 膠原蛋白胜肽粉 (120g)",
         "バイオマス袋": "生物質環保購物袋 (白/L)",
+        "SHIRETOKOTOKO": "The North Face 知床限定 Toko 熊短袖 T 恤",
+        "SHARI SOUVENIR": "The North Face 斜里限定紀念短袖 T 恤",
+        "SOUVENIR T": "The North Face 斜里限定紀念短袖 T 恤",
+        "ショウヒンブクロギフトダイ": "商品禮品紙袋 (大)",
+        "ショウヒンブクロ": "商品禮品紙袋 (大)",
+        "ギフトダイ": "商品禮品紙袋 (大)",
+        "購物袋禮品大": "商品禮品紙袋 (大)",
     }
 
     def parse_items_json(raw_text: str) -> list[dict]:
@@ -602,9 +618,9 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
                     clean_amt = int(amt) if amt.is_integer() else amt
                     # 雙重防護：若 LLM 輸出遺漏翻譯仍保留日文平假/片假名，或翻譯不精確
                     final_name = name or orig
-                    if final_name == orig or re.search(r"[\u3040-\u309f\u30a0-\u30ff]", final_name) or "蒸烤" in final_name:
+                    if final_name == orig or not re.search(r"[\u4e00-\u9fff]", final_name) or re.search(r"[\u3040-\u309f\u30a0-\u30ff]", final_name) or "蒸烤" in final_name or "購物袋禮品" in final_name:
                         for k, v in DISH_MAP.items():
-                            if k in orig:
+                            if k.lower() in orig.lower() or k.lower() in final_name.lower():
                                 final_name = v
                                 break
                     result.append({
