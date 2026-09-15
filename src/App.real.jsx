@@ -4782,19 +4782,19 @@ async function _getStorage() {
                       </div>
                 </AnimatedModalFrame>
 
-                {isLuggageItemsModalOpen && (() => {
-                  const grouped = groupTaxRefundExpensesByLuggage({ expenses, luggage });
-                  const renderExpenses = (items) => items.length ? <ul className="mt-2 space-y-1 text-sm text-gray-600">{items.map((expense) => <li key={expense.id} className="rounded bg-gray-50 px-2 py-1">{expense.description}</li>)}</ul> : <p className="mt-2 text-sm text-gray-400">無</p>;
-                  return <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-gray-900 bg-opacity-75 p-4">
-                    <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white shadow-2xl">
+                <AnimatedModalFrame isOpen={isLuggageItemsModalOpen} onClose={() => setIsLuggageItemsModalOpen(false)} ariaLabel="行李箱商品" contentClassName="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white shadow-2xl">
+                  {(() => {
+                    const grouped = groupTaxRefundExpensesByLuggage({ expenses, luggage });
+                    const renderExpenses = (items) => items.length ? <ul className="mt-2 space-y-1 text-sm text-gray-600">{items.map((expense) => <li key={expense.id} className="rounded bg-gray-50 px-2 py-1">{expense.description}</li>)}</ul> : <p className="mt-2 text-sm text-gray-400">無</p>;
+                    return <>
                       <div className="flex items-center justify-between border-b p-5"><h2 className="text-xl font-bold text-gray-800">🧳 行李箱商品</h2><button onClick={() => setIsLuggageItemsModalOpen(false)} className="rounded-full p-2 text-gray-500 hover:bg-gray-100" aria-label="關閉行李箱商品">✕</button></div>
                       <div className="space-y-4 p-5">
                         {grouped.byLuggage.map((item) => <section key={item.id} className="rounded-lg border border-gray-200 p-3"><h3 className="font-semibold text-gray-800">{item.name}</h3><div className="mt-3"><p className="text-sm font-semibold text-primaryColor-700">可退稅商品（{item.expenses.length}）</p>{renderExpenses(item.expenses)}</div><div className="mt-3 border-t pt-3"><p className="text-sm font-semibold text-gray-700">一般商品（{(item.regularExpenses || []).length}）</p>{renderExpenses(item.regularExpenses || [])}</div></section>)}
                         {(grouped.unassigned.length > 0 || grouped.unassignedRegular.length > 0) && <section className="rounded-lg border border-amber-200 bg-amber-50 p-3"><h3 className="font-semibold text-amber-900">未指定行李箱</h3><div className="mt-3"><p className="text-sm font-semibold text-amber-800">可退稅商品（{grouped.unassigned.length}）</p>{renderExpenses(grouped.unassigned)}</div><div className="mt-3 border-t border-amber-200 pt-3"><p className="text-sm font-semibold text-amber-800">一般商品（{grouped.unassignedRegular.length}）</p>{renderExpenses(grouped.unassignedRegular)}</div></section>}
                       </div>
-                    </div>
-                  </div>;
-                })()}
+                    </>;
+                  })()}
+                </AnimatedModalFrame>
                 
                 {/* 統一的確認提示 Modal */}
                 <ConfirmationModal 
