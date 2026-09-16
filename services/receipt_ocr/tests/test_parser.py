@@ -556,6 +556,34 @@ UC ドラモッチ アンコ＆ホイップ
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-16T19:45")
 
+    def test_parses_lawson_akan_lake_dessert_and_yogurt_receipt(self):
+        text = """LAWSON
+阿寒湖温泉店
+登録番号；T6460002003049
+北海道釧路市阿寒町阿寒湖温泉 2
+- 2-35
+電話；0154-67-4163 店コード；144911
+2026年9月16日（水）19:44
+レジ；#2 98240 貴；山際
+【領収証】
+UC モチプヨ北海道産生クリーム 127軽
+ヨツバノムヨーグルトヤサシイアマサ 205軽
+合計 ¥332
+（内消費税等 ¥24）
+（8%対象 ¥332）
+（内消費税額 ¥24）
+点 数 2個
+上正に領収いたしました
+交通系マネー
+¥332
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["description"], "Lawson 阿寒湖溫泉店")
+        self.assertEqual(result["category"], "food")
+        self.assertEqual(result["originalAmount"], 332)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-16T19:44")
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",

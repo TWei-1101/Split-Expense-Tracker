@@ -495,6 +495,8 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "     SHARI SOUVENIR T / SOUVENIR T ➔ The North Face 斜里限定紀念短袖 T 恤 (注意：SHARI 是斜里町，SOUVENIR 是紀念品)\n"
         "     ショウヒンブクロギフトダイ / ギフトダイ ➔ 商品禮品紙袋 (大) (注意：ショウヒンブクロ是商品袋，ギフトダイ是禮品大)\n"
         "     UC ドラモッチ アンコ＆ホイップ / どらもっち ➔ LAWSON Uchi Café 爆餡生銅鑼燒 (紅豆鮮奶油) (注意：UC是Uchi Café甜點系列，ドラモッチ是爆餡生銅鑼燒，非單純麻糬)\n"
+        "     UC モチプヨ北海道産生クリーム / もちぷよ ➔ LAWSON Uchi Café 軟Q麻糬泡芙 (北海道產鮮奶油) (注意：UC是Uchi Café甜點，モチプヨ是軟Q麻糬泡芙，非軟糖)\n"
+        "     ヨツバノムヨーグルトヤサシイアマサ ➔ 四葉 (よつ葉) 喝的優酪乳 (溫和微甜) (注意：ヨツバ是北海道四葉乳業，ノムヨーグルト是喝的優酪乳飲むヨーグルト，非純鮮奶)\n"
         "     からあげクン ➔ LAWSON 炸雞塊 (Karage-kun)\n"
         "     プレミアムロールケーキ ➔ LAWSON Uchi Café 頂級鮮奶油生乳捲\n"
         "     バスチー ➔ LAWSON 巴斯克乳酪蛋糕 (Baschee)）。\n"
@@ -587,6 +589,11 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "購物袋禮品大": "商品禮品紙袋 (大)",
         "ドラモッチ": "LAWSON Uchi Café 爆餡生銅鑼燒 (紅豆鮮奶油)",
         "どらもっち": "LAWSON Uchi Café 爆餡生銅鑼燒 (紅豆鮮奶油)",
+        "モチプヨ": "LAWSON Uchi Café 軟Q麻糬泡芙 (北海道產鮮奶油)",
+        "もちぷよ": "LAWSON Uchi Café 軟Q麻糬泡芙 (北海道產鮮奶油)",
+        "ヨツバノムヨーグルト": "四葉 (よつ葉) 喝的優酪乳 (溫和微甜)",
+        "ノムヨーグルト": "喝的優酪乳 (優格飲)",
+        "飲むヨーグルト": "喝的優酪乳 (優格飲)",
         "からあげクン": "LAWSON 炸雞塊 (Karage-kun)",
         "プレミアムロールケーキ": "LAWSON Uchi Café 頂級鮮奶油生乳捲",
         "バスチー": "LAWSON 巴斯克乳酪蛋糕 (Baschee)",
@@ -628,7 +635,10 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
                     clean_amt = int(amt) if amt.is_integer() else amt
                     # 雙重防護：若 LLM 輸出遺漏翻譯仍保留日文平假/片假名，或翻譯不精確
                     final_name = name or orig
-                    if final_name == orig or not re.search(r"[\u4e00-\u9fff]", final_name) or re.search(r"[\u3040-\u309f\u30a0-\u30ff]", final_name) or "蒸烤" in final_name or "購物袋禮品" in final_name or "ドラモッチ" in orig or "どらもっち" in orig:
+                    if (final_name == orig or not re.search(r"[\u4e00-\u9fff]", final_name)
+                            or re.search(r"[\u3040-\u309f\u30a0-\u30ff]", final_name)
+                            or any(k in orig for k in ("ドラモッチ", "どらもっち", "モチプヨ", "もちぷよ", "ヨツバ", "よつ葉", "ヨーグルト"))
+                            or any(k in final_name for k in ("蒸烤", "購物袋禮品", "軟糖", "溫和鮮奶"))):
                         for k, v in DISH_MAP.items():
                             if k.lower() in orig.lower() or k.lower() in final_name.lower():
                                 final_name = v
