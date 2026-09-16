@@ -29,6 +29,7 @@ MERCHANT_KEYWORDS = (
         "nanaco", "7プレミアム", "7カフェ", "77°l么", "77°", "7ns", "c.car-cca", "c.car", "c.ca-c.ca", "c.ca", "sivensnoings",
     )),
     ("全家", ("全家", "familymart", "ファミリーマート")),
+    ("Lawson 阿寒湖溫泉店", ("阿寒湖温泉店", "0154-67-4163")),
     ("Lawson", ("lawson", "ローソン")),
     ("AEON 超市 根室店", ("イオン根室店", "aeon根室")),
     ("AEON 超市", ("aeon", "イオン", "永旺")),
@@ -492,7 +493,11 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "     シン・呼吸するインナー ➔ 呼吸透氣內衣\n"
         "     SS SHIRETOKOTOKO T / SHIRETOKOTOKO ➔ The North Face 知床限定 Toko 熊短袖 T 恤 (注意：SS 是短袖 Short Sleeve，SHIRETOKOTOKO 是知床 Toko 熊)\n"
         "     SHARI SOUVENIR T / SOUVENIR T ➔ The North Face 斜里限定紀念短袖 T 恤 (注意：SHARI 是斜里町，SOUVENIR 是紀念品)\n"
-        "     ショウヒンブクロギフトダイ / ギフトダイ ➔ 商品禮品紙袋 (大) (注意：ショウヒンブクロ是商品袋，ギフトダイ是禮品大)）。\n"
+        "     ショウヒンブクロギフトダイ / ギフトダイ ➔ 商品禮品紙袋 (大) (注意：ショウヒンブクロ是商品袋，ギフトダイ是禮品大)\n"
+        "     UC ドラモッチ アンコ＆ホイップ / どらもっち ➔ LAWSON Uchi Café 爆餡生銅鑼燒 (紅豆鮮奶油) (注意：UC是Uchi Café甜點系列，ドラモッチ是爆餡生銅鑼燒，非單純麻糬)\n"
+        "     からあげクン ➔ LAWSON 炸雞塊 (Karage-kun)\n"
+        "     プレミアムロールケーキ ➔ LAWSON Uchi Café 頂級鮮奶油生乳捲\n"
+        "     バスチー ➔ LAWSON 巴斯克乳酪蛋糕 (Baschee)）。\n"
         "2. 【金額 \"amount\" 必須是該品項的「小計總金額」（Line Total），嚴禁填寫單價】！\n"
         "   - 例如「@165x 5 ¥825」：quantity 為 5，amount 必須填寫 825（絕對不能填單價 165）！\n"
         "   - 例如「@286x 16 ¥4,576」：quantity 為 16，amount 必須填寫 4576！\n"
@@ -580,6 +585,11 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "ショウヒンブクロ": "商品禮品紙袋 (大)",
         "ギフトダイ": "商品禮品紙袋 (大)",
         "購物袋禮品大": "商品禮品紙袋 (大)",
+        "ドラモッチ": "LAWSON Uchi Café 爆餡生銅鑼燒 (紅豆鮮奶油)",
+        "どらもっち": "LAWSON Uchi Café 爆餡生銅鑼燒 (紅豆鮮奶油)",
+        "からあげクン": "LAWSON 炸雞塊 (Karage-kun)",
+        "プレミアムロールケーキ": "LAWSON Uchi Café 頂級鮮奶油生乳捲",
+        "バスチー": "LAWSON 巴斯克乳酪蛋糕 (Baschee)",
     }
 
     def parse_items_json(raw_text: str) -> list[dict]:
@@ -618,7 +628,7 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
                     clean_amt = int(amt) if amt.is_integer() else amt
                     # 雙重防護：若 LLM 輸出遺漏翻譯仍保留日文平假/片假名，或翻譯不精確
                     final_name = name or orig
-                    if final_name == orig or not re.search(r"[\u4e00-\u9fff]", final_name) or re.search(r"[\u3040-\u309f\u30a0-\u30ff]", final_name) or "蒸烤" in final_name or "購物袋禮品" in final_name:
+                    if final_name == orig or not re.search(r"[\u4e00-\u9fff]", final_name) or re.search(r"[\u3040-\u309f\u30a0-\u30ff]", final_name) or "蒸烤" in final_name or "購物袋禮品" in final_name or "ドラモッチ" in orig or "どらもっち" in orig:
                         for k, v in DISH_MAP.items():
                             if k.lower() in orig.lower() or k.lower() in final_name.lower():
                                 final_name = v

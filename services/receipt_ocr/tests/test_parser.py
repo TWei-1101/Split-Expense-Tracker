@@ -524,6 +524,38 @@ SHARI SOUVENIR T
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-15T13:44")
 
+    def test_parses_lawson_akan_lake_receipt(self):
+        text = """LAWSON
+阿寒湖温泉店
+登録番号；T6460002003049
+北海道釧路市阿寒町阿寒湖温泉2
+－ 2-35
+電話：0154-67-4163店コード：144911
+2026年9月16日（水）19:45
+レジ；#2 98150
+貴；山際
+【領収証】
+UC ドラモッチ アンコ＆ホイップ
+合 計 214軽
+¥214
+（内消費税等 ¥15）
+（8%対象 ¥214）
+（内消費税額 ¥15）
+点 数 1個
+上記正に領収いたしました
+交通系マネー ¥214
+軽印は軽減税率対象商品です。
+交通系マネー残高は以下の通りです。
+支払後残高 ¥13,750
+カードNo JE* **-4917
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["description"], "Lawson 阿寒湖溫泉店")
+        self.assertEqual(result["category"], "food")
+        self.assertEqual(result["originalAmount"], 214)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-16T19:45")
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",
