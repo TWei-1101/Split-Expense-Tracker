@@ -13,23 +13,27 @@ export default function TelegramWrapper({ children }) {
     applyTelegramTheme();
 
     if (tg.BackButton) {
-      tg.BackButton.onClick(() => {
+      const handleBack = () => {
         if (tg.exitFullscreen) {
           try { tg.exitFullscreen(); } catch { /* ignore */ }
         }
         if (document.referrer && document.referrer.includes('portal')) {
-          window.location.href = '/portal.html';
+          window.location.replace('/portal.html');
         } else {
           telegramClose();
         }
-      });
+      };
+      tg.BackButton.onClick(handleBack);
       try { tg.BackButton.show(); } catch { /* ignore */ }
     }
 
     whenTelegramReady();
 
     return () => {
-      try { tg.BackButton?.hide(); } catch { /* ignore */ }
+      try {
+        if (tg.BackButton?.offClick) tg.BackButton.offClick();
+        tg.BackButton?.hide();
+      } catch { /* ignore */ }
     };
   }, []);
 
