@@ -584,6 +584,38 @@ UC モチプヨ北海道産生クリーム 127軽
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-16T19:44")
 
+    def test_parses_menya_yukikaze_ramen_receipt(self):
+        text = """麺屋 雪風 本店
+札幌市中央区南7条西4丁目2-6
+TEL：011-512-3022
+登録番号： 2430001045131
+領収証
+領収証＃ 003757
+店舗#0001 端末＃41
+2026/09/17（木） 20:26
+濃厚味噌らーめん ¥1,200
+＠普通盛
+雪風BLACK醤油らーめん ¥1,200
+＠普通盛
+手作り焼き餃子5個 ¥500
+濃厚味噌らーめん ¥1,400
+@大盛
+合計 ¥4,300
+お預り ¥5,000
+¥700
+お釣
+（税率10% 対象額 ¥4,300）
+¥390）
+（内消費税等 10%
+ご利用ありがとうございました。
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["description"], "麺屋 雪風")
+        self.assertEqual(result["category"], "food")
+        self.assertEqual(result["originalAmount"], 4300)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-17T20:26")
+
     def test_parses_kurodake_ropeway_receipt(self):
         text = """発行日：2026年09月17日 13時30分16秒
 下記、正に領収いたしました。
