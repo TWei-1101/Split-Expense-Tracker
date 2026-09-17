@@ -584,6 +584,31 @@ UC モチプヨ北海道産生クリーム 127軽
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-16T19:44")
 
+    def test_parses_kurodake_ropeway_receipt(self):
+        text = """発行日：2026年09月17日 13時30分16秒
+下記、正に領収いたしました。
+8001セット大人往復
+03， 900 3 ¥11,700
+合計 ¥11,700
+10%対象 ¥11,700
+お預り金額
+お釣り ¥15,000
+¥3,300
+大雪山層雲峡・黒缶ロープウェイ
+〒 078-1701
+北海道上川郡上川町層雲峡
+TEL：01658-5-3031
+株） りんゆう観光層雲峡事業所
+登録番号：4430001018515
+伝票：20260917-51-00149
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["description"], "大雪山層雲峽・黑岳空中纜車")
+        self.assertEqual(result["category"], "transport")
+        self.assertEqual(result["originalAmount"], 11700)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-17T13:30")
+
     def test_returns_nulls_when_text_has_no_reliable_fields(self):
         self.assertEqual(parse_receipt_text("模糊收據\n看不清楚"), {
             "description": "模糊收據",

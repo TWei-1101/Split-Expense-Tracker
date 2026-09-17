@@ -122,6 +122,7 @@ HOTEL_MERCHANTS = (
 
 # Transport and gas station brands
 TRANSPORT_MERCHANTS = (
+    ("大雪山層雲峽・黑岳空中纜車", ("黒岳ロープウェイ", "黑岳ロープウェイ", "黒岳", "黒缶ロープウェイ", "層雲峡", "りんゆう観光", "01658-5-3031")),
     ("交通通行費", ("nexco", "高速道路", "通行料金", "料金所", "首都高", "阪神高速")),
     ("オカモトセルフ 根室 (加油站)", ("オカモト", "セルフ根室", "0153-29-2125")),
     ("オカモトセルフ 加油站", ("オカモトセルフ", "株式会社オカモト", "オカモト")),
@@ -203,6 +204,7 @@ def _amount(line: str) -> int | float | None:
 GENERIC_DOCUMENT_TITLES = frozenset({
     "RECEIPT", "INVOICE", "BILL", "領収", "領収書", "領収証", "レシート", "DETAILS", "TOTAL", "SUBTOTAL", "TAX", "納品書", "納品書（領収書）", "納品書(領収書)",
     "しんせつ第一", "親切第一", "いらっしゃいませ", "毎度ありがとうございます", "ご利用ありがとうございます", "ご利用ありがとうございます。", "ありがとうございます",
+    "下記、正に領収いたしました。", "下記、正に領収いたしました", "下記正に領収いたしました", "正に領収いたしました", "正に領収いたしました。",
 })
 
 
@@ -494,6 +496,7 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "     SS SHIRETOKOTOKO T / SHIRETOKOTOKO ➔ The North Face 知床限定 Toko 熊短袖 T 恤 (注意：SS 是短袖 Short Sleeve，SHIRETOKOTOKO 是知床 Toko 熊)\n"
         "     SHARI SOUVENIR T / SOUVENIR T ➔ The North Face 斜里限定紀念短袖 T 恤 (注意：SHARI 是斜里町，SOUVENIR 是紀念品)\n"
         "     ショウヒンブクロギフトダイ / ギフトダイ ➔ 商品禮品紙袋 (大) (注意：ショウヒンブクロ是商品袋，ギフトダイ是禮品大)\n"
+        "     8001セット大人往復 / セット大人往復 ➔ 黑岳纜車＋雙人吊椅 成人往返套票 (注意：黑岳ロープウェイセット包含空中纜車與雙人吊椅往返)\n"
         "     UC ドラモッチ アンコ＆ホイップ / どらもっち ➔ LAWSON Uchi Café 爆餡生銅鑼燒 (紅豆鮮奶油) (注意：UC是Uchi Café甜點系列，ドラモッチ是爆餡生銅鑼燒，非單純麻糬)\n"
         "     UC モチプヨ北海道産生クリーム / もちぷよ ➔ LAWSON Uchi Café 軟Q麻糬泡芙 (北海道產鮮奶油) (注意：UC是Uchi Café甜點，モチプヨ是軟Q麻糬泡芙，非軟糖)\n"
         "     ヨツバノムヨーグルトヤサシイアマサ ➔ 四葉 (よつ葉) 喝的優酪乳 (溫和微甜) (注意：ヨツバ是北海道四葉乳業，ノムヨーグルト是喝的優酪乳飲むヨーグルト，非純鮮奶)\n"
@@ -594,6 +597,8 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "ヨツバノムヨーグルト": "四葉 (よつ葉) 喝的優酪乳 (溫和微甜)",
         "ノムヨーグルト": "喝的優酪乳 (優格飲)",
         "飲むヨーグルト": "喝的優酪乳 (優格飲)",
+        "セット大人往復": "黑岳纜車＋雙人吊椅 成人往返套票",
+        "大人往復": "黑岳纜車 成人往返套票",
         "からあげクン": "LAWSON 炸雞塊 (Karage-kun)",
         "プレミアムロールケーキ": "LAWSON Uchi Café 頂級鮮奶油生乳捲",
         "バスチー": "LAWSON 巴斯克乳酪蛋糕 (Baschee)",
@@ -637,7 +642,7 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
                     final_name = name or orig
                     if (final_name == orig or not re.search(r"[\u4e00-\u9fff]", final_name)
                             or re.search(r"[\u3040-\u309f\u30a0-\u30ff]", final_name)
-                            or any(k in orig for k in ("ドラモッチ", "どらもっち", "モチプヨ", "もちぷよ", "ヨツバ", "よつ葉", "ヨーグルト"))
+                            or any(k in orig for k in ("ドラモッチ", "どらもっち", "モチプヨ", "もちぷよ", "ヨツバ", "よつ葉", "ヨーグルト", "大人往復", "セット大人"))
                             or any(k in final_name for k in ("蒸烤", "購物袋禮品", "軟糖", "溫和鮮奶"))):
                         for k, v in DISH_MAP.items():
                             if k.lower() in orig.lower() or k.lower() in final_name.lower():
