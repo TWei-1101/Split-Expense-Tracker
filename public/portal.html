@@ -71,6 +71,33 @@
     .header {
       text-align: center;
       margin-bottom: 28px;
+      position: relative;
+    }
+
+    .close-btn {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--border);
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+      transition: all 0.15s ease;
+      z-index: 10;
+    }
+
+    .close-btn:active {
+      transform: scale(0.9);
+      background: var(--text-muted);
+      color: var(--card-bg);
     }
 
     .avatar-wrap {
@@ -203,17 +230,39 @@
 
     .footer {
       margin-top: auto;
-      padding-top: 32px;
+      padding-top: 24px;
       font-size: 11px;
       color: var(--text-muted);
       text-align: center;
       opacity: 0.8;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .footer-close-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 6px 18px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .footer-close-btn:active {
+      background: var(--border);
+      transform: scale(0.96);
     }
   </style>
 </head>
 <body>
 
   <div class="header">
+    <button class="close-btn" onclick="closePortal()" aria-label="關閉選單">✕</button>
     <div class="avatar-wrap">🦞</div>
     <h1 class="title">管家小龍蝦應用中心</h1>
     <p class="subtitle">點擊直接啟動獨立應用程式</p>
@@ -261,7 +310,8 @@
   </div>
 
   <div class="footer">
-    TWei Personal Workspace • Zero Latency
+    <button class="footer-close-btn" onclick="closePortal()">關閉選單</button>
+    <span>TWei Personal Workspace • Zero Latency</span>
   </div>
 
   <script>
@@ -277,10 +327,13 @@
           try { tg.enableVerticalSwipes(); } catch { /* ignore */ }
         }
         if (tg.BackButton) {
-          try { tg.BackButton.hide(); } catch { /* ignore */ }
+          try {
+            tg.BackButton.hide();
+            if (tg.BackButton.offClick) tg.BackButton.offClick();
+          } catch { /* ignore */ }
         }
         if (tg.disableClosingConfirmation) {
-          tg.disableClosingConfirmation();
+          try { tg.disableClosingConfirmation(); } catch { /* ignore */ }
         }
       }
     }
@@ -293,14 +346,29 @@
       }
     });
 
+    function closePortal() {
+      if (window.Telegram && window.Telegram.WebApp) {
+        const tg = window.Telegram.WebApp;
+        if (tg.HapticFeedback) {
+          try { tg.HapticFeedback.impactOccurred('light'); } catch { /* ignore */ }
+        }
+        if (tg.close) {
+          tg.close();
+          return;
+        }
+      }
+      window.close();
+    }
+
     function launchApp(url) {
       if (window.Telegram && window.Telegram.WebApp) {
         const tg = window.Telegram.WebApp;
         if (tg.HapticFeedback) {
-          tg.HapticFeedback.impactOccurred('medium');
+          try { tg.HapticFeedback.impactOccurred('medium'); } catch { /* ignore */ }
         }
       }
-      window.location.href = url;
+      // 使用 replace 避免在歷史紀錄中累積造成回退死循環
+      window.location.replace(url);
     }
   </script>
 </body>
