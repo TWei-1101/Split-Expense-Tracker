@@ -1,3 +1,52 @@
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = i;
+    for (let j = 1; j <= b.length; j++) {
+      const val = a[i - 1] === b[j - 1] ? row[j - 1] : Math.min(row[j - 1], row[j], prev) + 1;
+      row[j - 1] = prev;
+      prev = val;
+    }
+    row[b.length] = prev;
+  }
+  return row[b.length];
+}
+
+function normalizeKana(str) {
+  return (str || '').replace(/[\u30a1-\u30f6]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
+}
+
+export function matchesSearchKeyword(target, rawKeyword) {
+  const k = (rawKeyword || '').trim().toLowerCase();
+  if (!k) return true;
+  const t = (target || '').toLowerCase();
+  if (!t) return false;
+
+  if (t.includes(k)) return true;
+
+  const normK = normalizeKana(k);
+  const normT = normalizeKana(t);
+  if (normT.includes(normK)) return true;
+
+  if (k.length >= 4) {
+    const tokens = t.match(/[a-z0-9]+/g) || [];
+    for (const token of tokens) {
+      if (token.includes(k)) return true;
+      if (token.length >= k.length) {
+        const sub = token.slice(0, k.length);
+        if (levenshtein(sub, k) <= 1) return true;
+      } else if (k.length - token.length <= 1) {
+        if (levenshtein(token, k) <= 1) return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 export function isSettlement(expense) {
   return expense.kind === 'settlement' || /^\[結清\]/.test(expense.description || '');
 }

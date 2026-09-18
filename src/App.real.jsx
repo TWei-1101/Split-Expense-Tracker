@@ -79,7 +79,7 @@ import {
 import { shouldTriggerSwipeDelete } from './lib/swipe-delete.js';
 import { normalizeReceiptOcrResult, mergeReceiptOcrIntoExpense } from './lib/receipt-ocr.js';
 import { buildExpenseMemberList } from './lib/expense-members.js';
-import { computeItemSplits, isSettlement, migrateExpenseIdentity, resolveExpenseConversion, validatePayers, getSearchSpendingSummary } from './lib/expense-math.js';
+import { computeItemSplits, isSettlement, migrateExpenseIdentity, resolveExpenseConversion, validatePayers, getSearchSpendingSummary, matchesSearchKeyword } from './lib/expense-math.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
 
@@ -4826,17 +4826,16 @@ async function _getStorage() {
                     return timeB - timeA;
                 });
 
-                // 2. Filter by searchKeyword (case-insensitive on description, note, and items)
-                const kw = searchKeyword.trim().toLowerCase();
+                // 2. Filter by searchKeyword (case-insensitive on description, note, and items, with fuzzy and kana matching)
+                const kw = searchKeyword.trim();
                 const kwFiltered = kw
                     ? sorted.filter(exp => {
-                        const descMatch = (exp.description || '').toLowerCase().includes(kw);
-                        if (descMatch) return true;
-                        if (exp.note && String(exp.note).toLowerCase().includes(kw)) return true;
+                        if (matchesSearchKeyword(exp.description, kw)) return true;
+                        if (exp.note && matchesSearchKeyword(exp.note, kw)) return true;
                         if (Array.isArray(exp.items)) {
                             return exp.items.some(item =>
-                                (item.name || '').toLowerCase().includes(kw) ||
-                                (item.originalName || '').toLowerCase().includes(kw)
+                                matchesSearchKeyword(item.name, kw) ||
+                                matchesSearchKeyword(item.originalName, kw)
                             );
                         }
                         return false;
@@ -5201,11 +5200,11 @@ async function _getStorage() {
                         ? `${DEFAULT_CURRENCY} ${exp.amountInTWD.toFixed(0)}`
                         : `${exp.currency} ${Math.round(exp.originalAmount).toFixed(0)}`;
                       const canToggle = !isTwd;
-                      const kw = searchKeyword.trim().toLowerCase();
+                      const kw = searchKeyword.trim();
                       const matchingItems = kw && Array.isArray(exp.items)
                         ? exp.items.filter(item =>
-                            (item.name || '').toLowerCase().includes(kw) ||
-                            (item.originalName || '').toLowerCase().includes(kw)
+                            matchesSearchKeyword(item.name, kw) ||
+                            matchesSearchKeyword(item.originalName, kw)
                           )
                         : [];
 
