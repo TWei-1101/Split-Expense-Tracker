@@ -431,103 +431,92 @@ def _get_minimax_key() -> str | None:
     return None
 
 
-def extract_and_translate_items(ocr_text: str) -> list[dict]:
-    """Extract individual purchased items and translate names to Traditional Chinese via local or cloud AI."""
+def extract_structured_receipt(ocr_text: str) -> dict:
+    """Extract full structured receipt data (merchant, category, total, time, items) via LLM."""
     import json
     import urllib.request
     import re
 
     prompt = (
-        "請將以下收據中「實際購買的商品明細」擷取為 JSON 陣列，並將商品名稱【務必翻譯成精準、道地的繁體中文（台灣習慣用語）】：\n"
-        "重要翻譯與格式規則：\n"
-        "1. 【\"name\" 欄位必須是繁體中文，嚴格禁止直接複製日文原名或保留平假名/片假名】！\n"
-        "   - 【消費稅率標記去除規則】：日文收據中各品項名稱前面的「内10」、「内8」、「外10」、「外8」、「※10」、「※8」、「※」、「*」、「軽」是日本消費稅率標記（例如「内10 カツカレー」代表含10%內稅），【嚴格禁止將「内10 / 內10 / 内8」當成商品名稱的一部分】！請將「内10」去除：\n"
-        "     内10 カツカレー ➔ originalName: \"カツカレー\", name: \"炸豬排咖哩飯\"\n"
-        "     内10 単品バーガー ➔ originalName: \"単品バーガー\", name: \"單點漢堡\"\n"
-        "     内10セット500 ➔ originalName: \"セット500\", name: \"500號特選套餐\"\n"
-        "   - 【嚴格忠於收據文字，禁止幻覺】：品項名稱必須直接對應收據中的商品文字！收據有幾項就輸出幾項，嚴禁腦補收據上不存在的海鮮或菜名！\n"
-        "   - 所有日語菜色、海鮮水產、食物、飲品與各類商品必須翻譯成繁體中文（例如：\n"
-        "     紅ずわい ➔ 紅楚蟹 / 紅松葉蟹\n"
-        "     真ほっけ / ほっけ ➔ 烤真花魚一夜干\n"
-        "     明太子 ➔ 明太子\n"
-        "     じゃがバター ➔ 奶油馬鈴薯\n"
-        "     かに汁 ➔ 螃蟹味噌湯\n"
-        "     十カン盛 / ＋カン盛 ➔ 綜合握壽司十貫盛合\n"
-        "     蒸し牡蠣2個 / 蒸し牡蠣 ➔ 清蒸牡蠣 (2顆) (注意：蒸し 是清蒸，非蒸烤)\n"
-        "     生牡蠣2個 / 生牡蠣 ➔ 鮮生牡蠣 (2顆)\n"
-        "     カキコロバーガー ➔ 酥炸牡蠣可樂餅漢堡\n"
-        "     牡蠣の空（から）あげ ➔ 酥炸牡蠣唐揚 (厚岸炸牡蠣)\n"
-        "     ぷちまるDX牡蠣 ➔ 厚岸小圓米果仙貝 (牡蠣風味)\n"
-        "     燻じゃが ➔ 煙燻馬鈴薯脆塊 (盒裝)\n"
-        "     厚岸昆布 ➔ 厚岸天然昆布 (120g)\n"
-        "     ほたてわかめとろ ➔ 干貝海帶芽昆布絲湯包\n"
-        "     かき最中 ➔ 厚岸牡蠣造型最中餅\n"
-        "     根布入とろろ昆 / 根昆布 ➔ 根昆布極細昆布絲\n"
-        "     金のオイスターソース ➔ 黃金特級蠔油 (厚岸特製)\n"
-        "     金のかき醤油 ➔ 黃金厚岸牡蠣醬油\n"
-        "     羊羹本練り ➔ 經典本格紅豆羊羹\n"
-        "     羊葉小 / 羊羹小豆 ➔ 北海道小豆紅豆羊羹\n"
-        "     金のかき醤油入クイー / 金のかき醤油入クッキー ➔ 黃金牡蠣醬油風味餅乾\n"
-        "     強力わかもと1000錠 / わかもと ➔ 強力若元錠 (WAKAMOTO 1000錠)\n"
-        "     アベンヌシカルFPR / アベンヌ ➔ 雅漾 (Avène) Cicalfate+ 舒緩修護霜\n"
-        "     リュウバンヘラツキ / リュウバン ➔ 大木製藥 液體OK繃 附刷棒 (10ml) (注意：リュウバン是液體OK繃，絕非龍膽根)\n"
-        "     イトコラコラーゲン低分子ヒアル / イトコラ ➔ 井藤漢方 (ITOH) 低分子玻尿酸膠原蛋白粉 (306g) (注意：イトコラ是井藤漢方製藥，非伊藤園)\n"
-        "     バイタルプロテインズ / パイタルプロテインズ ➔ Vital Proteins 膠原蛋白胜肽粉 (120g)\n"
-        "     BPバイオマス袋白L / バイオマス袋 ➔ 生物質環保購物袋 (白/L)\n"
-        "     軽油 ➔ 柴油 (若有公升數標註，如 柴油 (35.26L) )\n"
-        "     レギュラー ➔ 無鉛汽油\n"
-        "     ハイオク ➔ 高級無鉛汽油\n"
-        "     青皿 ➔ 藍盤壽司 (青皿)\n"
-        "     ピンク皿 ➔ 粉紅盤壽司 (粉紅皿)\n"
-        "     緑皿 ➔ 綠盤壽司 (綠皿)\n"
-        "     花火皿 ➔ 花火盤壽司 (花火皿)\n"
-        "     かき（生） ➔ 生牡蠣 (生蠔)\n"
-        "     かき（蒸し焼き） ➔ 蒸烤牡蠣\n"
-        "     お通し ➔ 開胃小菜\n"
-        "     かき（炭火焼きがき） ➔ 炭烤牡蠣 (烤生蠔)\n"
-        "     大ホタテ串 ➔ 烤大扇貝串\n"
-        "     ホタテバター ➔ 奶油扇貝\n"
-        "     マグロのしっぽ焼き ➔ 烤鮪魚尾\n"
-        "     カニレタスチャーハン ➔ 蟹肉生菜炒飯\n"
-        "     烏賊姿焼き ➔ 烤整隻烏賊\n"
-        "     あおさの出汁巻き ➔ 海苔高湯玉子燒\n"
-        "     やきとり ➔ 綜合烤雞肉串\n"
-        "     とうきび茶 ➔ 玉米茶\n"
-        "     マルセイアイスサンド ➔ 丸成冰淇淋夾心三明治\n"
-        "     サクサクパイ ➔ 現烤酥脆派\n"
-        "     醍醐 ➔ 醍醐生藍莓夾心蛋糕\n"
-        "     個人 大人 ➔ 成人門票/全票\n"
-        "     MEDIHEAL ➔ MEDIHEAL 疲勞修復機能服\n"
-        "     ふわふわフェイスタ ➔ 蓬鬆洗臉毛巾\n"
-        "     GIベルト ➔ 黑色GI帆布腰帶\n"
-        "     ドライメッシュ ➔ 乾爽網眼短襪\n"
-        "     シン・呼吸するインナー ➔ 呼吸透氣內衣\n"
-        "     SS SHIRETOKOTOKO T / SHIRETOKOTOKO ➔ The North Face 知床限定 Toko 熊短袖 T 恤 (注意：SS 是短袖 Short Sleeve，SHIRETOKOTOKO 是知床 Toko 熊)\n"
-        "     SHARI SOUVENIR T / SOUVENIR T ➔ The North Face 斜里限定紀念短袖 T 恤 (注意：SHARI 是斜里町，SOUVENIR 是紀念品)\n"
-        "     ショウヒンブクロギフトダイ / ギフトダイ ➔ 商品禮品紙袋 (大) (注意：ショウヒンブクロ是商品袋，ギフトダイ是禮品大)\n"
-        "     8001セット大人往復 / セット大人往復 ➔ 黑岳纜車＋雙人吊椅 成人往返套票 (注意：黑岳ロープウェイセット包含空中纜車與雙人吊椅往返)\n"
-        "     UC ドラモッチ アンコ＆ホイップ / どらもっち ➔ LAWSON Uchi Café 爆餡生銅鑼燒 (紅豆鮮奶油) (注意：UC是Uchi Café甜點系列，ドラモッチ是爆餡生銅鑼燒，非單純麻糬)\n"
-        "     UC モチプヨ北海道産生クリーム / もちぷよ ➔ LAWSON Uchi Café 軟Q麻糬泡芙 (北海道產鮮奶油) (注意：UC是Uchi Café甜點，モチプヨ是軟Q麻糬泡芙，非軟糖)\n"
-        "     ヨツバノムヨーグルトヤサシイアマサ ➔ 四葉 (よつ葉) 喝的優酪乳 (溫和微甜) (注意：ヨツバ是北海道四葉乳業，ノムヨーグルト是喝的優酪乳飲むヨーグルト，非純鮮奶)\n"
-        "     からあげクン ➔ LAWSON 炸雞塊 (Karage-kun)\n"
-        "     プレミアムロールケーキ ➔ LAWSON Uchi Café 頂級鮮奶油生乳捲\n"
-        "     バスチー ➔ LAWSON 巴斯克乳酪蛋糕 (Baschee)\n"
-        "     恐竜足跡カレー ➔ originalName: \"恐竜足跡カレー\", name: \"恐龍足跡咖哩飯\"\n"
-        "     北大牛乳 COLD ➔ originalName: \"北大牛乳 COLD\", name: \"北大冰鮮奶\" (注意：北大是北海道大學牧場鮮奶，嚴禁截斷為普通牛乳)\n"
-        "     コーン西興部のソフトクリーム / コーン西興部のソフトクリー等 ➔ originalName: \"コーン西興部のソフトクリーム\", name: \"西興部甜筒牛奶霜淇淋\" (注意：コーン是甜筒Cone而非玉米Corn，西興部是北海道西興部村產頂級鮮奶霜淇淋)）。\n"
-        "2. 【金額 \"amount\" 必須是該品項的「小計總金額」（Line Total），嚴禁填寫單價】！\n"
-        "   - 例如「@165x 5 ¥825」：quantity 為 5，amount 必須填寫 825（絕對不能填單價 165）！\n"
-        "   - 例如「@286x 16 ¥4,576」：quantity 為 16，amount 必須填寫 4576！\n"
-        "   - 所有品項的 amount 加總必須等於收據總額！\n"
-        "3. \"originalName\" 欄位保留收據上的原始日文名稱（去掉分類代碼或符號）。\n"
-        "4. 收據開頭的店名/設施名（如 まるとも水産、六花亭 等）是店名，不是購買商品！\n"
-        "5. 嚴格禁止將稅額（外消費税、内消費税、税率、小計、合計、点数、お預り、找零おつり）、店鋪資訊、電話、地址、法人登錄番號（登録番号）提取為商品！\n\n"
-        "輸出格式必須是純 JSON 陣列，欄位如下：\n"
-        "- \"name\": 繁體中文商品名稱 (嚴禁出現日文假名)\n"
-        "- \"originalName\": 收據上的原始名稱\n"
-        "- \"amount\": 該項小計總額數值 (必須是總額而非單價，不含貨幣符號，必須大於 0)\n"
-        "- \"quantity\": 數量整數 (預設 1)\n\n"
-        "只輸出純 JSON 陣列，不要任何額外說明或 Markdown 標籤：\n" + ocr_text
+        "你是一個精通日本與台灣消費發票與收據的專業記帳分析系統。請從下列收據 OCR 文字中，提取完整的結構化記帳資訊：\n\n"
+        "【重要提取規則】：\n"
+        "1. description (店家/設施/商戶名稱)：\n"
+        "   - 提取實際商戶、餐廳或景點/設施名（例如「北海道大學博物館 咖啡廳 (ぽらす)」、「麵屋 雪風」、「六花亭」）。\n"
+        "   - 嚴格排除通用發票抬頭（例如 ［領収書］、［レシート］、領収証、御計算書、納品書 等）。\n"
+        "   - 輸出台灣慣用、乾淨的繁體中文或知名商標名稱。\n"
+        "2. category (消費分類)：\n"
+        "   - 必須嚴格為以下四者之一：\n"
+        "     * \"food\": 餐飲、餐廳、拉麵、壽司、海鮮丼、咖啡廳、甜點店、居酒屋、外帶便當、飲料水酒\n"
+        "     * \"transport\": 交通、火車JR、地鐵、公車、計程車、機票、租車、加油站油錢、高速公路過路費、景觀纜車\n"
+        "     * \"lodging\": 飯店、商務旅館、民宿、溫泉旅館、住宿稅\n"
+        "     * \"other\": 超市/便利商店/藥妝店/服飾/紀念品/門票/其他購物\n"
+        "3. originalAmount (總金額)：\n"
+        "   - 顧客實際應付的「合計/總計」數字整數 (不可填お預り實收或找零)。\n"
+        "4. currency (幣別)：\n"
+        "   - 日本通常為 \"JPY\"，台灣為 \"TWD\"，美國為 \"USD\"。\n"
+        "5. occurredAt (消費時間)：\n"
+        "   - ISO 格式 YYYY-MM-DDTHH:MM，若無時間則填 YYYY-MM-DD。\n"
+        "6. items (購買商品明細與繁體中文翻譯)：\n"
+        "   - 每個品項為物件：\n"
+        "     * \"name\": 【必須是精準、道地的繁體中文台灣習慣用語，嚴格禁止直接複製日文原名或保留日文假名】！\n"
+        "       - 【消費稅率標記去除規則】：日文收據中各品項名稱前面的「内10」、「内8」、「外10」、「外8」、「※10」、「※8」、「※」、「*」、「軽」是日本消費稅率標記，請將其去除。\n"
+        "       - 【嚴格忠於收據文字，禁止幻覺】：品項名稱必須直接對應收據中的商品文字！\n"
+        "       - 範例翻譯：\n"
+        "         紅ずわい ➔ 紅楚蟹 / 紅松葉蟹\n"
+        "         真ほっけ / ほっけ ➔ 烤真花魚一夜干\n"
+        "         明太子 ➔ 明太子\n"
+        "         じゃがバター ➔ 奶油馬鈴薯\n"
+        "         かに汁 ➔ 螃蟹味噌湯\n"
+        "         十カン盛 / ＋カン盛 ➔ 綜合握壽司十貫盛合\n"
+        "         蒸し牡蠣2個 / 蒸し牡蠣 ➔ 清蒸牡蠣 (2顆)\n"
+        "         生牡蠣2個 / 生牡蠣 ➔ 鮮生牡蠣 (2顆)\n"
+        "         カキコロバーガー ➔ 酥炸牡蠣可樂餅漢堡\n"
+        "         牡蠣の空（から）あげ ➔ 酥炸牡蠣唐揚 (厚岸炸牡蠣)\n"
+        "         ぷちまるDX牡蠣 ➔ 厚岸小圓米果仙貝 (牡蠣風味)\n"
+        "         燻じゃが ➔ 煙燻馬鈴薯脆塊 (盒裝)\n"
+        "         厚岸昆布 ➔ 厚岸天然昆布 (120g)\n"
+        "         ほたてわかめとろ ➔ 干貝海帶芽昆布絲湯包\n"
+        "         かき最中 ➔ 厚岸牡蠣造型最中餅\n"
+        "         根布入とろろ昆 / 根昆布 ➔ 根昆布極細昆布絲\n"
+        "         金のオイスターソース ➔ 黃金特級蠔油 (厚岸特製)\n"
+        "         金のかき醤油 ➔ 黃金厚岸牡蠣醬油\n"
+        "         羊羹本練り ➔ 經典本格紅豆羊羹\n"
+        "         羊葉小 / 羊羹小豆 ➔ 北海道小豆紅豆羊羹\n"
+        "         金のかき醤油入クイー / 金のかき醤油入クッキー ➔ 黃金牡蠣醬油風味餅乾\n"
+        "         強力わかもと1000錠 / わかもと ➔ 強力若元錠 (WAKAMOTO 1000錠)\n"
+        "         アベンヌシカルFPR / アベンヌ ➔ 雅漾 (Avène) Cicalfate+ 舒緩修護霜\n"
+        "         リュウバンヘラツキ / リュウバン ➔ 大木製藥 液體OK繃 附刷棒 (10ml)\n"
+        "         イトコラコラーゲン低分子ヒアル / イトコラ ➔ 井藤漢方 (ITOH) 低分子玻尿酸膠原蛋白粉 (306g)\n"
+        "         バイタルプロテインズ / パイタルプロテインズ ➔ Vital Proteins 膠原蛋白胜肽粉 (120g)\n"
+        "         BPバイオマス袋白L / バイオマス袋 ➔ 生物質環保購物袋 (白/L)\n"
+        "         軽油 ➔ 柴油 (若有公升數標註，如 柴油 (35.26L) )\n"
+        "         レギュラー ➔ 無鉛汽油\n"
+        "         ハイオク ➔ 高級無鉛汽油\n"
+        "         青皿 ➔ 藍盤壽司 (青皿)\n"
+        "         ピンク皿 ➔ 粉紅盤壽司 (粉紅皿)\n"
+        "         緑皿 ➔ 綠盤壽司 (綠皿)\n"
+        "         花火皿 ➔ 花火盤壽司 (花火皿)\n"
+        "         かき（生） ➔ 生牡蠣 (生蠔)\n"
+        "         かき（蒸し焼き） ➔ 蒸烤牡蠣\n"
+        "         お通し ➔ 開胃小菜\n"
+        "         恐竜足跡カレー ➔ originalName: \"恐竜足跡カレー\", name: \"恐龍足跡咖哩飯\"\n"
+        "         北大牛乳 COLD ➔ originalName: \"北大牛乳 COLD\", name: \"北大冰鮮奶\" (注意：北大是北海道大學牧場鮮奶)\n"
+        "         コーン西興部のソフトクリーム / コーン西興部のソフトクリー等 ➔ originalName: \"コーン西興部のソフトクリーム\", name: \"西興部甜筒牛奶霜淇淋\" (注意：コーン在冰品為甜筒Cone而非玉米Corn)\n"
+        "     * \"originalName\": 收據日文原名 (去掉稅率標記如内10)\n"
+        "     * \"amount\": 該品項小計總額數值 (必須大於 0，【嚴禁填寫單價】)\n"
+        "     * \"quantity\": 數量整數 (預設 1)\n\n"
+        "請輸出純 JSON 物件（不要任何 markdown 或說明文字）：\n"
+        "{\n"
+        "  \"description\": \"...\",\n"
+        "  \"category\": \"food|transport|lodging|other\",\n"
+        "  \"originalAmount\": 0,\n"
+        "  \"currency\": \"JPY\",\n"
+        "  \"occurredAt\": \"YYYY-MM-DDTHH:MM\",\n"
+        "  \"items\": [\n"
+        "    {\"name\": \"...\", \"originalName\": \"...\", \"amount\": 0, \"quantity\": 1}\n"
+        "  ]\n"
+        "}\n\n"
+        "收據內容：\n" + ocr_text
     )
 
     DISH_MAP = {
@@ -582,25 +571,18 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "カニレタスチャーハン": "蟹肉生菜炒飯",
         "烏賊姿焼き": "烤整隻烏賊",
         "あおさの出汁巻き": "海苔高湯玉子燒",
+        "やきとり": "綜合烤雞肉串",
         "とうきび茶": "玉米茶",
-        "サクサクパイ": "現烤酥脆派",
         "マルセイアイスサンド": "丸成冰淇淋夾心三明治",
+        "サクサクパイ": "現烤酥脆派",
         "醍醐": "醍醐生藍莓夾心蛋糕",
-        "カツカレー": "炸豬排咖哩飯",
-        "単品バーガー": "單點漢堡",
-        "セット500": "500號特選套餐",
-        "バーガー": "漢堡",
-        "強力わかもと": "強力若元錠 (WAKAMOTO 1000錠)",
-        "わかもと": "強力若元錠 (WAKAMOTO) 1000錠",
-        "アベンヌシカル": "雅漾 (Avène) Cicalfate+ 舒緩修護霜",
-        "アベンヌ": "雅漾 (Avène) 舒緩修護霜",
-        "リュウバン": "大木製藥 液體OK繃 附刷棒 (10ml)",
-        "イトコラ": "井藤漢方 (ITOH) 低分子玻尿酸膠原蛋白粉 (306g)",
-        "コラーゲン低分子ヒアル": "井藤漢方 (ITOH) 低分子玻尿酸膠原蛋白粉 (306g)",
-        "パイタルプロテインズ": "Vital Proteins 膠原蛋白胜肽粉 (120g)",
-        "バイタルプロテインズ": "Vital Proteins 膠原蛋白胜肽粉 (120g)",
-        "バイオマス袋": "生物質環保購物袋 (白/L)",
-        "SHIRETOKOTOKO": "The North Face 知床限定 Toko 熊短袖 T 恤",
+        "個人 大人": "成人門票/全票",
+        "MEDIHEAL": "MEDIHEAL 疲勞修復機能服",
+        "ふわふわフェイスタ": "蓬鬆洗臉毛巾",
+        "GIベルト": "黑色GI帆布腰帶",
+        "ドライメッシュ": "乾爽網眼短襪",
+        "シン・呼吸するインナー": "呼吸透氣內衣",
+        "SS SHIRETOKOTOKO T / SHIRETOKOTOKO": "The North Face 知床限定 Toko 熊短袖 T 恤",
         "SHARI SOUVENIR": "The North Face 斜里限定紀念短袖 T 恤",
         "SOUVENIR T": "The North Face 斜里限定紀念短袖 T 恤",
         "ショウヒンブクロギフトダイ": "商品禮品紙袋 (大)",
@@ -621,64 +603,73 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "バスチー": "LAWSON 巴斯克乳酪蛋糕 (Baschee)",
     }
 
-    def parse_items_json(raw_text: str) -> list[dict]:
-        match = re.search(r"\[\s*\{.*\}\s*\]", raw_text, re.DOTALL)
-        if match:
-            parsed = json.loads(match.group(0))
-        else:
-            match_arr = re.search(r"\[.*\]", raw_text, re.DOTALL)
-            parsed = json.loads(match_arr.group(0)) if match_arr else json.loads(raw_text)
+    def process_items(raw_items: list) -> list[dict]:
+        if not isinstance(raw_items, list):
+            return []
+        result = []
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "")).strip()
+            orig = str(item.get("originalName", "")).strip()
 
-        if isinstance(parsed, list):
-            result = []
-            for item in parsed:
-                if not isinstance(item, dict):
-                    continue
-                name = str(item.get("name", "")).strip()
-                orig = str(item.get("originalName", "")).strip()
+            orig = re.sub(r"^(?:内10|内8|外10|外8|※10|※8|※|＊|\*|軽)\s*", "", orig).strip()
+            name = re.sub(r"^(?:內10|内10|內8|内8|外10|外8|※10|※8|※|＊|\*|輕|軽)\s*", "", name).strip()
+            try:
+                amt = float(item.get("amount", 0))
+            except (ValueError, TypeError):
+                amt = 0
+            try:
+                qty = int(item.get("quantity", 1))
+            except (ValueError, TypeError):
+                qty = 1
+            if (name or orig) and amt > 0:
+                if qty > 1 and amt > 0:
+                    line_total = round(amt * qty)
+                    if f"{line_total:,}" in ocr_text or str(line_total) in ocr_text:
+                        amt = line_total
+                clean_amt = int(amt) if amt.is_integer() else amt
+                final_name = name or orig
+                if (final_name == orig or not re.search(r"[\u4e00-\u9fff]", final_name)
+                        or re.search(r"[\u3040-\u309f\u30a0-\u30ff]", final_name)
+                        or any(k in orig for k in ("ドラモッチ", "どらもっち", "モチプヨ", "もちぷよ", "ヨツバ", "よつ葉", "ヨーグルト", "大人往復", "セット大人", "恐竜足跡", "北大牛乳", "西興部"))
+                        or any(k in final_name for k in ("蒸烤", "購物袋禮品", "軟糖", "溫和鮮奶", "玉米冰淇淋"))):
+                    for k, v in DISH_MAP.items():
+                        if k.lower() in orig.lower() or k.lower() in final_name.lower():
+                            final_name = v
+                            break
+                if "牛乳" in orig and "北大" in ocr_text and "北大" not in final_name:
+                    final_name = "北大冰鮮奶"
+                if "西興部" in orig or "西興部" in final_name or "玉米冰淇淋" in final_name:
+                    final_name = "西興部甜筒牛奶霜淇淋"
+                result.append({
+                    "name": final_name,
+                    "originalName": orig,
+                    "amount": clean_amt,
+                    "quantity": max(1, qty),
+                })
+        return result
 
-                # 自動去除日本發票常見的稅率前綴標記 (如: 内10, 内8, 外10, 外8, ※, 軽)
-                orig = re.sub(r"^(?:内10|内8|外10|外8|※10|※8|※|＊|\*|軽)\s*", "", orig).strip()
-                name = re.sub(r"^(?:內10|内10|內8|内8|外10|外8|※10|※8|※|＊|\*|輕|軽)\s*", "", name).strip()
-                try:
-                    amt = float(item.get("amount", 0))
-                except (ValueError, TypeError):
-                    amt = 0
-                try:
-                    qty = int(item.get("quantity", 1))
-                except (ValueError, TypeError):
-                    qty = 1
-                if (name or orig) and amt > 0:
-                    # 若 amount 是單價（例如 amount * qty 的數值存在於收據文本中），自動修正為小計總額
-                    if qty > 1 and amt > 0:
-                        line_total = round(amt * qty)
-                        if f"{line_total:,}" in ocr_text or str(line_total) in ocr_text:
-                            amt = line_total
-                    clean_amt = int(amt) if amt.is_integer() else amt
-                    # 雙重防護：若 LLM 輸出遺漏翻譯仍保留日文平假/片假名，或翻譯不精確
-                    final_name = name or orig
-                    if (final_name == orig or not re.search(r"[\u4e00-\u9fff]", final_name)
-                            or re.search(r"[\u3040-\u309f\u30a0-\u30ff]", final_name)
-                            or any(k in orig for k in ("ドラモッチ", "どらもっち", "モチプヨ", "もちぷよ", "ヨツバ", "よつ葉", "ヨーグルト", "大人往復", "セット大人", "恐竜足跡", "北大牛乳", "西興部"))
-                            or any(k in final_name for k in ("蒸烤", "購物袋禮品", "軟糖", "溫和鮮奶", "玉米冰淇淋"))):
-                        for k, v in DISH_MAP.items():
-                            if k.lower() in orig.lower() or k.lower() in final_name.lower():
-                                final_name = v
-                                break
-                    if "牛乳" in orig and "北大" in ocr_text and "北大" not in final_name:
-                        final_name = "北大冰鮮奶"
-                    if "西興部" in orig or "西興部" in final_name or "玉米冰淇淋" in final_name:
-                        final_name = "西興部甜筒牛奶霜淇淋"
-                    result.append({
-                        "name": final_name,
-                        "originalName": orig,
-                        "amount": clean_amt,
-                        "quantity": max(1, qty),
-                    })
-            return result
-        return []
+    def parse_payload(raw_text: str) -> dict:
+        m_obj = re.search(r"\{.*\}", raw_text, re.DOTALL)
+        if m_obj:
+            try:
+                data = json.loads(m_obj.group(0))
+                if isinstance(data, dict):
+                    data["items"] = process_items(data.get("items", []))
+                    return data
+            except Exception:
+                pass
+        m_arr = re.search(r"\[.*\]", raw_text, re.DOTALL)
+        if m_arr:
+            try:
+                arr = json.loads(m_arr.group(0))
+                if isinstance(arr, list):
+                    return {"items": process_items(arr)}
+            except Exception:
+                pass
+        return {}
 
-    # 1. 主要引擎：MiniMax 雲端 API（極速、精確、繁中翻譯道地）
     minimax_key = _get_minimax_key()
     if minimax_key:
         try:
@@ -696,14 +687,13 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
             with urllib.request.urlopen(req, timeout=55) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 raw = data["content"][0]["text"].strip()
-                items = parse_items_json(raw)
-                if items:
-                    print(f"Extracted {len(items)} items via MiniMax (primary)", flush=True)
-                    return items
+                res = parse_payload(raw)
+                if res.get("items") or res.get("description"):
+                    print(f"Extracted structured receipt via MiniMax (primary): {res.get('description', '')}, items={len(res.get('items', []))}", flush=True)
+                    return res
         except Exception as mm_err:
             print(f"MiniMax failed ({mm_err}), falling back to local omlx...", flush=True)
 
-    # 2. 本地備援：本機 omlx (Qwen3.6-35B，斷網/API 異常時 100% 本地離線接手)
     try:
         payload = {
             "model": "Qwen3.6-35B-A3B-Uncensored-Heretic-MLX-4bit",
@@ -718,20 +708,26 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             raw = data["choices"][0]["message"]["content"].strip()
-            items = parse_items_json(raw)
-            if items:
-                print(f"Extracted {len(items)} items via local omlx fallback", flush=True)
-                return items
+            res = parse_payload(raw)
+            if res.get("items") or res.get("description"):
+                print(f"Extracted structured receipt via local omlx fallback: {res.get('description', '')}, items={len(res.get('items', []))}", flush=True)
+                return res
     except Exception as omlx_err:
         print(f"Local omlx fallback failed: {omlx_err}", flush=True)
 
-    return []
+    return {}
+
+
+def extract_and_translate_items(ocr_text: str) -> list[dict]:
+    """Extract individual purchased items and translate names to Traditional Chinese via local or cloud AI."""
+    res = extract_structured_receipt(ocr_text)
+    return res.get("items", [])
 
 
 def parse_receipt_text(text: str, extract_items: bool = False) -> dict:
     """Return form-ready receipt data, using null for fields not found."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
-    total = _total(lines)
+    base_total = _total(lines)
 
     def _format_time(tm_match) -> str:
         hr = tm_match.group(1).zfill(2)
@@ -749,12 +745,10 @@ def parse_receipt_text(text: str, extract_items: bool = False) -> dict:
                 year += 2000
             if not (1 <= month <= 12 and 1 <= day <= 31):
                 continue
-            # 1. Check same line
             tm = TIME.search(line[m.end():]) or TIME.search(line[:m.start()])
             if tm:
                 occurred_at = f"{year:04d}-{month:02d}-{day:02d}T{_format_time(tm)}"
                 break
-            # 2. Check adjacent lines (immediately after or before)
             if i + 1 < len(lines):
                 tm = TIME.search(lines[i + 1])
                 if tm and not DATE.search(lines[i + 1]):
@@ -765,34 +759,99 @@ def parse_receipt_text(text: str, extract_items: bool = False) -> dict:
                 if tm and not DATE.search(lines[i - 1]):
                     occurred_at = f"{year:04d}-{month:02d}-{day:02d}T{_format_time(tm)}"
                     break
-            # Date found without explicit time near it
             occurred_at = f"{year:04d}-{month:02d}-{day:02d}"
             break
 
-    items = extract_and_translate_items(text) if extract_items else []
+    base_desc = _description(lines)
+    base_cat = _category(lines)
+    base_curr = _currency(text)
+    total = base_total
+
+    if not extract_items:
+        return {
+            "description": base_desc,
+            "category": base_cat,
+            "originalAmount": total,
+            "currency": base_curr,
+            "occurredAt": occurred_at,
+            "items": [],
+        }
+
+    structured = extract_structured_receipt(text)
+    items = structured.get("items", [])
+
+    known_merchant = None
+    receipt_text_lower = text.casefold()
+    for label, keywords in MERCHANT_KEYWORDS + FOOD_MERCHANTS + HOTEL_MERCHANTS + TRANSPORT_MERCHANTS:
+        if any(keyword.casefold() in receipt_text_lower for keyword in keywords):
+            known_merchant = label
+            break
+
+    if known_merchant:
+        description = known_merchant
+    elif structured.get("description"):
+        llm_desc = str(structured["description"]).strip()
+        cleaned_llm = re.sub(r"[\s\u3000=<-]+", "", llm_desc).upper()
+        norm_llm = re.sub(r"^[\[\]［］【】()（）]+|[\[\]［］【】()（）]+$", "", cleaned_llm)
+        if (cleaned_llm not in GENERIC_DOCUMENT_TITLES and norm_llm not in GENERIC_DOCUMENT_TITLES
+                and not re.search(r"^[\[\]［］【】()（）\s]*(?:receipt|no\.|tel|fax|date|領収|领收|登録番号|登錄番号|登绿番号)", llm_desc, re.I)
+                and len(llm_desc) >= 2):
+            description = llm_desc
+        else:
+            description = base_desc
+    else:
+        description = base_desc
+
+    if any(keyword.casefold() in receipt_text_lower for _, keywords in RETAIL_MERCHANTS for keyword in keywords):
+        category = "other"
+    elif any(keyword.casefold() in receipt_text_lower for _, keywords in FOOD_MERCHANTS for keyword in keywords):
+        category = "food"
+    elif any(keyword.casefold() in receipt_text_lower for _, keywords in HOTEL_MERCHANTS for keyword in keywords):
+        category = "lodging"
+    elif any(keyword.casefold() in receipt_text_lower for _, keywords in TRANSPORT_MERCHANTS for keyword in keywords):
+        category = "transport"
+    elif structured.get("category") in ("food", "transport", "lodging", "other"):
+        category = structured["category"]
+    else:
+        category = base_cat
+
     if items:
-        # If single fuel item with external consumption tax, ensure item amount matches total paid
         if len(items) == 1 and total and total > items[0]["amount"]:
             orig_lower = items[0].get("originalName", "").lower()
             if any(k in orig_lower for k in ("軽油", "ガソリン", "レギュラー", "ハイオク", "燃料")):
                 items[0]["amount"] = total
-        # Ensure liters are included in fuel name if detected in OCR text
         liters_match = re.search(r"(\d+(?:\.\d+)?)\s*L", text)
         if liters_match:
             l_str = f"{liters_match.group(1)}L"
             for it in items:
                 if any(k in it.get("originalName", "") for k in ("軽油", "ガソリン", "レギュラー", "ハイオク")) and l_str not in it["name"]:
-                    it["name"] = f"{it['name']} ({l_str})"
+                    it["name"] = f"{it[name]} ({l_str})"
 
         items_sum = sum(it["amount"] for it in items if isinstance(it.get("amount"), (int, float)))
-        if items_sum > 0 and (total is None or (total in (5000, 10000, 20000, 50000) and items_sum < total and any(re.search(r"(?:お預|お釣|おつり)", l) for l in lines))):
-            total = int(items_sum) if isinstance(items_sum, float) and items_sum.is_integer() else items_sum
+        if items_sum > 0:
+            if total is None or (total in (5000, 10000, 20000, 50000) and items_sum < total and any(re.search(r"(?:お預|お釣|おつり)", l) for l in lines)):
+                total = int(items_sum) if isinstance(items_sum, float) and items_sum.is_integer() else items_sum
+            elif total != items_sum and structured.get("originalAmount") == items_sum:
+                total = int(items_sum) if isinstance(items_sum, float) and items_sum.is_integer() else items_sum
+    elif total is None and structured.get("originalAmount"):
+        try:
+            val = float(structured["originalAmount"])
+            total = int(val) if val.is_integer() else val
+        except (ValueError, TypeError):
+            pass
+
+    if occurred_at and "T" not in occurred_at and structured.get("occurredAt") and "T" in str(structured["occurredAt"]):
+        occurred_at = str(structured["occurredAt"]).strip()
+    elif not occurred_at and structured.get("occurredAt"):
+        occurred_at = str(structured["occurredAt"]).strip()
+
+    currency = base_curr or structured.get("currency") or "JPY"
 
     return {
-        "description": _description(lines),
-        "category": _category(lines),
+        "description": description,
+        "category": category,
         "originalAmount": total,
-        "currency": _currency(text),
+        "currency": currency,
         "occurredAt": occurred_at,
         "items": items,
     }
