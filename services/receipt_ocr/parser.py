@@ -594,8 +594,14 @@ def extract_structured_receipt(ocr_text: str) -> dict:
         "ショウヒンブクロ": "商品禮品紙袋 (大)",
         "ギフトダイ": "商品禮品紙袋 (大)",
         "購物袋禮品大": "商品禮品紙袋 (大)",
-        "ドラモッチ": "LAWSON Uchi Café 爆餡生銅鑼燒 (紅豆鮮奶油)",
-        "どらもっち": "LAWSON Uchi Café 爆餡生銅鑼燒 (紅豆鮮奶油)",
+        "ドラモッチ モンブラン": "LAWSON Uchi Café 爆餡生銅鑼燒 (栗子蒙布朗)",
+        "ドラモッチモンブラン": "LAWSON Uchi Café 爆餡生銅鑼燒 (栗子蒙布朗)",
+        "どらもっち モンブラン": "LAWSON Uchi Café 爆餡生銅鑼燒 (栗子蒙布朗)",
+        "どらもっちモンブラン": "LAWSON Uchi Café 爆餡生銅鑼燒 (栗子蒙布朗)",
+        "ドラモッチ アンコ＆ホイップ": "LAWSON Uchi Café 爆餡生銅鑼燒 (紅豆鮮奶油)",
+        "どらもっち アンコ＆ホイップ": "LAWSON Uchi Café 爆餡生銅鑼燒 (紅豆鮮奶油)",
+        "ドラモッチ": "LAWSON Uchi Café 爆餡生銅鑼燒",
+        "どらもっち": "LAWSON Uchi Café 爆餡生銅鑼燒",
         "モチプヨ": "LAWSON Uchi Café 軟Q麻糬泡芙 (北海道產鮮奶油)",
         "もちぷよ": "LAWSON Uchi Café 軟Q麻糬泡芙 (北海道產鮮奶油)",
         "ヨツバノムヨーグルト": "四葉 (よつ葉) 喝的優酪乳 (溫和微甜)",
@@ -643,6 +649,15 @@ def extract_structured_receipt(ocr_text: str) -> dict:
                         if k.lower() in orig.lower() or k.lower() in final_name.lower():
                             final_name = v
                             break
+                if any(k in orig for k in ("ドラモッチ", "どらもっち")):
+                    if any(k in orig for k in ("モンブラン", "モンフ")) or any(k in final_name for k in ("蒙布朗", "栗子")):
+                        final_name = "LAWSON Uchi Café 爆餡生銅鑼燒 (栗子蒙布朗)"
+                    elif any(k in orig for k in ("アンコ", "あんこ")) or "紅豆" in final_name:
+                        final_name = "LAWSON Uchi Café 爆餡生銅鑼燒 (紅豆鮮奶油)"
+                    elif "爆餡生銅鑼燒" not in final_name:
+                        final_name = "LAWSON Uchi Café 爆餡生銅鑼燒"
+                if "モチプヨ" in orig or "もちぷよ" in orig:
+                    final_name = "LAWSON Uchi Café 軟Q麻糬泡芙 (北海道產鮮奶油)"
                 if "牛乳" in orig and "北大" in ocr_text and "北大" not in final_name:
                     final_name = "北大冰鮮奶"
                 if "西興部" in orig or "西興部" in final_name or "玉米冰淇淋" in final_name:
