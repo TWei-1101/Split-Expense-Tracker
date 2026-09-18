@@ -584,6 +584,30 @@ UC モチプヨ北海道産生クリーム 127軽
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-16T19:44")
 
+    def test_parses_sapporo_drug_store_pocari_sweat_food_receipt(self):
+        text = """サリドラ 札幌
+SAPPORO DRUG STORE 薬粧
+狸小路大王ビル店
+TEL 011-252-0711
+本社：札幌市東区北8条東4丁目1-20
+登録番号：T9430001020202
+＜領収証＞
+2026年09月18日（金）19:52 No.5676
+担当：033493 ［00232-0001］
+◆ポカリスエット 500ml ¥127内
+小計 1点 ¥127
+8内税対象額 ¥127）
+内税額 ¥9）
+合計 ¥127
+お釣り ¥0
+•は軽減税率対象商品です。
+交通系支払 ¥127
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["originalAmount"], 127)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-18T19:52")
+
     def test_parses_hokudai_museum_cafe_receipt(self):
         text = """［領収書］
 北海道大学総合博物館内

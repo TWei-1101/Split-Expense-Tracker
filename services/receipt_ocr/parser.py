@@ -157,7 +157,7 @@ ITEM_KEYWORDS = (
 CATEGORY_ITEM_KEYWORDS = (
     ("food", (
         "拉麵", "ラーメン", "らーめん", "ramen", "つけ麺", "つけめん", "油そば", "まぜそば", "担々麺", "坦々麺", "中華そば", "餃子", "ぎょうざ", "ギョーザ", "焼き餃子", "焼餃子", "水餃子", "麺屋", "麵屋", "製麺", "製麵", "チャーハン", "炒飯", "チャーシュー", "叉燒", "味玉", "壽司", "寿司", "sushi", "咖啡", "カフェ", "coffee", "cafe", "とうきび", "とうきび茶", "お茶", "緑茶", "麦茶",
-        "ソフトクリーム", "ソフト", "牛乳", "ミルク", "curry", "カレー",
+        "ポカリスエット", "ポカリ", "アクエリアス", "ソフトクリーム", "ソフト", "牛乳", "ミルク", "curry", "カレー",
         "飯", "便當", "おにぎり", "手卷", "手巻", "明太子", "弁当", "飲料", "飲み物", "麵包", "食パン", "菓子パン", "惣菜パン", "総菜パン", "あんパン", "アンパン", "メロンパン", "クロワッサン", "ベーカリー", "bakery", "bread",
         "菓子", "サクサクパイ", "アップルパイ", "アイス", "サンド", "ケーキ", "デザート", "スイーツ", "プリン", "クッキー",
         "チョコ", "パフェ", "和菓子", "洋菓子", "シュークリーム", "甜點", "點心", "冰淇淋", "蛋糕",
@@ -446,10 +446,11 @@ def extract_structured_receipt(ocr_text: str) -> dict:
         "   - 輸出台灣慣用、乾淨的繁體中文或知名商標名稱。\n"
         "2. category (消費分類)：\n"
         "   - 必須嚴格為以下四者之一：\n"
-        "     * \"food\": 餐飲、餐廳、拉麵、壽司、海鮮丼、咖啡廳、甜點店、居酒屋、外帶便當、飲料水酒\n"
+        "     * \"food\": 餐飲、餐廳、拉麵、壽司、海鮮丼、咖啡廳、甜點店、居酒屋、外帶便當、飲料水酒。\n"
+        "       【重要判斷準則】：即便是在藥妝店（如サツドラ、ツルハ）、便利商店或超市購買，若購買品項為飲料（如寶礦力水得 ポカリスエット、綠茶、水、果汁、咖啡）、點心甜點、便當熟食等食物飲品（日本 8% 軽減税率商品），消費分類必須判定為 \"food\"（餐飲/飲料），絕不可判定為 other！\n"
         "     * \"transport\": 交通、火車JR、地鐵、公車、計程車、機票、租車、加油站油錢、高速公路過路費、景觀纜車\n"
         "     * \"lodging\": 飯店、商務旅館、民宿、溫泉旅館、住宿稅\n"
-        "     * \"other\": 超市/便利商店/藥妝店/服飾/紀念品/門票/其他購物\n"
+        "     * \"other\": 藥妝藥品、美妝保養品、服飾、家電、紀念品、門票、生活雜貨或其他非純食物飲品的一般購物\n"
         "3. originalAmount (總金額)：\n"
         "   - 顧客實際應付的「合計/總計」數字整數 (不可填お預り實收或找零)。\n"
         "4. currency (幣別)：\n"
@@ -500,6 +501,7 @@ def extract_structured_receipt(ocr_text: str) -> dict:
         "         かき（蒸し焼き） ➔ 蒸烤牡蠣\n"
         "         お通し ➔ 開胃小菜\n"
         "         恐竜足跡カレー ➔ originalName: \"恐竜足跡カレー\", name: \"恐龍足跡咖哩飯\"\n"
+        "         ポカリスエット 500ml / ポカリスエット ➔ originalName: \"ポカリスエット 500ml\", name: \"寶礦力水得 500ml\" (注意：寶礦力水得是電解質運動飲料)\n"
         "         北大牛乳 COLD ➔ originalName: \"北大牛乳 COLD\", name: \"北大冰鮮奶\" (注意：北大是北海道大學牧場鮮奶)\n"
         "         コーン西興部のソフトクリーム / コーン西興部のソフトクリー等 ➔ originalName: \"コーン西興部のソフトクリーム\", name: \"西興部甜筒牛奶霜淇淋\" (注意：コーン在冰品為甜筒Cone而非玉米Corn)\n"
         "     * \"originalName\": 收據日文原名 (去掉稅率標記如内10)\n"
@@ -561,6 +563,9 @@ def extract_structured_receipt(ocr_text: str) -> dict:
         "お通し": "開胃小菜",
         "恐竜足跡カレー": "恐龍足跡咖哩飯",
         "恐竜足跡": "恐龍足跡咖哩飯",
+        "ポカリスエット": "寶礦力水得 500ml",
+        "ポカリ": "寶礦力水得",
+        "アクエリアス": "水份補給飲料 (Aquarius)",
         "北大牛乳": "北大冰鮮奶",
         "西興部": "西興部甜筒牛奶霜淇淋",
         "ソフトクリー": "西興部甜筒牛奶霜淇淋",
@@ -802,7 +807,18 @@ def parse_receipt_text(text: str, extract_items: bool = False) -> dict:
     else:
         description = base_desc
 
-    if any(keyword.casefold() in receipt_text_lower for _, keywords in RETAIL_MERCHANTS for keyword in keywords):
+    # Reconcile Category
+    if structured.get("category") == "food":
+        has_non_food = any(
+            any(k in (it.get("originalName", "") + it.get("name", "")).lower()
+                for k in ("錠", "カプセル", "化粧", "マスク", "インナー", "tシャツ", "パンツ", "ソックス", "洗剤", "シャンプー", "薬品", "医薬", "湿布", "膏藥", "包帯", "リップ", "サプリ", "ビタミン"))
+            for it in items
+        )
+        if not has_non_food:
+            category = "food"
+        else:
+            category = "other"
+    elif any(keyword.casefold() in receipt_text_lower for _, keywords in RETAIL_MERCHANTS for keyword in keywords):
         category = "other"
     elif any(keyword.casefold() in receipt_text_lower for _, keywords in FOOD_MERCHANTS for keyword in keywords):
         category = "food"
