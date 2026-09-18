@@ -584,6 +584,38 @@ UC モチプヨ北海道産生クリーム 127軽
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-16T19:44")
 
+    def test_parses_hokudai_museum_cafe_receipt(self):
+        text = """［領収書］
+北海道大学総合博物館内
+ミュージアムカフェ ぼらす
+TEL:08018918073
+登録番号：T9430005003764
+2026/09/18 14:07:25
+レジ：0003 担当：0001
+取引INo:000320260918140242655
+恐竜足跡カレー
+¥1,300 1点 ¥1,300
+北大牛乳 COLD
+¥500 1点 ¥500
+コーン西興部のソフトクリー等
+¥500 1点 ¥500
+小計 3点 ¥2,300
+¥2,300
+（内消費税等 ¥209）
+（10％標準対象 ¥2,300）
+（内消費税等 ¥209）
+交通系電子マネー（Airペイ） ¥2,300
+お預り ¥2,300
+お釣り ¥0
+上記正に領収いたしました
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["description"], "北海道大學博物館 咖啡廳 (ぽらす)")
+        self.assertEqual(result["category"], "food")
+        self.assertEqual(result["originalAmount"], 2300)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-18T14:07")
+
     def test_parses_menya_yukikaze_ramen_receipt(self):
         text = """麺屋 雪風 本店
 札幌市中央区南7条西4丁目2-6

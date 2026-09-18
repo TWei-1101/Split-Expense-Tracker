@@ -103,6 +103,7 @@ FOOD_MERCHANTS = (
     ("炉端 KORONAGIRAI", ("koronagirai", "koronagirat", "0155-67-5604")),
     ("別海町 レストランNOTSUKE", ("レストランnotsuke", "notsuke", "野付", "別海町観光開発公社", "0153-82-1270")),
     ("麺屋 雪風", ("麺屋 雪風", "麺屋雪風", "雪風", "011-512-3022")),
+    ("北海道大學博物館 咖啡廳 (ぽらす)", ("ミュージアムカフェ ぽらす", "ミュージアムカフェ ぼらす", "ミュージアムカフェぽらす", "ミュージアムカフェぼらす", "ミュージアムカフェ", "ぽらす", "ぼらす", "北海道大学総合博物館", "08018918073", "t9430005003764")),
 )
 
 # Hotel and lodging brands
@@ -156,6 +157,7 @@ ITEM_KEYWORDS = (
 CATEGORY_ITEM_KEYWORDS = (
     ("food", (
         "拉麵", "ラーメン", "らーめん", "ramen", "つけ麺", "つけめん", "油そば", "まぜそば", "担々麺", "坦々麺", "中華そば", "餃子", "ぎょうざ", "ギョーザ", "焼き餃子", "焼餃子", "水餃子", "麺屋", "麵屋", "製麺", "製麵", "チャーハン", "炒飯", "チャーシュー", "叉燒", "味玉", "壽司", "寿司", "sushi", "咖啡", "カフェ", "coffee", "cafe", "とうきび", "とうきび茶", "お茶", "緑茶", "麦茶",
+        "ソフトクリーム", "ソフト", "牛乳", "ミルク", "curry", "カレー",
         "飯", "便當", "おにぎり", "手卷", "手巻", "明太子", "弁当", "飲料", "飲み物", "麵包", "食パン", "菓子パン", "惣菜パン", "総菜パン", "あんパン", "アンパン", "メロンパン", "クロワッサン", "ベーカリー", "bakery", "bread",
         "菓子", "サクサクパイ", "アップルパイ", "アイス", "サンド", "ケーキ", "デザート", "スイーツ", "プリン", "クッキー",
         "チョコ", "パフェ", "和菓子", "洋菓子", "シュークリーム", "甜點", "點心", "冰淇淋", "蛋糕",
@@ -229,12 +231,14 @@ def _description(lines: list[str]) -> str | None:
     for line in lines[:4]:
         stripped = line.strip("=<- >*#:")
         cleaned = re.sub(r"[\s\u3000=<-]+", "", line).upper()
+        norm_title = re.sub(r"^[\[\]［］【】()（）]+|[\[\]［］【】()（）]+$", "", cleaned)
         if (cleaned in GENERIC_DOCUMENT_TITLES
+                or norm_title in GENERIC_DOCUMENT_TITLES
                 or len(stripped) < 2
                 or DATE.search(line)
                 or TOTAL_LABEL.search(line)
                 or re.search(r"^[\d\s\-()]+$", stripped)
-                or re.search(r"^(?:receipt|no\.|tel|fax|date|領収|领收|登録番号|登錄番号|登绿番号)", stripped, re.I)
+                or re.search(r"^[\[\]［］【】()（）\s]*(?:receipt|no\.|tel|fax|date|領収|领收|登録番号|登錄番号|登绿番号)", stripped, re.I)
                 or re.search(r"(?:[0-9０-９]+(?:丁目|番|号|線)|[0-9０-９\-]{3,}$)", stripped)):
             continue
 
@@ -264,7 +268,10 @@ def _description(lines: list[str]) -> str | None:
         # A merchant is generally at the top, contains letters, and is not a
         # date, a total, or an address/receipt serial number.
         cleaned = re.sub(r"[\s\u3000=<-]+", "", line).upper()
+        norm_title = re.sub(r"^[\[\]［］【】()（）]+|[\[\]［］【】()（）]+$", "", cleaned)
         if (cleaned not in GENERIC_DOCUMENT_TITLES
+                and norm_title not in GENERIC_DOCUMENT_TITLES
+                and not re.search(r"^[\[\]［］【】()（）\s]*(?:receipt|no\.|tel|fax|date|領収|领收|登録番号|登錄番号|登绿番号)", line, re.I)
                 and not DATE.search(line) and not TOTAL_LABEL.search(line)
                 and re.search(r"[A-Za-z\u4e00-\u9fff]", line)
                 and len(line) <= 48):
@@ -504,7 +511,10 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "     ヨツバノムヨーグルトヤサシイアマサ ➔ 四葉 (よつ葉) 喝的優酪乳 (溫和微甜) (注意：ヨツバ是北海道四葉乳業，ノムヨーグルト是喝的優酪乳飲むヨーグルト，非純鮮奶)\n"
         "     からあげクン ➔ LAWSON 炸雞塊 (Karage-kun)\n"
         "     プレミアムロールケーキ ➔ LAWSON Uchi Café 頂級鮮奶油生乳捲\n"
-        "     バスチー ➔ LAWSON 巴斯克乳酪蛋糕 (Baschee)）。\n"
+        "     バスチー ➔ LAWSON 巴斯克乳酪蛋糕 (Baschee)\n"
+        "     恐竜足跡カレー ➔ originalName: \"恐竜足跡カレー\", name: \"恐龍足跡咖哩飯\"\n"
+        "     北大牛乳 COLD ➔ originalName: \"北大牛乳 COLD\", name: \"北大冰鮮奶\" (注意：北大是北海道大學牧場鮮奶，嚴禁截斷為普通牛乳)\n"
+        "     コーン西興部のソフトクリーム / コーン西興部のソフトクリー等 ➔ originalName: \"コーン西興部のソフトクリーム\", name: \"西興部甜筒牛奶霜淇淋\" (注意：コーン是甜筒Cone而非玉米Corn，西興部是北海道西興部村產頂級鮮奶霜淇淋)）。\n"
         "2. 【金額 \"amount\" 必須是該品項的「小計總金額」（Line Total），嚴禁填寫單價】！\n"
         "   - 例如「@165x 5 ¥825」：quantity 為 5，amount 必須填寫 825（絕對不能填單價 165）！\n"
         "   - 例如「@286x 16 ¥4,576」：quantity 為 16，amount 必須填寫 4576！\n"
@@ -560,6 +570,11 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
         "かき（生）": "生牡蠣",
         "かき（蒸し焼き）": "蒸烤牡蠣",
         "お通し": "開胃小菜",
+        "恐竜足跡カレー": "恐龍足跡咖哩飯",
+        "恐竜足跡": "恐龍足跡咖哩飯",
+        "北大牛乳": "北大冰鮮奶",
+        "西興部": "西興部甜筒牛奶霜淇淋",
+        "ソフトクリー": "西興部甜筒牛奶霜淇淋",
         "かき（炭火焼きがき）": "炭烤牡蠣",
         "大ホタテ串": "烤大扇貝串",
         "ホタテバター": "奶油扇貝",
@@ -644,12 +659,16 @@ def extract_and_translate_items(ocr_text: str) -> list[dict]:
                     final_name = name or orig
                     if (final_name == orig or not re.search(r"[\u4e00-\u9fff]", final_name)
                             or re.search(r"[\u3040-\u309f\u30a0-\u30ff]", final_name)
-                            or any(k in orig for k in ("ドラモッチ", "どらもっち", "モチプヨ", "もちぷよ", "ヨツバ", "よつ葉", "ヨーグルト", "大人往復", "セット大人"))
-                            or any(k in final_name for k in ("蒸烤", "購物袋禮品", "軟糖", "溫和鮮奶"))):
+                            or any(k in orig for k in ("ドラモッチ", "どらもっち", "モチプヨ", "もちぷよ", "ヨツバ", "よつ葉", "ヨーグルト", "大人往復", "セット大人", "恐竜足跡", "北大牛乳", "西興部"))
+                            or any(k in final_name for k in ("蒸烤", "購物袋禮品", "軟糖", "溫和鮮奶", "玉米冰淇淋"))):
                         for k, v in DISH_MAP.items():
                             if k.lower() in orig.lower() or k.lower() in final_name.lower():
                                 final_name = v
                                 break
+                    if "牛乳" in orig and "北大" in ocr_text and "北大" not in final_name:
+                        final_name = "北大冰鮮奶"
+                    if "西興部" in orig or "西興部" in final_name or "玉米冰淇淋" in final_name:
+                        final_name = "西興部甜筒牛奶霜淇淋"
                     result.append({
                         "name": final_name,
                         "originalName": orig,
