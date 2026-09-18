@@ -584,6 +584,32 @@ UC モチプヨ北海道産生クリーム 127軽
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-16T19:44")
 
+    def test_parses_lawson_susukino_dessert_receipt(self):
+        text = """LAWSON
+すすきの南8条店
+登録番号；T9430001011003
+北海道札幌市中央区南8条西3-
+電話：011-513-6037店コード：011110
+2026年9月18日（金）22:24
+レジ；#2 66787 責；03
+【領収証】
+UC モチプヨ北海道産生クリーム 127軽
+UC ドラモッチモンブラン 268軽
+合計 ¥395
+（内消費税等 ¥29）
+（8%対象 ¥395）
+（内消費税額 ¥29）
+点 数 2個
+上記正に領収いたしました
+交通系マネー ¥395
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["description"], "Lawson")
+        self.assertEqual(result["category"], "food")
+        self.assertEqual(result["originalAmount"], 395)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-18T22:24")
+
     def test_parses_sapporo_drug_store_pocari_sweat_food_receipt(self):
         text = """サリドラ 札幌
 SAPPORO DRUG STORE 薬粧
