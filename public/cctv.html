@@ -21,68 +21,17 @@
       background-color: #0f172a;
       display: flex;
       flex-direction: column;
-      position: relative;
-    }
-    .cctv-topbar {
-      position: absolute;
-      top: max(10px, env(safe-area-inset-top, 10px));
-      left: 12px;
-      right: 12px;
-      display: flex;
-      justify-content: space-between;
-      pointer-events: none;
-      z-index: 50;
-    }
-    .cctv-btn {
-      pointer-events: auto;
-      background: rgba(15, 23, 42, 0.75);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      color: #f8fafc;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      padding: 6px 14px;
-      border-radius: 20px;
-      font-size: 13px;
-      font-weight: 500;
-      cursor: pointer;
-      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
-      transition: all 0.15s ease;
-    }
-    .cctv-btn:active {
-      transform: scale(0.94);
-      background: rgba(15, 23, 42, 0.95);
+      padding-top: max(env(safe-area-inset-top, 54px), 54px);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
     }
     iframe {
       width: 100%;
       flex: 1;
       border: none;
       display: block;
-      padding-top: max(env(safe-area-inset-top, 44px), 44px);
-      padding-bottom: env(safe-area-inset-bottom, 0px);
     }
   </style>
   <script>
-    function handleBack() {
-      if (window.Telegram && window.Telegram.WebApp) {
-        const tg = window.Telegram.WebApp;
-        if (tg.exitFullscreen) {
-          try { tg.exitFullscreen(); } catch { /* ignore */ }
-        }
-      }
-      window.location.replace('/portal.html');
-    }
-
-    function handleClose() {
-      if (window.Telegram && window.Telegram.WebApp) {
-        const tg = window.Telegram.WebApp;
-        if (tg.close) {
-          tg.close();
-          return;
-        }
-      }
-      window.close();
-    }
-
     if (window.Telegram && window.Telegram.WebApp) {
       const tg = window.Telegram.WebApp;
       tg.ready();
@@ -110,10 +59,6 @@
   </script>
 </head>
 <body>
-  <div class="cctv-topbar">
-    <button class="cctv-btn" onclick="handleBack()">‹ 返回選單</button>
-    <button class="cctv-btn" onclick="handleClose()">✕ 關閉</button>
-  </div>
   <iframe
     src="https://frigate.twei-ha.com/"
     allow="autoplay; camera; microphone; fullscreen; picture-in-picture"
