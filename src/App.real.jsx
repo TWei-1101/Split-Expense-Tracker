@@ -4826,10 +4826,21 @@ async function _getStorage() {
                     return timeB - timeA;
                 });
 
-                // 2. Filter by searchKeyword (case-insensitive on description)
+                // 2. Filter by searchKeyword (case-insensitive on description, note, and items)
                 const kw = searchKeyword.trim().toLowerCase();
                 const kwFiltered = kw
-                    ? sorted.filter(exp => (exp.description || '').toLowerCase().includes(kw))
+                    ? sorted.filter(exp => {
+                        const descMatch = (exp.description || '').toLowerCase().includes(kw);
+                        if (descMatch) return true;
+                        if (exp.note && String(exp.note).toLowerCase().includes(kw)) return true;
+                        if (Array.isArray(exp.items)) {
+                            return exp.items.some(item =>
+                                (item.name || '').toLowerCase().includes(kw) ||
+                                (item.originalName || '').toLowerCase().includes(kw)
+                            );
+                        }
+                        return false;
+                    })
                     : sorted;
 
                 // 3. Filter by category. Legacy records without a category are treated as 「其他」.
@@ -4938,7 +4949,7 @@ async function _getStorage() {
                         type="text"
                         value={searchKeyword}
                         onChange={(e) => setSearchKeyword(e.target.value)}
-                        placeholder="輸入品項/描述進行搜尋..." 
+                        placeholder="搜尋店家、品項或商品明細..." 
                         // 讓它保持全寬
                         className="w-full border border-gray-300 rounded-full h-10 py-2 pl-10 pr-4 text-sm focus:ring-primaryColor-500 focus:border-primaryColor-500 transition-all duration-300"
                         aria-label="搜尋支出"
@@ -5161,8 +5172,8 @@ async function _getStorage() {
                   <p className="text-gray-500 italic p-4 bg-white rounded-xl shadow-inner">
                     {filterPayer && searchKeyword.trim()
                       ? filterPayer === SELF_PAYER_KEY
-                        ? `找不到任何符合「${searchKeyword}」的支出記錄。`
-                        : `找不到任何付款人為「${filterPayer}」且符合「${searchKeyword}」的支出記錄。`
+                        ? `找不到任何符合「${searchKeyword}」的支出或商品記錄。`
+                        : `找不到任何付款人為「${filterPayer}」且符合「${searchKeyword}」的支出或商品記錄。`
                       : filterPayer
                         ? filterPayer === SELF_PAYER_KEY
                           ? '目前沒有任何支出記錄。'
@@ -5170,7 +5181,7 @@ async function _getStorage() {
                         : filterCategory
                           ? `目前沒有任何「${EXPENSE_CATEGORY_OPTIONS.find(option => option.value === filterCategory)?.label}」支出記錄。`
                         : searchKeyword.trim()
-                          ? `找不到任何符合「${searchKeyword}」的支出記錄。`
+                          ? `找不到任何符合「${searchKeyword}」的支出或商品記錄。`
                           : '目前沒有任何支出記錄。'}
                   </p>
                 ) : (
@@ -5190,6 +5201,13 @@ async function _getStorage() {
                         ? `${DEFAULT_CURRENCY} ${exp.amountInTWD.toFixed(0)}`
                         : `${exp.currency} ${Math.round(exp.originalAmount).toFixed(0)}`;
                       const canToggle = !isTwd;
+                      const kw = searchKeyword.trim().toLowerCase();
+                      const matchingItems = kw && Array.isArray(exp.items)
+                        ? exp.items.filter(item =>
+                            (item.name || '').toLowerCase().includes(kw) ||
+                            (item.originalName || '').toLowerCase().includes(kw)
+                          )
+                        : [];
 
                       return (
                         <SwipeDeleteRow
@@ -5202,6 +5220,21 @@ async function _getStorage() {
                           <div className="flex gap-3 justify-between items-start">
                             <div className="min-w-0 flex-grow">
                               <p className="font-semibold text-lg text-gray-800">{exp.description}</p>
+                              {matchingItems.length > 0 && (
+                                <div className="mt-1 mb-1.5 flex flex-wrap gap-1.5" aria-label="符合搜尋的商品明細">
+                                  {matchingItems.map((item, mIdx) => (
+                                    <span
+                                      key={mIdx}
+                                      className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 border border-amber-200/80 shadow-2xs"
+                                    >
+                                      <span className="text-amber-600 font-bold">🔍</span>
+                                      <span>{item.name || item.originalName}</span>
+                                      <span className="text-amber-700 font-semibold">{exp.currency} {Number(item.amount || 0).toLocaleString('zh-TW')}</span>
+                                      {Number(item.quantity) > 1 && <span className="text-amber-600 text-[10px]">×{item.quantity}</span>}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                               <p
                                 className={`text-3xl font-extrabold text-primaryColor-600 my-1 ${canToggle ? 'cursor-pointer select-none hover:underline' : ''}`}
                                 onClick={canToggle ? () => toggleAmountDisplay(exp.id) : undefined}
