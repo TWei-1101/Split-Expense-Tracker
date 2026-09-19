@@ -1071,10 +1071,10 @@ async function _getStorage() {
                 const image = new Image();
                 image.onload = () => {
                     const targets = [
+                        { maxSide: 2000, quality: 0.85 },
                         { maxSide: 1600, quality: 0.82 },
                         { maxSide: 1200, quality: 0.76 },
                         { maxSide: 1000, quality: 0.72 },
-                        { maxSide: 800, quality: 0.70 },
                     ];
 
                     const renderTarget = (targetIndex) => {
@@ -1087,6 +1087,8 @@ async function _getStorage() {
                         canvas.width = width;
                         canvas.height = height;
                         const ctx = canvas.getContext('2d');
+                        ctx.imageSmoothingEnabled = true;
+                        ctx.imageSmoothingQuality = 'high';
                         ctx.drawImage(image, 0, 0, width, height);
 
                         canvas.toBlob((blob) => {
