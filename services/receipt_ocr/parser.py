@@ -834,7 +834,16 @@ def parse_receipt_text(text: str, extract_items: bool = False) -> dict:
             valid_llm_desc = llm_desc
 
     if valid_llm_desc:
-        description = valid_llm_desc
+        desc_clean = valid_llm_desc
+        if any(k in desc_clean.lower() for k in ("don quijote", "donki", "ドンキ", "ドン・キホーテ", "ドンキホーテ")):
+            desc_clean = re.sub(r"(?i)don\s*quijote|donki|ドン・キホーテ|ドンキホーテ|ドンキ", "唐吉訶德", desc_clean)
+        if any(k in desc_clean.lower() for k in ("サツドラ", "サッポロドラッグ", "satsudora")):
+            desc_clean = re.sub(r"(?i)サツドラ|サッポロドラッグ|satsudora", "札幌藥妝", desc_clean)
+        if any(k in desc_clean.lower() for k in ("ツルハドラッグ", "ツルハ", "tsuruha")):
+            desc_clean = re.sub(r"(?i)ツルハドラッグ|ツルハ|tsuruha", "鶴羽藥妝", desc_clean)
+        if any(k in desc_clean.lower() for k in ("マツモトキヨシ", "マツキヨ", "matsukiyo", "matsumoto kiyoshi")):
+            desc_clean = re.sub(r"(?i)マツモトキヨシ|マツキヨ|matsukiyo|matsumoto\s*kiyoshi", "松本清", desc_clean)
+        description = desc_clean
     elif known_merchant:
         description = known_merchant
     else:
