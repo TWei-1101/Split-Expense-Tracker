@@ -3,6 +3,25 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { matchesSearchKeyword } from '../src/lib/expense-math.js';
 
+test('matchesSearchKeyword supports brand synonyms (唐吉 / 唐吉訶德 / donki / don quijote / ドンキ)', () => {
+  const desc1 = 'MEGA 唐吉訶德 新川店';
+  const desc2 = 'MEGA Don Quijote 新川店';
+  const desc3 = 'ドン・キホーテ 狸小路店';
+
+  assert.equal(matchesSearchKeyword(desc1, '唐吉'), true);
+  assert.equal(matchesSearchKeyword(desc2, '唐吉'), true);
+  assert.equal(matchesSearchKeyword(desc3, '唐吉'), true);
+  assert.equal(matchesSearchKeyword(desc1, 'donki'), true);
+  assert.equal(matchesSearchKeyword(desc1, '唐吉訶德'), true);
+});
+
+test('matchesSearchKeyword supports brand synonyms for drugstore chains (サツドラ / 札幌藥妝)', () => {
+  const desc = 'サツドラ 狸小路大王ビル店';
+  assert.equal(matchesSearchKeyword(desc, '札幌藥妝'), true);
+  assert.equal(matchesSearchKeyword(desc, '札藥'), true);
+  assert.equal(matchesSearchKeyword(desc, 'サツドラ'), true);
+});
+
 test('matchesSearchKeyword supports fuzzy matching for English/Romaji (wakamodo -> WAKAMOTO)', () => {
   const itemName = '強力若元錠 (WAKAMOTO 1000錠)';
   const itemOriginal = '強力わかもと1000錠';

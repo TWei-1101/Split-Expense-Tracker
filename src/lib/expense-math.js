@@ -19,8 +19,43 @@ function normalizeKana(str) {
   return (str || '').replace(/[\u30a1-\u30f6]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
 }
 
-export function matchesSearchKeyword(target, rawKeyword) {
-  const k = (rawKeyword || '').trim().toLowerCase();
+const SEARCH_SYNONYM_GROUPS = [
+  ['唐吉', '唐吉訶德', '唐吉訶德', 'donki', 'don quijote', 'ドンキ', 'ドンキホーテ', 'ドン・キホーテ'],
+  ['札幌藥妝', '札藥', 'サツドラ', 'サッポロドラッグ', 'satsudora'],
+  ['鶴羽', '鶴羽藥妝', 'ツルハ', 'ツルハドラッグ', 'tsuruha'],
+  ['松本清', 'マツキヨ', 'マツモトキヨシ', 'matsukiyo', 'matsumoto kiyoshi'],
+  ['大創', 'daiso', 'ダイソー'],
+  ['bic camera', '必酷', 'ビックカメラ'],
+  ['友都八喜', 'yodobashi', 'ヨドバシ'],
+  ['全家', 'familymart', 'ファミリーマート', 'ファミマ'],
+  ['7-11', '7-eleven', '711', '小七', 'セブン', 'セブンイレブン'],
+  ['lawson', '羅森', 'ローソン'],
+  ['若元', '若元錠', 'wakamoto', 'wakamodo', 'わかもと', 'ワカモト'],
+  ['寶礦力', '寶礦力水得', 'pocari', 'pocarisweat', 'ポカリスエット', 'ポカリ'],
+  ['明治', 'meiji', 'メイジ'],
+  ['樂天', 'lotte', 'ロッテ'],
+];
+
+function expandSearchSynonyms(keyword) {
+  const k = (keyword || '').trim().toLowerCase();
+  if (!k) return [];
+  const results = new Set([k]);
+  for (const group of SEARCH_SYNONYM_GROUPS) {
+    const match = group.some(term => {
+      const t = term.toLowerCase();
+      return t === k || (t.length >= 2 && k.includes(t)) || (k.length >= 2 && t.includes(k));
+    });
+    if (match) {
+      for (const term of group) {
+        results.add(term.toLowerCase());
+      }
+    }
+  }
+  return Array.from(results);
+}
+
+function matchSingleTerm(target, term) {
+  const k = (term || '').trim().toLowerCase();
   if (!k) return true;
   const t = (target || '').toLowerCase();
   if (!t) return false;
@@ -45,6 +80,16 @@ export function matchesSearchKeyword(target, rawKeyword) {
   }
 
   return false;
+}
+
+export function matchesSearchKeyword(target, rawKeyword) {
+  const k = (rawKeyword || '').trim().toLowerCase();
+  if (!k) return true;
+  const t = (target || '').toLowerCase();
+  if (!t) return false;
+
+  const synonyms = expandSearchSynonyms(k);
+  return synonyms.some(variant => matchSingleTerm(t, variant));
 }
 
 export function isSettlement(expense) {
