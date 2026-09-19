@@ -626,6 +626,27 @@ TEL :080-5928-0973
         self.assertEqual(result["occurredAt"], "2026-09-19T22:57")
         self.assertEqual(result["category"], "food")
 
+    def test_parses_7eleven_ilohas_water_receipt(self):
+        text = """セブン-イレブン
+札幌狸小路4丁目店
+北海道札幌市中央区南3条西4丁目
+16-3
+電話：011-207-5011 レジ＃1
+事業者登録番号5430003008777
+2026年09月19日（土）22:34 責197
+領収書
+い・ろ・は・す天然水540ml ＊118
+小計（税抜8%） ¥118
+消費税等（8%） ¥9
+合計 ¥127
+（税率 8%対象 ¥127）
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["originalAmount"], 127)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-19T22:34")
+        self.assertEqual(result["category"], "food")
+
     def test_parses_mega_don_quijote_gummy_food_receipt(self):
         text = """9
 MEGA

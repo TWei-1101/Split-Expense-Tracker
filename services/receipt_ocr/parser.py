@@ -484,6 +484,10 @@ def extract_structured_receipt(ocr_text: str) -> dict:
         "         * 果汁グミ / カジュウグミ ➔ 明治果汁軟糖 (カジュウグミヨウナシ為洋梨口味)\n"
         "         * 牛めし (牛めし大、牛めし並、牛めし特) ➔ 松屋牛肉飯 (大碗 / 中碗 / 特大碗) 或 牛肉丼\n"
         "         * 豚めし ➔ 松屋豚肉飯 (豬肉丼)\n"
+        "         * い・ろ・は・す / いろはす ➔ I LOHAS 日本可口可樂天然水 (例如：い・ろ・は・す天然水540ml ➔ I LOHAS 天然水 540ml)\n"
+        "         * サントリー天然水 ➔ Suntory 三得利天然水\n"
+        "         * 綾鷹 ➔ 綾鷹綠茶\n"
+        "         * 午後の紅茶 ➔ Kirin 午後紅茶\n"
         "       - 範例翻譯：\n"
         "         紅ずわい ➔ 紅楚蟹 / 紅松葉蟹\n"
         "         真ほっけ / ほっけ ➔ 烤真花魚一夜干\n"
@@ -598,6 +602,16 @@ def extract_structured_receipt(ocr_text: str) -> dict:
         "豚めし大": "松屋豚肉飯 (大碗)",
         "豚めし並": "松屋豚肉飯 (中碗)",
         "豚めし": "松屋豚肉飯 (豬肉丼)",
+        "い・ろ・は・す": "I LOHAS 天然水",
+        "いろはす": "I LOHAS 天然水",
+        "サントリー天然水": "Suntory 天然水",
+        "南アルプス": "Suntory 南阿爾卑斯天然水",
+        "綾鷹": "綾鷹 綠茶",
+        "お〜いお茶": "伊藤園 綠茶",
+        "おーいお茶": "伊藤園 綠茶",
+        "生茶": "Kirin 生茶",
+        "午後の紅茶": "Kirin 午後紅茶",
+        "カルピス": "可爾必思",
         "ポカリスエット": "寶礦力水得 500ml",
         "ポカリ": "寶礦力水得",
         "アクエリアス": "水份補給飲料 (Aquarius)",
@@ -699,6 +713,10 @@ def extract_structured_receipt(ocr_text: str) -> dict:
                 elif re.search(r"豚めし", orig) or re.search(r"豚めし", final_name):
                     size = "大碗" if ("大" in orig or "大" in final_name) else ("特大碗" if ("特" in orig or "特" in final_name) else ("中碗" if ("並" in orig or "並" in final_name) else ""))
                     final_name = f"松屋豚肉飯 ({size})" if size else "松屋豚肉飯 (豬肉丼)"
+                if re.search(r"い・ろ・は・す|いろはす|ｲﾛﾊｽ", orig) or re.search(r"い・ろ・は・す|いろはす|ｲﾛﾊｽ", final_name):
+                    vol_m = re.search(r"(\d+(?:\.\d+)?\s*(?:ml|l|ML|L))", orig + " " + final_name)
+                    vol = f" {vol_m.group(1)}" if vol_m else ""
+                    final_name = f"I LOHAS 天然水{vol}".strip()
                 if "牛乳" in orig and "北大" in ocr_text and "北大" not in final_name:
                     final_name = "北大冰鮮奶"
                 if "西興部" in orig or "西興部" in final_name or "玉米冰淇淋" in final_name:
