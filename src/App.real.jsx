@@ -1031,6 +1031,112 @@ async function _getStorage() {
                 });
             };
 
+            const splitExpenseItem = (idx, partsCount = 2) => {
+                const parts = Math.max(2, Math.floor(partsCount || 2));
+                setNewExpense(prev => {
+                    const items = [...(prev.items || [])];
+                    const target = items[idx];
+                    if (!target) return prev;
+                    const totalAmt = Number(target.amount) || 0;
+                    let splitAmounts = [];
+                    if (Number.isInteger(totalAmt)) {
+                        const base = Math.floor(totalAmt / parts);
+                        const rem = totalAmt - (base * parts);
+                        splitAmounts = Array.from({ length: parts }, (_, i) => base + (i < rem ? 1 : 0));
+                    } else {
+                        const cents = Math.round(totalAmt * 100);
+                        const baseCents = Math.floor(cents / parts);
+                        const remCents = cents - (baseCents * parts);
+                        splitAmounts = Array.from({ length: parts }, (_, i) => {
+                            const c = baseCents + (i < remCents ? 1 : 0);
+                            return c % 100 === 0 ? c / 100 : Number((c / 100).toFixed(2));
+                        });
+                    }
+
+                    const cleanName = target.name.replace(/\s*\(\d+\/\d+\)$/, '');
+                    const newPieces = splitAmounts.map((amt, i) => ({
+                        ...target,
+                        name: `${cleanName} (${i + 1}/${parts})`,
+                        amount: amt,
+                        quantity: 1,
+                    }));
+
+                    items.splice(idx, 1, ...newPieces);
+                    return { ...prev, items };
+                });
+
+                setItemAssignments(prev => {
+                    const next = {};
+                    const oldAssign = prev[idx];
+                    Object.keys(prev).forEach(keyStr => {
+                        const k = Number(keyStr);
+                        if (k < idx) {
+                            next[k] = prev[k];
+                        } else if (k > idx) {
+                            next[k + parts - 1] = prev[k];
+                        }
+                    });
+                    if (oldAssign) {
+                        next[idx] = oldAssign;
+                    }
+                    return next;
+                });
+            };
+
+            const splitAllMultiQuantityItems = () => {
+                setNewExpense(prev => {
+                    const currentItems = prev.items || [];
+                    const newItems = [];
+                    const newAssignments = {};
+                    let currentNewIdx = 0;
+
+                    currentItems.forEach((target, oldIdx) => {
+                        const qty = target.quantity && target.quantity > 1 ? Math.floor(target.quantity) : 1;
+                        if (qty > 1) {
+                            const totalAmt = Number(target.amount) || 0;
+                            let splitAmounts = [];
+                            if (Number.isInteger(totalAmt)) {
+                                const base = Math.floor(totalAmt / qty);
+                                const rem = totalAmt - (base * qty);
+                                splitAmounts = Array.from({ length: qty }, (_, i) => base + (i < rem ? 1 : 0));
+                            } else {
+                                const cents = Math.round(totalAmt * 100);
+                                const baseCents = Math.floor(cents / qty);
+                                const remCents = cents - (baseCents * qty);
+                                splitAmounts = Array.from({ length: qty }, (_, i) => {
+                                    const c = baseCents + (i < remCents ? 1 : 0);
+                                    return c % 100 === 0 ? c / 100 : Number((c / 100).toFixed(2));
+                                });
+                            }
+
+                            const cleanName = target.name.replace(/\s*\(\d+\/\d+\)$/, '');
+                            const oldAssign = itemAssignments[oldIdx];
+                            splitAmounts.forEach((amt, i) => {
+                                newItems.push({
+                                    ...target,
+                                    name: `${cleanName} (${i + 1}/${qty})`,
+                                    amount: amt,
+                                    quantity: 1,
+                                });
+                                if (oldAssign && i === 0) {
+                                    newAssignments[currentNewIdx] = oldAssign;
+                                }
+                                currentNewIdx++;
+                            });
+                        } else {
+                            newItems.push(target);
+                            if (itemAssignments[oldIdx]) {
+                                newAssignments[currentNewIdx] = itemAssignments[oldIdx];
+                            }
+                            currentNewIdx++;
+                        }
+                    });
+
+                    setItemAssignments(newAssignments);
+                    return { ...prev, items: newItems };
+                });
+            };
+
             const handleCurrencyChange = (e) => {
                  const selectedCurrency = e.target.value;
                  setNewExpense(prev => ({
@@ -1699,19 +1805,42 @@ async function _getStorage() {
                         <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
                           <div className="flex items-center justify-between mb-2">
                             <span className="text-xs font-bold text-gray-700">🧾 已辨識明細（{newExpense.items.length} 項）</span>
-                            <span className="text-[11px] text-gray-500">已自動翻譯中文</span>
+                            {newExpense.items.some(it => (it.quantity || 1) > 1) ? (
+                              <button
+                                type="button"
+                                onClick={splitAllMultiQuantityItems}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold text-purple-700 bg-white hover:bg-purple-100 border border-purple-200 shadow-2xs transition cursor-pointer"
+                                title="將所有數量大於 1 的商品一鍵拆分成單件品項"
+                              >
+                                ✂️ 全部依數量拆開
+                              </button>
+                            ) : (
+                              <span className="text-[11px] text-gray-500">已自動翻譯中文</span>
+                            )}
                           </div>
                           <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
                             {newExpense.items.map((item, idx) => (
                               <div key={idx} className="flex items-center justify-between rounded-lg bg-white p-2 border border-gray-100 text-xs shadow-xs">
                                 <div className="min-w-0 flex-grow pr-2">
-                                  <span className="font-semibold text-gray-800">{item.name}</span>
-                                  {item.originalName && item.originalName !== item.name && (
-                                    <span className="text-gray-400 ml-1">({item.originalName})</span>
-                                  )}
-                                  {item.quantity > 1 && (
-                                    <span className="ml-1 text-primaryColor-600 font-bold">x{item.quantity}</span>
-                                  )}
+                                  <div className="flex items-center flex-wrap gap-1">
+                                    <span className="font-semibold text-gray-800">{item.name}</span>
+                                    {item.originalName && item.originalName !== item.name && (
+                                      <span className="text-gray-400">({item.originalName})</span>
+                                    )}
+                                    {(item.quantity || 1) > 1 && (
+                                      <>
+                                        <span className="text-primaryColor-600 font-bold">x{item.quantity}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => splitExpenseItem(idx, item.quantity)}
+                                          className="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 transition cursor-pointer"
+                                          title={`將此商品依數量拆分成 ${item.quantity} 筆獨立品項`}
+                                        >
+                                          ✂️ 拆成 {item.quantity} 項
+                                        </button>
+                                      </>
+                                    )}
+                                  </div>
                                 </div>
                                 <span className="font-bold text-gray-700 flex-shrink-0">
                                   {newExpense.currency} {Number(item.amount).toLocaleString('zh-TW')}
@@ -1851,9 +1980,21 @@ async function _getStorage() {
                       {splitMode === 'items' ? (
                         <div className="space-y-3">
                           <div className="bg-purple-50/70 border border-purple-200 rounded-xl p-3 space-y-2">
-                            <p className="text-xs font-semibold text-purple-950 leading-relaxed">
-                              點選各品項歸屬成員（未標記者自動全歸主付款人）：
-                            </p>
+                            <div className="flex items-center justify-between flex-wrap gap-2 pb-1">
+                              <p className="text-xs font-semibold text-purple-950 leading-relaxed">
+                                點選各品項歸屬成員（未標記者自動全歸主付款人）：
+                              </p>
+                              {newExpense.items.some(it => (it.quantity || 1) > 1) && (
+                                <button
+                                  type="button"
+                                  onClick={splitAllMultiQuantityItems}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold text-purple-800 bg-white hover:bg-purple-100 border border-purple-300 shadow-2xs transition cursor-pointer"
+                                  title="將所有數量大於 1 的商品一鍵拆分成單件品項"
+                                >
+                                  ✂️ 全部依數量拆開
+                                </button>
+                              )}
+                            </div>
                             <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
                               {newExpense.items.map((item, idx) => {
                                 const currentAssign = itemAssignments[idx]; // undefined | 'all' | memberId
@@ -1861,13 +2002,34 @@ async function _getStorage() {
                                   <div key={idx} className="bg-white p-2.5 rounded-lg border border-gray-200 shadow-2xs space-y-2">
                                     <div className="flex justify-between items-start text-xs">
                                       <div className="min-w-0 flex-1 pr-2">
-                                        <span className="font-semibold text-gray-800">{item.name}</span>
-                                        {item.originalName && item.originalName !== item.name && (
-                                          <span className="text-gray-400 ml-1">({item.originalName})</span>
-                                        )}
-                                        {item.quantity > 1 && (
-                                          <span className="ml-1 text-primaryColor-600 font-bold">x{item.quantity}</span>
-                                        )}
+                                        <div className="flex items-center flex-wrap gap-1">
+                                          <span className="font-semibold text-gray-800">{item.name}</span>
+                                          {item.originalName && item.originalName !== item.name && (
+                                            <span className="text-gray-400">({item.originalName})</span>
+                                          )}
+                                          {(item.quantity || 1) > 1 ? (
+                                            <>
+                                              <span className="text-primaryColor-600 font-bold">x{item.quantity}</span>
+                                              <button
+                                                type="button"
+                                                onClick={() => splitExpenseItem(idx, item.quantity)}
+                                                className="ml-1 inline-flex items-center gap-0.5 px-2 py-0.5 rounded text-[11px] font-semibold text-purple-700 bg-purple-100 hover:bg-purple-200 border border-purple-300 transition cursor-pointer shadow-2xs"
+                                                title={`將此商品依數量拆分成 ${item.quantity} 筆獨立品項以分給不同人`}
+                                              >
+                                                ✂️ 拆成 {item.quantity} 項分給不同人
+                                              </button>
+                                            </>
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              onClick={() => splitExpenseItem(idx, 2)}
+                                              className="ml-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] text-gray-500 hover:text-purple-700 bg-gray-50 hover:bg-purple-50 border border-gray-200 transition cursor-pointer"
+                                              title="將此品項金額均分拆成 2 筆"
+                                            >
+                                              ✂️ 均分拆 2
+                                            </button>
+                                          )}
+                                        </div>
                                       </div>
                                       <span className="font-bold text-gray-800 flex-shrink-0 font-mono">
                                         {newExpense.currency} {Number(item.amount).toLocaleString('zh-TW')}
