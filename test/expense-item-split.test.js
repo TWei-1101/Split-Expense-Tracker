@@ -1,45 +1,41 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { splitItemAmounts, splitExpenseItems } from '../src/lib/expense-item-split.js';
+import { computeItemSplits } from '../src/lib/expense-math.js';
 
-function splitItemAmounts(totalAmt, parts) {
-  if (Number.isInteger(totalAmt)) {
-    const base = Math.floor(totalAmt / parts);
-    const rem = totalAmt - (base * parts);
-    return Array.from({ length: parts }, (_, i) => base + (i < rem ? 1 : 0));
+test('currency precision applies to integer and decimal totals', () => {
+  assert.deepEqual(splitItemAmounts(11, 2, 'USD'), [5.5, 5.5]);
+  assert.deepEqual(splitItemAmounts(11, 2, 'EUR'), [5.5, 5.5]);
+  assert.deepEqual(splitItemAmounts(11, 2, 'JPY'), [6, 5]);
+  assert.deepEqual(splitItemAmounts(2728, 3, 'JPY'), [910, 909, 909]);
+  assert.deepEqual(splitItemAmounts(10.55, 3, 'USD'), [3.52, 3.52, 3.51]);
+});
+
+for (const assignment of ['B', 'all', undefined]) {
+  for (const index of [0, null]) {
+    test('preserves allocation ' + assignment + ', index ' + index, () => {
+      const items = [{ name: 'Product', amount: 100, quantity: 2 }, { name: 'Other', amount: 20 }];
+      const assignments = { 1: 'B', ...(assignment ? { 0: assignment } : {}) };
+      const result = splitExpenseItems(items, assignments, 'TWD', index, 2);
+      assert.equal(result.items.length, 3);
+      assert.equal(result.assignments[2], 'B');
+      assert.equal(result.assignments[0], assignment);
+      assert.equal(result.assignments[1], assignment);
+      assert.deepEqual(
+        computeItemSplits(result.items, result.assignments, 'A', ['A', 'B'], 120),
+        computeItemSplits(items, assignments, 'A', ['A', 'B'], 120),
+      );
+      assert.equal(items.length, 2);
+      assert.equal(assignments[1], 'B');
+    });
   }
-  const cents = Math.round(totalAmt * 100);
-  const baseCents = Math.floor(cents / parts);
-  const remCents = cents - (baseCents * parts);
-  return Array.from({ length: parts }, (_, i) => {
-    const c = baseCents + (i < remCents ? 1 : 0);
-    return c % 100 === 0 ? c / 100 : Number((c / 100).toFixed(2));
-  });
 }
 
-test('splitItemAmounts evenly distributes integer totals with exact sum conservation', () => {
-  const parts2 = splitItemAmounts(254, 2);
-  assert.deepEqual(parts2, [127, 127]);
-  assert.equal(parts2.reduce((s, a) => s + a, 0), 254);
-
-  const parts3 = splitItemAmounts(2728, 3);
-  assert.deepEqual(parts3, [910, 909, 909]);
-  assert.equal(parts3.reduce((s, a) => s + a, 0), 2728);
-});
-
-test('splitItemAmounts evenly distributes decimal totals with exact cents conservation', () => {
-  const parts2 = splitItemAmounts(10.50, 2);
-  assert.deepEqual(parts2, [5.25, 5.25]);
-  assert.equal(parts2.reduce((s, a) => s + a, 0), 10.50);
-
-  const parts3 = splitItemAmounts(10.55, 3);
-  assert.deepEqual(parts3, [3.52, 3.52, 3.51]);
-  assert.equal(Number(parts3.reduce((s, a) => s + a, 0).toFixed(2)), 10.55);
-});
-
-test('App.real.jsx defines splitExpenseItem and splitAllMultiQuantityItems', () => {
-  const source = readFileSync(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
-  assert.match(source, /const splitExpenseItem =/);
-  assert.match(source, /const splitAllMultiQuantityItems =/);
-  assert.match(source, /✂️ 全部依數量拆開/);
+test('bulk and repeated splits retain later assignments and conserve total', () => {
+  const original = [{ name: 'First', amount: 11, quantity: 2 }, { name: 'Second', amount: 10.55, quantity: 3 }];
+  const first = splitExpenseItems(original, { 0: 'A', 1: 'B' }, 'USD');
+  assert.deepEqual(first.assignments, { 0: 'A', 1: 'A', 2: 'B', 3: 'B', 4: 'B' });
+  const again = splitExpenseItems(first.items, first.assignments, 'USD', 1, 2);
+  assert.equal(again.items.reduce((sum, item) => sum + Math.round(item.amount * 100), 0), 2155);
+  assert.deepEqual(again.assignments, { 0: 'A', 1: 'A', 2: 'A', 3: 'B', 4: 'B', 5: 'B' });
 });
