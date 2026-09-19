@@ -79,6 +79,7 @@ import {
 import { shouldTriggerSwipeDelete } from './lib/swipe-delete.js';
 import { normalizeReceiptOcrResult, mergeReceiptOcrIntoExpense } from './lib/receipt-ocr.js';
 import { buildExpenseMemberList } from './lib/expense-members.js';
+import { splitExpenseItems } from './lib/expense-item-split.js';
 import { computeItemSplits, isSettlement, migrateExpenseIdentity, resolveExpenseConversion, validatePayers, getSearchSpendingSummary, matchesSearchKeyword } from './lib/expense-math.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
 // 避免 lucide-react 跟內聯 SVG 撞名。
@@ -1031,111 +1032,16 @@ async function _getStorage() {
                 });
             };
 
-            const splitExpenseItem = (idx, partsCount = 2) => {
-                const parts = Math.max(2, Math.floor(partsCount || 2));
-                setNewExpense(prev => {
-                    const items = [...(prev.items || [])];
-                    const target = items[idx];
-                    if (!target) return prev;
-                    const totalAmt = Number(target.amount) || 0;
-                    let splitAmounts = [];
-                    if (Number.isInteger(totalAmt)) {
-                        const base = Math.floor(totalAmt / parts);
-                        const rem = totalAmt - (base * parts);
-                        splitAmounts = Array.from({ length: parts }, (_, i) => base + (i < rem ? 1 : 0));
-                    } else {
-                        const cents = Math.round(totalAmt * 100);
-                        const baseCents = Math.floor(cents / parts);
-                        const remCents = cents - (baseCents * parts);
-                        splitAmounts = Array.from({ length: parts }, (_, i) => {
-                            const c = baseCents + (i < remCents ? 1 : 0);
-                            return c % 100 === 0 ? c / 100 : Number((c / 100).toFixed(2));
-                        });
-                    }
-
-                    const cleanName = target.name.replace(/\s*\(\d+\/\d+\)$/, '');
-                    const newPieces = splitAmounts.map((amt, i) => ({
-                        ...target,
-                        name: `${cleanName} (${i + 1}/${parts})`,
-                        amount: amt,
-                        quantity: 1,
-                    }));
-
-                    items.splice(idx, 1, ...newPieces);
-                    return { ...prev, items };
-                });
-
-                setItemAssignments(prev => {
-                    const next = {};
-                    const oldAssign = prev[idx];
-                    Object.keys(prev).forEach(keyStr => {
-                        const k = Number(keyStr);
-                        if (k < idx) {
-                            next[k] = prev[k];
-                        } else if (k > idx) {
-                            next[k + parts - 1] = prev[k];
-                        }
-                    });
-                    if (oldAssign) {
-                        next[idx] = oldAssign;
-                    }
-                    return next;
-                });
+            const applyItemSplit = (index = null, parts = 2) => {
+                const result = splitExpenseItems(
+                    newExpense.items || [], itemAssignments, newExpense.currency, index, parts,
+                );
+                setNewExpense(prev => ({ ...prev, items: result.items }));
+                setItemAssignments(result.assignments);
             };
 
-            const splitAllMultiQuantityItems = () => {
-                setNewExpense(prev => {
-                    const currentItems = prev.items || [];
-                    const newItems = [];
-                    const newAssignments = {};
-                    let currentNewIdx = 0;
-
-                    currentItems.forEach((target, oldIdx) => {
-                        const qty = target.quantity && target.quantity > 1 ? Math.floor(target.quantity) : 1;
-                        if (qty > 1) {
-                            const totalAmt = Number(target.amount) || 0;
-                            let splitAmounts = [];
-                            if (Number.isInteger(totalAmt)) {
-                                const base = Math.floor(totalAmt / qty);
-                                const rem = totalAmt - (base * qty);
-                                splitAmounts = Array.from({ length: qty }, (_, i) => base + (i < rem ? 1 : 0));
-                            } else {
-                                const cents = Math.round(totalAmt * 100);
-                                const baseCents = Math.floor(cents / qty);
-                                const remCents = cents - (baseCents * qty);
-                                splitAmounts = Array.from({ length: qty }, (_, i) => {
-                                    const c = baseCents + (i < remCents ? 1 : 0);
-                                    return c % 100 === 0 ? c / 100 : Number((c / 100).toFixed(2));
-                                });
-                            }
-
-                            const cleanName = target.name.replace(/\s*\(\d+\/\d+\)$/, '');
-                            const oldAssign = itemAssignments[oldIdx];
-                            splitAmounts.forEach((amt, i) => {
-                                newItems.push({
-                                    ...target,
-                                    name: `${cleanName} (${i + 1}/${qty})`,
-                                    amount: amt,
-                                    quantity: 1,
-                                });
-                                if (oldAssign && i === 0) {
-                                    newAssignments[currentNewIdx] = oldAssign;
-                                }
-                                currentNewIdx++;
-                            });
-                        } else {
-                            newItems.push(target);
-                            if (itemAssignments[oldIdx]) {
-                                newAssignments[currentNewIdx] = itemAssignments[oldIdx];
-                            }
-                            currentNewIdx++;
-                        }
-                    });
-
-                    setItemAssignments(newAssignments);
-                    return { ...prev, items: newItems };
-                });
-            };
+            const splitExpenseItem = (idx, partsCount = 2) => applyItemSplit(idx, partsCount);
+            const splitAllMultiQuantityItems = () => applyItemSplit();
 
             const handleCurrencyChange = (e) => {
                  const selectedCurrency = e.target.value;
