@@ -50,11 +50,23 @@ def verify_firebase_id_token(authorization: str | None) -> dict:
 
 
 def extract_text_apple_vision(image_path: str) -> str | None:
+    enhanced_path = image_path + ".enh.jpg"
     try:
         import Vision
         from Cocoa import NSURL
+        from PIL import Image, ImageEnhance
 
-        url = NSURL.fileURLWithPath_(image_path)
+        target_path = image_path
+        try:
+            with Image.open(image_path) as im:
+                im = ImageEnhance.Contrast(im).enhance(1.25)
+                im = ImageEnhance.Sharpness(im).enhance(1.4)
+                im.save(enhanced_path, format="JPEG", quality=95)
+            target_path = enhanced_path
+        except Exception:
+            target_path = image_path
+
+        url = NSURL.fileURLWithPath_(target_path)
         req = Vision.VNRecognizeTextRequest.alloc().init()
         req.setRecognitionLanguages_(["ja-JP", "zh-Hant", "en-US"])
         req.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
@@ -109,6 +121,12 @@ def extract_text_apple_vision(image_path: str) -> str | None:
                 return "\n".join(t for _, t in sorted_lines)
     except Exception as e:
         print(f"Apple Vision OCR error: {e}", flush=True)
+    finally:
+        if os.path.exists(enhanced_path):
+            try:
+                os.remove(enhanced_path)
+            except OSError:
+                pass
     return None
 
 

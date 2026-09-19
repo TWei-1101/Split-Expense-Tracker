@@ -15,7 +15,7 @@ YEN_AMOUNT = re.compile(
     re.I,
 )
 DATE = re.compile(
-    r"(?<!\d)(\d{2}|\d{4})(?:[/-]|年)\s*(\d{1,2})(?:[/-]|月)\s*(\d{1,2})(?:日)?(?!\d)"
+    r"(?<!\d)(\d{2}|\d{4})(?:[/-]|年)\s*(\d{1,2})(?:[/-]|月)\s*(\d{1,2})(?:日|月(?!\d))?(?!\d)"
 )
 TIME = re.compile(r"(?<!\d)([01]?\d|2[0-3])(?::|時|月(?=\d{2}分))([0-5]\d|[6][0-9])(?:分)?(?!\d)")
 
@@ -457,6 +457,9 @@ def extract_structured_receipt(ocr_text: str) -> dict:
         "   - 日本通常為 \"JPY\"，台灣為 \"TWD\"，美國為 \"USD\"。\n"
         "5. occurredAt (消費時間)：\n"
         "   - ISO 格式 YYYY-MM-DDTHH:MM，若無時間則填 YYYY-MM-DD。\n"
+        "   - 【日期精確校驗】：請務必仔細核對收據上的實際日期與時間（例如 2026年9月19日 14時22分 ➔ 2026-09-19T14:22）。\n"
+        "     * 日本熱感點陣收據若有「19月」請識別為「19日」（一年僅12個月，第二個「月」常為「日」之誤識）。\n"
+        "     * 勿將「9月」誤判為「2月」或「1月」。\n"
         "6. items (購買商品明細與繁體中文翻譯)：\n"
         "   - 每個品項為物件：\n"
         "     * \"name\": 【必須是精準、道地的繁體中文台灣習慣用語，嚴格禁止直接複製日文原名或保留日文假名】！\n"
@@ -774,14 +777,15 @@ def parse_receipt_text(text: str, extract_items: bool = False) -> dict:
 
     occurred_at = None
     for i, line in enumerate(lines):
-        m = DATE.search(line)
+        clean_line = re.sub(r"(\d{2,4}年\s*\d{1,2}月\s*\d{1,2})月", r"\1日", line)
+        m = DATE.search(clean_line)
         if m:
             year, month, day = map(int, m.groups())
             if year < 100:
                 year += 2000
             if not (1 <= month <= 12 and 1 <= day <= 31):
                 continue
-            tm = TIME.search(line[m.end():]) or TIME.search(line[:m.start()])
+            tm = TIME.search(clean_line[m.end():]) or TIME.search(clean_line[:m.start()])
             if tm:
                 occurred_at = f"{year:04d}-{month:02d}-{day:02d}T{_format_time(tm)}"
                 break

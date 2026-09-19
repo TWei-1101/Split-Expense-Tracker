@@ -584,6 +584,29 @@ UC モチプヨ北海道産生クリーム 127軽
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-16T19:44")
 
+    def test_parses_workman_dot_matrix_receipt_date(self):
+        text = """WORKMAN Plus +
+ワークマンプラス 札幌八軒店
+北海道札幌市西区八軒7条東5丁目3番13号
+TEL 011-727-1122
+毎度ご来店ありがとうございます。
+返品・交換の際は、ご購入頂いた店舗へ
+お買い上げ日より14日以内に必ずレシート
+＜領 収 証＞
+2026年9月19日14時22分 通番：8144 0001
+登録番号：1-6430003016102
+00100106シン・呼吸する靴下アイスピー
+内 990 1個 990
+小計 4個 3,475
+（10.0% 内税対象額 3,475）
+合計 3,475
+クレジット支払額 3,475
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["originalAmount"], 3475)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-19T14:22")
+
     def test_parses_mega_don_quijote_gummy_food_receipt(self):
         text = """9
 MEGA
