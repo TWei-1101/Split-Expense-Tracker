@@ -471,6 +471,8 @@ def extract_structured_receipt(ocr_text: str) -> dict:
         "         * ファミチキ ➔ 全家原味無骨炸雞排\n"
         "         * ななチキ / ナナチキ ➔ 7-11 經典炸雞排\n"
         "         * セブンプレミアム ➔ 7-Eleven 頂級自有品牌 (7-Premium)\n"
+        "         * ポケぷに (4903333213337) ➔ LOTTE 寶可夢QQ造型水果軟糖 (伊布家族，這是知名軟糖零食，絕非毛絨玩偶！)\n"
+        "         * 果汁グミ / カジュウグミ ➔ 明治果汁軟糖 (カジュウグミヨウナシ為洋梨口味)\n"
         "       - 範例翻譯：\n"
         "         紅ずわい ➔ 紅楚蟹 / 紅松葉蟹\n"
         "         真ほっけ / ほっけ ➔ 烤真花魚一夜干\n"
@@ -572,6 +574,11 @@ def extract_structured_receipt(ocr_text: str) -> dict:
         "お通し": "開胃小菜",
         "恐竜足跡カレー": "恐龍足跡咖哩飯",
         "恐竜足跡": "恐龍足跡咖哩飯",
+        "ポケぷに": "LOTTE 寶可夢QQ造型水果軟糖 (伊布家族)",
+        "果汁グミspecial": "明治果汁軟糖 (Special)",
+        "果汁グミ": "明治果汁軟糖",
+        "カジュウグミヨウナシ": "明治果汁軟糖 (洋梨口味)",
+        "カジュウグミ": "明治果汁軟糖",
         "ポカリスエット": "寶礦力水得 500ml",
         "ポカリ": "寶礦力水得",
         "アクエリアス": "水份補給飲料 (Aquarius)",
@@ -816,32 +823,37 @@ def parse_receipt_text(text: str, extract_items: bool = False) -> dict:
             known_merchant = label
             break
 
-    if known_merchant:
-        description = known_merchant
-    elif structured.get("description"):
+    valid_llm_desc = None
+    if structured.get("description"):
         llm_desc = str(structured["description"]).strip()
         cleaned_llm = re.sub(r"[\s\u3000=<-]+", "", llm_desc).upper()
         norm_llm = re.sub(r"^[\[\]［］【】()（）]+|[\[\]［］【】()（）]+$", "", cleaned_llm)
         if (cleaned_llm not in GENERIC_DOCUMENT_TITLES and norm_llm not in GENERIC_DOCUMENT_TITLES
                 and not re.search(r"^[\[\]［］【】()（）\s]*(?:receipt|no\.|tel|fax|date|領収|领收|登録番号|登錄番号|登绿番号)", llm_desc, re.I)
                 and len(llm_desc) >= 2):
-            description = llm_desc
-        else:
-            description = base_desc
+            valid_llm_desc = llm_desc
+
+    if valid_llm_desc:
+        description = valid_llm_desc
+    elif known_merchant:
+        description = known_merchant
     else:
         description = base_desc
 
     # Reconcile Category
-    if structured.get("category") == "food":
-        has_non_food = any(
-            any(k in (it.get("originalName", "") + it.get("name", "")).lower()
-                for k in ("錠", "カプセル", "化粧", "マスク", "インナー", "tシャツ", "パンツ", "ソックス", "洗剤", "シャンプー", "薬品", "医薬", "湿布", "膏藥", "包帯", "リップ", "サプリ", "ビタミン"))
-            for it in items
-        )
-        if not has_non_food:
-            category = "food"
-        else:
-            category = "other"
+    is_pure_8_percent = bool(
+        re.search(r"(?:8%|８％|軽減)", receipt_text_lower)
+        and not re.search(r"(?:10%|１０％|標準税率)", receipt_text_lower)
+    )
+
+    has_non_food = any(
+        any(k in (it.get("originalName", "") + it.get("name", "")).lower()
+            for k in ("錠", "カプセル", "化粧", "マスク", "インナー", "tシャツ", "パンツ", "ソックス", "洗剤", "洗劑", "シャンプー", "薬品", "医薬", "湿布", "膏藥", "包帯", "リップ", "サプリ", "ビタミン"))
+        for it in items
+    )
+
+    if (structured.get("category") == "food" or is_pure_8_percent) and not has_non_food:
+        category = "food"
     elif any(keyword.casefold() in receipt_text_lower for _, keywords in RETAIL_MERCHANTS for keyword in keywords):
         category = "other"
     elif any(keyword.casefold() in receipt_text_lower for _, keywords in FOOD_MERCHANTS for keyword in keywords):

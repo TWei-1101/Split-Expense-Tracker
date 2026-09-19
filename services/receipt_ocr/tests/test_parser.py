@@ -584,6 +584,34 @@ UC モチプヨ北海道産生クリーム 127軽
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-16T19:44")
 
+    def test_parses_mega_don_quijote_gummy_food_receipt(self):
+        text = """9
+MEGA
+ドンキホーテ
+本社：東京都目黒区青葉台2-19－10
+様
+MEGA新川店 TEL0570-057-311
+営業時間 9:00～翌2:00
+2026年09月19日（土）13:35 レジ0008
+責No＊＊＊＊＊589
+4903333213337JAN
+ポケぷにイーブイフレン ¥198
+4902777256702JAN
+＊果汁グミSpecial ¥198
+4902777257525JAN
+＊ カジュウグミヨウナシ ¥128
+小計 ¥524
+8%対象額 ¥524
+8%税額 ¥41
+合計 ¥565
+交通系IC ¥565
+お買上点数 3点
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["originalAmount"], 565)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-19T13:35")
+
     def test_parses_lawson_susukino_dessert_receipt(self):
         text = """LAWSON
 すすきの南8条店
