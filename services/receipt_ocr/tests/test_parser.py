@@ -607,6 +607,25 @@ TEL 011-727-1122
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-19T14:22")
 
+    def test_parses_matsuya_beef_bowl_receipt(self):
+        text = """2026年09月19日（土） 22時57分 01号機
+（税込）
+＊牛めし大 1枚 ¥730-
+合計 1枚 ¥730-
+軽減税率対象（ 8%） ¥730-
+＜決済内訳＞
+交通系電子マネー ¥730-
+（株）松屋フーズ すすきの店
+TEL :080-5928-0973
+0711
+登録番号：T8012401033917
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["originalAmount"], 730)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-19T22:57")
+        self.assertEqual(result["category"], "food")
+
     def test_parses_mega_don_quijote_gummy_food_receipt(self):
         text = """9
 MEGA

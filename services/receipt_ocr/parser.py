@@ -103,6 +103,12 @@ FOOD_MERCHANTS = (
     ("炉端 KORONAGIRAI", ("koronagirai", "koronagirat", "0155-67-5604")),
     ("別海町 レストランNOTSUKE", ("レストランnotsuke", "notsuke", "野付", "別海町観光開発公社", "0153-82-1270")),
     ("麺屋 雪風", ("麺屋 雪風", "麺屋雪風", "雪風", "011-512-3022")),
+    ("松屋", ("松屋フーズ", "松屋", "お屋フーズ", "matsuya", "牛めし")),
+    ("吉野家", ("吉野家", "yoshinoya")),
+    ("すき家", ("すき家", "sukiya")),
+    ("彌生軒", ("やよい軒", "彌生軒", "yayoiken")),
+    ("大戶屋", ("大戸屋", "大戶屋", "ootoya")),
+    ("CoCo壹番屋", ("coco壱番屋", "coco一番屋", "ココイチ", "coco ichibanya")),
     ("北海道大學博物館 咖啡廳 (ぽらす)", ("ミュージアムカフェ ぽらす", "ミュージアムカフェ ぼらす", "ミュージアムカフェぽらす", "ミュージアムカフェぼらす", "ミュージアムカフェ", "ぽらす", "ぼらす", "北海道大学総合博物館", "08018918073", "t9430005003764")),
 )
 
@@ -476,6 +482,8 @@ def extract_structured_receipt(ocr_text: str) -> dict:
         "         * セブンプレミアム ➔ 7-Eleven 頂級自有品牌 (7-Premium)\n"
         "         * ポケぷに (4903333213337) ➔ LOTTE 寶可夢QQ造型水果軟糖 (伊布家族，這是知名軟糖零食，絕非毛絨玩偶！)\n"
         "         * 果汁グミ / カジュウグミ ➔ 明治果汁軟糖 (カジュウグミヨウナシ為洋梨口味)\n"
+        "         * 牛めし (牛めし大、牛めし並、牛めし特) ➔ 松屋牛肉飯 (大碗 / 中碗 / 特大碗) 或 牛肉丼\n"
+        "         * 豚めし ➔ 松屋豚肉飯 (豬肉丼)\n"
         "       - 範例翻譯：\n"
         "         紅ずわい ➔ 紅楚蟹 / 紅松葉蟹\n"
         "         真ほっけ / ほっけ ➔ 烤真花魚一夜干\n"
@@ -582,6 +590,14 @@ def extract_structured_receipt(ocr_text: str) -> dict:
         "果汁グミ": "明治果汁軟糖",
         "カジュウグミヨウナシ": "明治果汁軟糖 (洋梨口味)",
         "カジュウグミ": "明治果汁軟糖",
+        "牛めし大": "松屋牛肉飯 (大碗)",
+        "牛めし並": "松屋牛肉飯 (中碗)",
+        "牛めし特": "松屋牛肉飯 (特大碗)",
+        "牛めし小": "松屋牛肉飯 (小碗)",
+        "牛めし": "松屋牛肉飯 (牛丼)",
+        "豚めし大": "松屋豚肉飯 (大碗)",
+        "豚めし並": "松屋豚肉飯 (中碗)",
+        "豚めし": "松屋豚肉飯 (豬肉丼)",
         "ポカリスエット": "寶礦力水得 500ml",
         "ポカリ": "寶礦力水得",
         "アクエリアス": "水份補給飲料 (Aquarius)",
@@ -677,6 +693,12 @@ def extract_structured_receipt(ocr_text: str) -> dict:
                         final_name = "LAWSON Uchi Café 爆餡生銅鑼燒"
                 if "モチプヨ" in orig or "もちぷよ" in orig:
                     final_name = "LAWSON Uchi Café 軟Q麻糬泡芙 (北海道產鮮奶油)"
+                if re.search(r"牛めし", orig) or re.search(r"牛めし", final_name):
+                    size = "大碗" if ("大" in orig or "大" in final_name) else ("特大碗" if ("特" in orig or "特" in final_name) else ("中碗" if ("並" in orig or "並" in final_name) else ""))
+                    final_name = f"松屋牛肉飯 ({size})" if size else "松屋牛肉飯 (牛丼)"
+                elif re.search(r"豚めし", orig) or re.search(r"豚めし", final_name):
+                    size = "大碗" if ("大" in orig or "大" in final_name) else ("特大碗" if ("特" in orig or "特" in final_name) else ("中碗" if ("並" in orig or "並" in final_name) else ""))
+                    final_name = f"松屋豚肉飯 ({size})" if size else "松屋豚肉飯 (豬肉丼)"
                 if "牛乳" in orig and "北大" in ocr_text and "北大" not in final_name:
                     final_name = "北大冰鮮奶"
                 if "西興部" in orig or "西興部" in final_name or "玉米冰淇淋" in final_name:
@@ -847,6 +869,9 @@ def parse_receipt_text(text: str, extract_items: bool = False) -> dict:
             desc_clean = re.sub(r"(?i)ツルハドラッグ|ツルハ|tsuruha", "鶴羽藥妝", desc_clean)
         if any(k in desc_clean.lower() for k in ("マツモトキヨシ", "マツキヨ", "matsukiyo", "matsumoto kiyoshi")):
             desc_clean = re.sub(r"(?i)マツモトキヨシ|マツキヨ|matsukiyo|matsumoto\s*kiyoshi", "松本清", desc_clean)
+        if any(k in desc_clean.lower() for k in ("お屋フーズ", "松屋フーズ", "松屋")):
+            desc_clean = re.sub(r"(?i)（株）\s*|株式会社\s*|お屋フーズ|松屋フーズ", "松屋", desc_clean).strip()
+            desc_clean = re.sub(r"\s+", " ", desc_clean)
         description = desc_clean
     elif known_merchant:
         description = known_merchant
