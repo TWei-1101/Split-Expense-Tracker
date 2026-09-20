@@ -437,6 +437,56 @@ def _get_minimax_key() -> str | None:
     return None
 
 
+def translate_japanese_items(items_to_translate: list[str], key: str | None = None) -> list[str]:
+    """Second-pass translation for any items that still contain Japanese kana."""
+    import json
+    import urllib.request
+    import re
+
+    if not items_to_translate:
+        return items_to_translate
+    key = key or _get_minimax_key()
+    if not key:
+        return items_to_translate
+
+    prompt = (
+        "請將下列日本發票上的日文商品名，全部翻譯成台灣旅客最熟悉、道地的繁體中文名稱。\n"
+        "【強制規定】：嚴格禁止在翻譯後的品名中保留任何日文平假名或片假名（如 ぁ-ん、ァ-ン）！每一個日文字都必須徹底翻譯為繁體中文或品牌英文。\n"
+        "常見北海道伴手禮：\n"
+        "- マルセイバターケーキ ➔ 六花亭 丸成奶油蛋糕\n"
+        "- マルセイバターサンド ➔ 六花亭 蘭姆葡萄奶油夾心餅\n"
+        "- 白い恋人 ➔ 白色戀人 (ホワイトブラック為黑白雙色拼裝)\n"
+        "- とうきびチョコ ➔ HORI 玉米巧克力棒\n"
+        "- じゃがいもコロコロ ➔ HORI 酥脆薯塊米果 (醤油為醬油味，山わさ為山葵味)\n"
+        "- じゃがポックル ➔ 薯條三兄弟\n"
+        "輸入 JSON 清單：\n" + json.dumps(items_to_translate, ensure_ascii=False) + "\n\n"
+        "請輸出純 JSON 陣列（只包含翻譯後的繁體中文字串，順序數量完全一致，不要任何 markdown 或說明文字）："
+    )
+    payload = {
+        "model": "MiniMax-Text-01",
+        "max_tokens": 800,
+        "temperature": 0.1,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    req = urllib.request.Request(
+        "https://api.minimax.io/anthropic/v1/messages",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            raw = data["content"][0]["text"].strip()
+            m = re.search(r"\[\s*.*?\s*\]", raw, re.DOTALL)
+            if m:
+                res = json.loads(m.group(0))
+                if isinstance(res, list) and len(res) == len(items_to_translate):
+                    return [str(x).strip() for x in res]
+    except Exception as e:
+        print("Second pass translation error:", e)
+    return items_to_translate
+
+
 def extract_structured_receipt(ocr_text: str) -> dict:
     """Extract full structured receipt data (merchant, category, total, time, items) via LLM."""
     import json
@@ -631,6 +681,17 @@ def extract_structured_receipt(ocr_text: str) -> dict:
         "やきとり": "綜合烤雞肉串",
         "とうきび茶": "玉米茶",
         "マルセイアイスサンド": "丸成冰淇淋夾心三明治",
+        "マルセイバターケーキ": "六花亭 丸成奶油蛋糕",
+        "マルセイバターサンド": "六花亭 蘭姆葡萄奶油夾心餅",
+        "白い恋人": "白色戀人",
+        "とうきびチョコ キャラメル": "HORI 焦糖玉米巧克力棒",
+        "とうきびチョコ": "HORI 玉米巧克力棒",
+        "じゃがいもコロコロ 醤油": "HORI 酥脆薯塊米果 (醬油味)",
+        "じゃがいもコロコロ 山わさ": "HORI 酥脆薯塊米果 (山葵味)",
+        "じゃがいもコロコロ": "HORI 酥脆薯塊米果",
+        "じゃがポックル": "Calbee 薯條三兄弟",
+        "美冬": "美冬 夾心千層酥",
+        "白いブラックサンダー": "白雷神巧克力",
         "サクサクパイ": "現烤酥脆派",
         "醍醐": "醍醐生藍莓夾心蛋糕",
         "個人 大人": "成人門票/全票",
@@ -730,6 +791,19 @@ def extract_structured_receipt(ocr_text: str) -> dict:
                     "amount": clean_amt,
                     "quantity": max(1, qty),
                 })
+
+        # Second-Pass: Translate any remaining items that still contain Japanese kana
+        untranslated = [
+            (idx, it["name"])
+            for idx, it in enumerate(result)
+            if re.search(r"[\u3040-\u309f\u30a0-\u30ff]", it["name"])
+        ]
+        if untranslated and minimax_key:
+            names_to_translate = [name for _, name in untranslated]
+            translated_names = translate_japanese_items(names_to_translate, minimax_key)
+            for (idx, _), trans in zip(untranslated, translated_names):
+                result[idx]["name"] = trans
+
         return result
 
     def parse_payload(raw_text: str) -> dict:

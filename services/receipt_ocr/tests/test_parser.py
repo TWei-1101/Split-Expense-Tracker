@@ -607,6 +607,24 @@ TEL 011-727-1122
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-19T14:22")
 
+    def test_parses_chitose_duty_free_receipt(self):
+        text = """NEW CHITOSE AIRPORT
+DUTY FREE SHOP
+新千歳空港免税店
+2026/09/20 13:22:35
+木」マルセイバターケーキ 5個入 833
+＊」白い恋人 24枚ホワイトブラック 2,120
+Jとうきびチョコ 10本入り 600
+Jとうきびチョコ キャラメル 10本 600
+Jじゃがいもコロコロ 醤油 436
+」じゃがいもコロコロ 山わさ 436
+合計 5,025
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["originalAmount"], 5025)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-20T13:22")
+
     def test_parses_cosmo_gas_station_receipt(self):
         text = """cosmo
 納品書（領収書）
