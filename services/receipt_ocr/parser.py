@@ -202,8 +202,9 @@ def _amount(line: str) -> int | float | None:
     # RapidOCR can emit fullwidth punctuation on a Japanese receipt.  Normalize
     # only numeric separators here, so a total such as ￥1，161 remains one
     # amount rather than two unrelated numbers (1 and 161).
-    # Also normalize period used as thousands separator (e.g. 1.700yen)
-    normalized = re.sub(r"(?<=\d)\.(?=\d{3}(?:\D|$))", ",", line.replace("，", ","))
+    # Also normalize period or colon used as thousands separator (e.g. 1.700yen, 1:500)
+    normalized = re.sub(r"(?<=\d)[:;](?=\d{3}(?:\D|$))", ",", line.replace("，", ","))
+    normalized = re.sub(r"(?<=\d)\.(?=\d{3}(?:\D|$))", ",", normalized)
     matches = AMOUNT.findall(normalized)
     if not matches:
         return None
@@ -453,6 +454,9 @@ def translate_japanese_items(items_to_translate: list[str], key: str | None = No
         "請將下列日本發票上的日文商品名，全部翻譯成台灣旅客最熟悉、道地的繁體中文名稱。\n"
         "【強制規定】：嚴格禁止在翻譯後的品名中保留任何日文平假名或片假名（如 ぁ-ん、ァ-ン）！每一個日文字都必須徹底翻譯為繁體中文或品牌英文。\n"
         "常見北海道伴手禮：\n"
+        "- ストレートバーム やわらか芽 ➔ 年輪家 經典柔軟年輪蛋糕 (1個入)\n"
+        "- マウントバーム しっかり芽 ➔ 年輪家 脆皮結實年輪蛋糕\n"
+        "- バームクーヘン / バーム ➔ 年輪蛋糕 (「バーム」是 Baumkuchen 年輪蛋糕之簡寫，絕非直髮膏或護髮油膏！)\n"
         "- マルセイバターケーキ ➔ 六花亭 丸成奶油蛋糕\n"
         "- マルセイバターサンド ➔ 六花亭 蘭姆葡萄奶油夾心餅\n"
         "- 白い恋人 ➔ 白色戀人 (ホワイトブラック為黑白雙色拼裝)\n"
@@ -541,6 +545,7 @@ def extract_structured_receipt(ocr_text: str) -> dict:
         "         * サントリー天然水 ➔ Suntory 三得利天然水\n"
         "         * 綾鷹 ➔ 綾鷹綠茶\n"
         "         * 午後の紅茶 ➔ Kirin 午後紅茶\n"
+        "         * ストレートバーム / マウントバーム / バーム ➔ 【年輪家 (ねんりん家) 年輪蛋糕】（「バーム」是 Baumkuchen 年輪蛋糕的簡寫，絕非直髮膏或美妝護膚油膏 Balm！例如：ストレートバームやわらか芽 ➔ 年輪家 經典柔軟年輪蛋糕）\n"
         "       - 範例翻譯：\n"
         "         紅ずわい ➔ 紅楚蟹 / 紅松葉蟹\n"
         "         真ほっけ / ほっけ ➔ 烤真花魚一夜干\n"
@@ -683,6 +688,14 @@ def extract_structured_receipt(ocr_text: str) -> dict:
         "マルセイアイスサンド": "丸成冰淇淋夾心三明治",
         "マルセイバターケーキ": "六花亭 丸成奶油蛋糕",
         "マルセイバターサンド": "六花亭 蘭姆葡萄奶油夾心餅",
+        "ストレートバームやわらか芽": "年輪家 經典柔軟年輪蛋糕 (1個入)",
+        "ストレートバーム": "年輪家 經典柔軟年輪蛋糕",
+        "マウントバームしっかり芽": "年輪家 脆皮結實年輪蛋糕",
+        "マウントバーム": "年輪家 脆皮結實年輪蛋糕",
+        "やわらか芽": "年輪家 經典柔軟年輪蛋糕",
+        "しっかり芽": "年輪家 脆皮結實年輪蛋糕",
+        "バームクーヘン": "年輪蛋糕",
+        "バーム": "年輪蛋糕",
         "白い恋人": "白色戀人",
         "とうきびチョコ キャラメル": "HORI 焦糖玉米巧克力棒",
         "とうきびチョコ": "HORI 玉米巧克力棒",
@@ -785,6 +798,13 @@ def extract_structured_receipt(ocr_text: str) -> dict:
                     final_name = "北大冰鮮奶"
                 if "西興部" in orig or "西興部" in final_name or "玉米冰淇淋" in final_name:
                     final_name = "西興部甜筒牛奶霜淇淋"
+                if any(k in orig for k in ("バーム", "やわらか芽", "しっかり芽")) or "直髮" in final_name:
+                    if any(k in orig for k in ("やわらか", "ストレート")):
+                        final_name = "年輪家 經典柔軟年輪蛋糕 (1個入)"
+                    elif any(k in orig for k in ("しっかり", "マウント")):
+                        final_name = "年輪家 脆皮結實年輪蛋糕"
+                    else:
+                        final_name = "年輪家 年輪蛋糕"
                 result.append({
                     "name": final_name,
                     "originalName": orig,
@@ -990,7 +1010,13 @@ def parse_receipt_text(text: str, extract_items: bool = False) -> dict:
         for it in items
     )
 
-    if (structured.get("category") == "food" or is_pure_8_percent) and not has_non_food:
+    has_food_item = any(
+        any(k in (it.get("originalName", "") + it.get("name", "")).lower()
+            for k in ("バーム", "年輪", "ケーキ", "蛋糕", "クッキー", "餅乾", "チョコ", "巧克力", "コロコロ", "米果", "プリン", "布丁", "パン", "麵包", "茶", "水", "珈琲", "咖啡", "肉", "丼", "飯", "麺", "拉麵"))
+        for it in items
+    )
+
+    if (structured.get("category") == "food" or is_pure_8_percent or has_food_item) and not has_non_food:
         category = "food"
     elif any(keyword.casefold() in receipt_text_lower for _, keywords in RETAIL_MERCHANTS for keyword in keywords):
         category = "other"
@@ -1022,6 +1048,8 @@ def parse_receipt_text(text: str, extract_items: bool = False) -> dict:
             if total is None or (total in (5000, 10000, 20000, 50000) and items_sum < total and any(re.search(r"(?:お預|お釣|おつり)", l) for l in lines)):
                 total = int(items_sum) if isinstance(items_sum, float) and items_sum.is_integer() else items_sum
             elif total != items_sum and structured.get("originalAmount") == items_sum:
+                total = int(items_sum) if isinstance(items_sum, float) and items_sum.is_integer() else items_sum
+            elif len(items) == 1 and abs(items_sum - (total or 0)) > 50:
                 total = int(items_sum) if isinstance(items_sum, float) and items_sum.is_integer() else items_sum
     elif total is None and structured.get("originalAmount"):
         try:

@@ -625,6 +625,25 @@ Jじゃがいもコロコロ 醤油 436
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-20T13:22")
 
+    def test_parses_nenrinya_baumkuchen_duty_free_receipt(self):
+        text = """NEW CHITOSE AIRPORT
+DUTY FREE SHOP
+新千歳空港免税店
+2026/09/20 13:37:34
+FD 243 WANG/TINGWEI
+＊Jストレートバームやわらか芽1個
+01,500x 1コ 1,500
+小計 1,500
+合計 1:590
+クレジット ，500
+"""
+        result = parse_receipt_text(text, extract_items=True)
+        self.assertEqual(result["originalAmount"], 1500)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-20T13:37")
+        self.assertEqual(result["category"], "food")
+        self.assertEqual(result["items"][0]["name"], "年輪家 經典柔軟年輪蛋糕 (1個入)")
+
     def test_parses_cosmo_gas_station_receipt(self):
         text = """cosmo
 納品書（領収書）
