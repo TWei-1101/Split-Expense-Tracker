@@ -607,6 +607,23 @@ TEL 011-727-1122
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-19T14:22")
 
+    def test_parses_cosmo_gas_station_receipt(self):
+        text = """cosmo
+納品書（領収書）
+北日本エネルギー（株）苫小牧販売支店
+千歳空港SS
+2026年09月20日 08:59 伝票No.0219
+軽油 P09 ¥6507
+数量 43.67（L）
+単価 @149
+合計 ¥6,507
+"""
+        result = parse_receipt_text(text)
+        self.assertEqual(result["originalAmount"], 6507)
+        self.assertEqual(result["currency"], "JPY")
+        self.assertEqual(result["occurredAt"], "2026-09-20T08:59")
+        self.assertEqual(result["category"], "transport")
+
     def test_parses_matsuya_beef_bowl_receipt(self):
         text = """2026年09月19日（土） 22時57分 01号機
 （税込）

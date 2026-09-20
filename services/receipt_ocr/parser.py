@@ -136,7 +136,7 @@ TRANSPORT_MERCHANTS = (
     ("オカモトセルフ 加油站", ("オカモトセルフ", "株式会社オカモト", "オカモト")),
     ("ENEOS 加油站", ("eneos", "エネオス")),
     ("出光 apollostation 加油站", ("apollostation", "アポロステーション", "出光")),
-    ("Cosmo 加油站", ("コスモ石油", "cosmo石油", "コスモ")),
+    ("Cosmo 加油站", ("cosmo石油", "コスモ石油", "コスモ", "cosmo")),
     ("ホクレンSS 加油站", ("ホクレンss", "ホクレン")),
 )
 
@@ -820,7 +820,8 @@ def parse_receipt_text(text: str, extract_items: bool = False) -> dict:
 
     occurred_at = None
     for i, line in enumerate(lines):
-        clean_line = re.sub(r"(\d{2,4}年\s*\d{1,2}月\s*\d{1,2})月", r"\1日", line)
+        clean_line = re.sub(r"(?<=\s)[1|lI](0[0-9]:[0-5][0-9])", r"\1", line)
+        clean_line = re.sub(r"(\d{2,4}年\s*\d{1,2}月\s*\d{1,2})月", r"\1日", clean_line)
         m = DATE.search(clean_line)
         if m:
             year, month, day = map(int, m.groups())
@@ -893,6 +894,10 @@ def parse_receipt_text(text: str, extract_items: bool = False) -> dict:
         if any(k in desc_clean.lower() for k in ("お屋フーズ", "松屋フーズ", "松屋")):
             desc_clean = re.sub(r"(?i)（株）\s*|株式会社\s*|お屋フーズ|松屋フーズ", "松屋", desc_clean).strip()
             desc_clean = re.sub(r"\s+", " ", desc_clean)
+        if any(k in desc_clean.lower() for k in ("cosmo", "コスモ", "北日本エネルギー")):
+            branch = re.search(r"(千歳空港\s*SS|[\u4e00-\u9fffA-Za-z0-9]+SS)", desc_clean)
+            branch_str = f" {branch.group(1)}" if branch else ""
+            desc_clean = f"Cosmo 加油站{branch_str}".strip()
         description = desc_clean
     elif known_merchant:
         description = known_merchant
