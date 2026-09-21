@@ -6,6 +6,8 @@ on:
       - main       # → production (split-expense-tracker / expense.771101.xyz)
       - dev        # → preview (split-expense-tracker-test / expense-test.771101.xyz)
   workflow_dispatch:
+  pull_request:
+    branches: [main, dev]
 
 concurrency:
   group: pages-${{ github.ref }}
@@ -14,12 +16,9 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 15
     permissions:
       contents: read
-    env:
-      CF_ACCOUNT: ${{ vars.CF_ACCOUNT }}
-      CF_TOKEN: ${{ secrets.CF_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -37,12 +36,31 @@ jobs:
       - name: Test
         run: npm test
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Test OCR backend (offline)
+        run: python -m unittest discover -s services/receipt_ocr/tests
+
+      - name: Verify deployment credentials
+        if: github.event_name != 'pull_request'
+        env:
+          CF_TOKEN: ${{ secrets.CF_TOKEN }}
+        run: |
+          if [ -z "$CF_TOKEN" ]; then
+            echo '::error::CF_TOKEN is missing; deployment cannot proceed.'
+            exit 1
+          fi
+
       - name: Build
         run: npm run build
 
+      - name: Stamp build version
+        run: node scripts/deployment-version.mjs stamp
+
       - name: Deploy (main → prod, other → preview)
-        if: ${{ env.CF_TOKEN != '' }}
-        continue-on-error: true
+        if: github.event_name != 'pull_request'
         env:
           CF_ACCOUNT_ID: db273682e79e3ece0509cac24fae67e1
         uses: cloudflare/wrangler-action@v3
@@ -55,3 +73,9 @@ jobs:
             --branch ${{ github.ref_name }}
             --commit-dirty=true
             --commit-message "deploy-${{ github.sha }}"
+
+      - name: Verify published version
+        if: github.event_name != 'pull_request'
+        env:
+          DEPLOY_URL: ${{ github.ref_name == 'main' && 'https://expense.771101.xyz' || 'https://expense-test.771101.xyz' }}
+        run: node scripts/deployment-version.mjs verify

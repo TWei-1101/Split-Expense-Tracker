@@ -26,3 +26,12 @@ RapidOCR is local. The image is written to a temporary file only while OCR runs 
 - Text is still sent to the configured MiniMax service, or local oMLX fallback. No new image-model service is used. Separate translation can add latency and token usage.
 
 Run offline regression tests with `python -m unittest discover -s services/receipt_ocr/tests`. Tests use synthetic geometry, receipt text and mocked model responses; they do not establish an accuracy improvement on actual photographs. Validate deployment on a labeled set of real receipts before claiming an accuracy percentage. Restart the Mac mini OCR service after updating its checkout.
+
+## Availability and deployment
+
+- The browser stops waiting after 120 seconds (including compression/auth), allows cancellation, and ignores late responses. Cancelling does not forcibly terminate an already-running OCR/native/model call or refund provider usage; the server retains its slot until work actually finishes.
+- Each service process admits at most two requests concurrently, at most one per authenticated UID, and six accepted requests per UID per minute. Excess requests receive HTTP 429 and `Retry-After` instead of entering an unbounded queue. Limits reset on process restart; multiple instances require a shared limiter. Reverse-proxy limits are still recommended for pre-authentication traffic.
+- Upload reads have a 20-second socket inactivity timeout. Model calls retain their existing individual timeouts. RapidOCR weights are reused under a lock. Native OCR has no hard execution deadline; restart the service if a native call hangs indefinitely.
+- `/healthz` reports the Git revision captured when the handler starts and the concurrency cap. It is a liveness check, not an AI-model or Firebase readiness guarantee. After updating/restarting Mac mini, compare its revision with the intended commit.
+- GitHub Actions runs frontend and offline backend tests. Missing deployment credentials or Pages deployment errors fail the job. A post-deploy check requires the custom domain's `deployment.json` to match the commit; a stale CDN or incorrect domain configuration is reported as failure.
+- Pages deployment only updates the website. It does not deploy Firebase rules or update/restart the separate Mac mini OCR service. No SSH access has been configured by this change.

@@ -3,17 +3,31 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import threading
+from pathlib import Path
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from tempfile import NamedTemporaryFile
 
 from parser import parse_receipt_text
 from receipt_quality import build_document
+from admission import Admission
 
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
 DEFAULT_ORIGINS = frozenset({"https://expense.771101.xyz", "https://expense-test.771101.xyz"})
 SUPPORTED_IMAGES = frozenset({"image/jpeg", "image/png", "image/webp"})
 SUFFIXES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+_rapid_engine = None
+_rapid_lock = threading.Lock()
+
+
+def service_revision():
+    try:
+        return subprocess.check_output(['git', '-C', str(Path(__file__).resolve().parents[2]),
+                                        'rev-parse', 'HEAD'], timeout=2, stderr=subprocess.DEVNULL).decode().strip()
+    except (OSError, subprocess.SubprocessError):
+        return 'unknown'
 
 
 def configured_origins() -> frozenset[str]:
@@ -109,6 +123,7 @@ def extract_text_apple_vision(image_path: str) -> dict | None:
 
 
 def extract_text(image_path: str) -> dict:
+    global _rapid_engine
     try:
         from PIL import Image, ImageOps
         with Image.open(image_path) as img:
@@ -128,7 +143,11 @@ def extract_text(image_path: str) -> dict:
         from rapidocr_onnxruntime import RapidOCR
     except ImportError as error:
         raise RuntimeError("rapidocr_not_installed") from error
-    result, _elapsed = RapidOCR()(image_path)
+    # Reuse weights without assuming the inference engine is thread-safe.
+    with _rapid_lock:
+        if _rapid_engine is None:
+            _rapid_engine = RapidOCR()
+        result, _elapsed = _rapid_engine(image_path)
     boxes = []
     for row in result or []:
         if len(row) < 3 or not row[1]:
@@ -140,9 +159,15 @@ def extract_text(image_path: str) -> dict:
     return build_document(boxes, "rapidocr")
 
 
-def make_handler(token_verifier=verify_firebase_id_token, ocr=extract_text):
+def make_handler(token_verifier=verify_firebase_id_token, ocr=extract_text, admission=None):
+    admission = admission or Admission()
+    revision = service_revision()
     class ReceiptHandler(BaseHTTPRequestHandler):
         server_version = "ReceiptOCR/1.0"
+
+        def setup(self):
+            super().setup()
+            self.connection.settimeout(20)  # Bound incomplete/slow uploads.
 
         def log_message(self, _format, *_args):
             return  # Never log image data, OCR text, or Firebase tokens.
@@ -158,8 +183,13 @@ def make_handler(token_verifier=verify_firebase_id_token, ocr=extract_text):
             self._cors()
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
+            if status == HTTPStatus.TOO_MANY_REQUESTS:
+                self.send_header("Retry-After", "60" if payload.get('error') == 'rate_limited' else "10")
             self.end_headers()
-            self.wfile.write(json.dumps(payload).encode("utf-8"))
+            try:
+                self.wfile.write(json.dumps(payload).encode("utf-8"))
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # A cancelled browser request must not crash the worker.
 
         def do_OPTIONS(self):
             if not allowed_origin(self.headers.get("Origin")):
@@ -173,7 +203,7 @@ def make_handler(token_verifier=verify_firebase_id_token, ocr=extract_text):
             self.end_headers()
 
         def do_GET(self):
-            self._json(HTTPStatus.OK, {"status": "ok"}) if self.path == "/healthz" else self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            self._json(HTTPStatus.OK, {"status": "ok", "revision": revision, "ocrConcurrency": admission.capacity}) if self.path == "/healthz" else self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
         def do_POST(self):
             if self.path != "/v1/receipts:parse":
@@ -184,7 +214,10 @@ def make_handler(token_verifier=verify_firebase_id_token, ocr=extract_text):
                 self._json(HTTPStatus.FORBIDDEN, {"error": "origin_not_allowed"})
                 return
             try:
-                token_verifier(self.headers.get("Authorization"))
+                identity = token_verifier(self.headers.get("Authorization"))
+                uid = identity.get('uid') or identity.get('sub')
+                if not uid:
+                    raise PermissionError('missing_user_id')
             except PermissionError as err:
                 print(f"[{self.date_time_string()}] Unauthorized: {err}", flush=True)
                 self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
@@ -204,7 +237,22 @@ def make_handler(token_verifier=verify_firebase_id_token, ocr=extract_text):
                 status = HTTPStatus.REQUEST_ENTITY_TOO_LARGE if error == "payload_too_large" else HTTPStatus.UNSUPPORTED_MEDIA_TYPE
                 self._json(status, {"error": error})
                 return
+            rejected = admission.acquire(uid)
+            if rejected:
+                self._json(HTTPStatus.TOO_MANY_REQUESTS, {"error": rejected})
+                return
+            try:
+                self._parse_upload(length, content_type)
+            except TimeoutError:
+                self._json(HTTPStatus.REQUEST_TIMEOUT, {"error": "upload_timeout"})
+            finally:
+                admission.release(uid)
+
+        def _parse_upload(self, length, content_type):
             image = self.rfile.read(length)
+            if len(image) != length:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "incomplete_upload"})
+                return
             mime_type = content_type.split(";", 1)[0].lower().strip()
             try:
                 with NamedTemporaryFile(suffix=SUFFIXES[mime_type]) as image_file:

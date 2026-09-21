@@ -25,7 +25,7 @@ class QualityTests(unittest.TestCase):
             with self.subTest(document=isinstance(raw, dict)), patch('server.parse_receipt_text', return_value={
                 'originalAmount': 100, 'items': [], 'warnings': [],
             }):
-                httpd = ThreadingHTTPServer(('127.0.0.1', 0), make_handler(token_verifier=lambda _: {}, ocr=lambda _: raw))
+                httpd = ThreadingHTTPServer(('127.0.0.1', 0), make_handler(token_verifier=lambda _: {'uid': 'test-user'}, ocr=lambda _: raw))
                 thread = threading.Thread(target=httpd.serve_forever, daemon=True)
                 thread.start()
                 try:

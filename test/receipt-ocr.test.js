@@ -92,7 +92,7 @@ test('主畫面的收據入口是單一相機按鈕，直接呼叫原生圖片�
   assert.match(appSource, /getIdToken\(\)/);
   assert.match(appSource, /RECEIPT_OCR_ENDPOINT/);
   assert.match(appSource, /normalizeReceiptOcrResult/);
-  assert.match(appSource, /'Content-Type': file\.type/);
+  assert.match(appSource, /'Content-Type': uploadBlob\.type \|\| file\.type/);
   assert.match(appSource, /const startReceiptOcr = useCallback/);
   assert.match(appSource, /receiptOcrInputRef\.current\?\.click\(\)/);
   assert.match(appSource, /id="receipt-ocr-image"/);

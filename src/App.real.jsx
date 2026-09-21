@@ -81,6 +81,7 @@ import { shouldTriggerSwipeDelete } from './lib/swipe-delete.js';
 import { normalizeReceiptOcrResult, mergeReceiptOcrIntoExpense, receiptOcrReviewMessage } from './lib/receipt-ocr.js';
 import { buildExpenseMemberList } from './lib/expense-members.js';
 import { commitSettlementOnce } from './lib/settlement-write.js';
+import { createOcrRequest, ocrResponseError } from './lib/ocr-request.js';
 import { createExpenseImagePath, isGroupImagePath, deleteImageIfPresent, finalizeExpenseImageWrite, deleteRecordsWithImages } from './lib/expense-images.js';
 import { splitExpenseItems } from './lib/expense-item-split.js';
 import { computeItemSplits, isSettlement, migrateExpenseIdentity, resolveExpenseConversion, validatePayers, getSearchSpendingSummary, matchesSearchKeyword } from './lib/expense-math.js';
@@ -770,7 +771,7 @@ async function removeReceiptImage(path) {
 		/**
          * 支出 Modal (核心邏輯獨立)
          */
-        const ExpenseModal = memo(({ db, auth, currentUserId, members, expenses, luggage, getInitialShares, state, onClose, getDisplayName, isReadOnly, canManageMembers, onManageMembers, onManageLuggage, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel, isOnline, onExpenseSaved, onExpenseSaveFailed, isReceiptScanning, setIsReceiptScanning, setReceiptScanStatus }) => {
+        const ExpenseModal = memo(({ db, auth, currentUserId, members, expenses, luggage, getInitialShares, state, onClose, getDisplayName, isReadOnly, canManageMembers, onManageMembers, onManageLuggage, collectionId, liveExchangeRates, defaultCurrency, currentUserLabel, isOnline, onExpenseSaved, onExpenseSaveFailed, isReceiptScanning, setIsReceiptScanning, setReceiptScanStatus, receiptCancelRef }) => {
             const [newExpense, setNewExpense] = useState({
                 description: '',
                 originalAmount: '',
@@ -799,6 +800,11 @@ async function removeReceiptImage(path) {
             const [modalError, setModalError] = useState(null);
             const [uploadStatus, setUploadStatus] = useState('');
             const [receiptOcrStatus, setReceiptOcrStatus] = useState('');
+            const ocrRequestRef = useRef(null);
+            useEffect(() => {
+                if (!state.isOpen) ocrRequestRef.current?.cancel();
+                return () => ocrRequestRef.current?.cancel();
+            }, [state.isOpen]);
             const [isReceiptOcrLoading, setIsReceiptOcrLoading] = useState(false);
             // 暫時保留 OCR 金額資料流，讓行動裝置可直接辨別是服務沒回傳、
             // 前端沒接受，或是受控欄位沒有渲染。只顯示金額，不顯示收據文字。
@@ -1150,31 +1156,40 @@ async function removeReceiptImage(path) {
                     setIsReceiptScanning?.(false);
                     return;
                 }
+                ocrRequestRef.current?.cancel();
+                const request = createOcrRequest();
+                ocrRequestRef.current = request;
+                receiptCancelRef.current = request.cancel;
+                const reportStage = text => { setReceiptOcrStatus(text); setReceiptScanStatus?.(text); };
                 setIsReceiptOcrLoading(true);
                 setIsReceiptScanning?.(true);
-                setReceiptOcrStatus('正在辨識收據並預填欄位…');
-                setReceiptScanStatus?.('正在辨識收據並預填欄位…');
+                reportStage('正在壓縮收據圖片…');
                 try {
                     let uploadBlob = file;
                     try {
-                        const { blob } = await compressImage(file);
+                        const { blob } = await request.run(() => compressImage(file));
                         if (blob) {
                             uploadBlob = blob;
                         }
                     } catch (_err) {
+                        if (request.signal.aborted) throw _err;
                         // fallback to original file
                     }
-                    const idToken = await auth.currentUser.getIdToken();
-                    const response = await fetch(RECEIPT_OCR_ENDPOINT, {
+                    reportStage('正在驗證登入並準備上傳…');
+                    const idToken = await request.run(() => auth.currentUser.getIdToken());
+                    reportStage('正在上傳及等待 AI 辨識（最多約 2 分鐘，可取消）…');
+                    const response = await request.run(() => fetch(RECEIPT_OCR_ENDPOINT, {
                         method: 'POST',
                         headers: {
                           Authorization: `Bearer ${idToken}`,
-                          'Content-Type': file.type,
+                          'Content-Type': uploadBlob.type || file.type,
                         },
                         body: uploadBlob,
-                    });
-                    const payload = await response.json().catch(() => ({}));
-                    if (!response.ok) throw new Error(payload.error || '辨識服務暫時無法使用。');
+                        signal: request.signal,
+                    }));
+                    const payload = await request.run(() => response.json().catch(() => ({})));
+                    if (request.signal.aborted || ocrRequestRef.current !== request) return;
+                    if (!response.ok) throw new Error(ocrResponseError(response.status, payload));
                     const fields = normalizeReceiptOcrResult(payload);
                     if (!Object.keys(fields).length) throw new Error('沒有辨識到可預填的欄位，請手動輸入。');
                     setReceiptOcrDiagnostic({
@@ -1193,11 +1208,17 @@ async function removeReceiptImage(path) {
                     });
                     setReceiptOcrStatus(receiptOcrReviewMessage(payload));
                 } catch (error) {
+                    if (ocrRequestRef.current !== request) return;
                     setReceiptOcrDiagnostic(null);
-                    setReceiptOcrStatus(`收據未能自動辨識：${error.message}`);
+                    setReceiptOcrStatus(request.signal.aborted ? request.message() : `收據未能自動辨識：${error.message}`);
                 } finally {
-                    setIsReceiptOcrLoading(false);
-                    setIsReceiptScanning?.(false);
+                    request.dispose();
+                    if (ocrRequestRef.current === request) {
+                        ocrRequestRef.current = null;
+                        receiptCancelRef.current = null;
+                        setIsReceiptOcrLoading(false);
+                        setIsReceiptScanning?.(false);
+                    }
                 }
             };
 
@@ -2087,9 +2108,10 @@ async function removeReceiptImage(path) {
                       </div>
                       <div className="rounded-lg bg-gray-50 border border-gray-100 p-2.5 w-full">
                         <p className="text-[11px] text-gray-500 leading-relaxed">
-                          辨識完成前畫面暫時鎖定以避免資料衝突，請稍候…
+                          辨識完成前畫面暫時鎖定；取消後可手動輸入。
                         </p>
                       </div>
+                      <button type="button" onClick={() => ocrRequestRef.current?.cancel()} className="rounded-lg border px-4 py-2 text-sm">取消辨識</button>
                     </div>
                   </div>
                 )}
@@ -2494,6 +2516,7 @@ async function removeReceiptImage(path) {
 		  const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false);
           const [isReceiptScanning, setIsReceiptScanning] = useState(false);
           const [receiptScanStatus, setReceiptScanStatus] = useState('');
+          const receiptCancelRef = useRef(null);
           const [userProfiles, setUserProfiles] = useState({});
 		  const [lastExchangeUpdate, setLastExchangeUpdate] = useState(null);
           const [liveExchangeRates, setLiveExchangeRates] = useState(DEFAULT_EXCHANGE_RATES);
@@ -4741,6 +4764,7 @@ async function removeReceiptImage(path) {
                     isReceiptScanning={isReceiptScanning}
                     setIsReceiptScanning={setIsReceiptScanning}
                     setReceiptScanStatus={setReceiptScanStatus}
+                    receiptCancelRef={receiptCancelRef}
                     onExpenseSaved={({ queued, isEditing }) => setToastMessage(queued
                       ? `📥 ${isEditing ? '修改' : '新增'}已儲存於本機，恢復連線後會自動同步。`
                       : `✅ 支出${isEditing ? '修改' : '新增'}完成。`)}
@@ -4859,9 +4883,10 @@ async function removeReceiptImage(path) {
                     </div>
                     <div className="rounded-lg bg-gray-50 border border-gray-100 p-2.5 w-full">
                       <p className="text-[11px] text-gray-500 leading-relaxed">
-                        辨識完成前畫面已全面鎖定，請稍候…
+                        取消後可手動輸入；已送出的 AI 工作可能仍會在後端完成。
                       </p>
                     </div>
+                    <button type="button" onClick={() => receiptCancelRef.current?.()} className="rounded-lg border px-4 py-2 text-sm">取消辨識</button>
                   </div>
                 </div>
               )}
