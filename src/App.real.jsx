@@ -18,10 +18,11 @@ import {
   persistentLocalCache,
   collection,
   doc,
-  addDoc,
   setDoc,
   getDoc,
+  getDocFromServer,
   getDocs,
+  getDocsFromServer,
   getDocsFromCache,
   updateDoc,
   deleteDoc,
@@ -79,6 +80,7 @@ import {
 import { shouldTriggerSwipeDelete } from './lib/swipe-delete.js';
 import { normalizeReceiptOcrResult, mergeReceiptOcrIntoExpense, receiptOcrReviewMessage } from './lib/receipt-ocr.js';
 import { buildExpenseMemberList } from './lib/expense-members.js';
+import { commitSettlementOnce } from './lib/settlement-write.js';
 import { createExpenseImagePath, isGroupImagePath, deleteImageIfPresent, finalizeExpenseImageWrite, deleteRecordsWithImages } from './lib/expense-images.js';
 import { splitExpenseItems } from './lib/expense-item-split.js';
 import { computeItemSplits, isSettlement, migrateExpenseIdentity, resolveExpenseConversion, validatePayers, getSearchSpendingSummary, matchesSearchKeyword } from './lib/expense-math.js';
@@ -2661,6 +2663,8 @@ async function removeReceiptImage(path) {
 
           const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
           const [isLoading, setIsLoading] = useState(false);
+          const [isSettling, setIsSettling] = useState(false);
+          const settlingRef = useRef(false);
           const [error, setError] = useState(null);
           const [isOnline, setIsOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine);
           const [hasPendingExpenseWrites, setHasPendingExpenseWrites] = useState(false);
@@ -4087,6 +4091,11 @@ async function removeReceiptImage(path) {
 
           // --- 8. 清算結餘功能 ---
           const settleMemberDebt = useCallback(async (debtorId, amount, creditorId) => {
+              if (settlingRef.current) return;
+              if (!isOnline || hasPendingExpenseWrites) {
+                  setError('請等待網路連線及支出同步完成後再結清。');
+                  return;
+              }
               if (isReadOnly) {
                   setError('唯讀模式下無法進行結算操作。');
                   return;
@@ -4094,34 +4103,44 @@ async function removeReceiptImage(path) {
               if (!db || !userId) return;
 
               const roundedAmount = Math.round(amount);
-              if (roundedAmount <= 0) return;
+              if (!Number.isFinite(roundedAmount) || roundedAmount <= 0 || debtorId === creditorId) return;
+              const operationId = crypto.randomUUID();
 
               const onConfirm = async () => {
+                  if (settlingRef.current) return;
+                  if (!navigator.onLine) { setError('目前離線，請恢復連線後再結清。'); return; }
+                  settlingRef.current = true;
+                  setIsSettling(true);
                   closeConfirmModal();
                   setIsLoading(true);
                   setError(null);
                   try {
                       const collectionPath = getGroupExpensesPath(currentCollectionId);
                       
-                      // 使用新欄位格式：originalAmount / currency / amountInTWD
-                      await addDoc(collection(db, collectionPath), {
-                          description: `[結清] ${getDisplayName(debtorId)} 歸還給 ${getDisplayName(creditorId)} 欠款`,
-                          originalAmount: roundedAmount,
-                          currency: DEFAULT_CURRENCY,
-                          exchangeRate: 1,
-                          amountInTWD: roundedAmount,
-                          payerName: debtorId,
-                          shares: { [creditorId]: roundedAmount },
-                          kind: 'settlement',
-                          timestamp: serverTimestamp(),
-                          creatorId: userId,
-                          appId: appId,
+                      const settingsPath = `artifacts/${appId}/groups/${currentCollectionId}/settings`;
+                      const stateRef = doc(db, settingsPath, 'settlement-state');
+                      const result = await commitSettlementOnce({
+                          request: { operationId, from: debtorId, to: creditorId, amount: roundedAmount,
+                            expense: {
+                              description: `[結清] ${getDisplayName(debtorId)} 歸還給 ${getDisplayName(creditorId)} 欠款`,
+                              creatorId: userId, appId,
+                            },
+                          },
+                          members, stateRef,
+                          operationRef: doc(db, settingsPath, `settlement-op-${operationId}`),
+                          expenseRef: doc(db, collectionPath, `settlement-${operationId}`),
+                          readState: () => getDocFromServer(stateRef),
+                          readExpenses: () => getDocsFromServer(collection(db, collectionPath)),
+                          transact: callback => runTransaction(db, callback),
+                          timestamp: serverTimestamp,
                       });
-                      setToastMessage(`✅ 已新增結清記錄 TWD ${roundedAmount.toFixed(0)}！`); // 結算成功 Toast
+                      setToastMessage(result.created ? `✅ 已新增結清記錄 TWD ${roundedAmount.toFixed(0)}！` : '這筆結清已完成，沒有重複記帳。');
                   } catch (e) {
                       console.error("Error settling debt: ", e);
                       setError(`結算失敗: ${e.message}`);
                   } finally {
+                      settlingRef.current = false;
+                      setIsSettling(false);
                       setIsLoading(false);
                   }
               };
@@ -4134,7 +4153,7 @@ async function removeReceiptImage(path) {
                   'green'
               );
 
-          }, [db, userId, currentCollectionId, isReadOnly, getDisplayName, openConfirmModal, closeConfirmModal, setToastMessage, setError, setIsLoading]);
+          }, [db, userId, currentCollectionId, isReadOnly, isOnline, hasPendingExpenseWrites, members, getDisplayName, openConfirmModal, closeConfirmModal, setToastMessage, setError, setIsLoading]);
 
           // --- 9. 分帳計算 ---
           const calculateBalances = useMemo(() => {
@@ -4668,6 +4687,8 @@ async function removeReceiptImage(path) {
                     getDisplayName={getDisplayName} 
                     isReadOnly={isReadOnly}
                     settleMemberDebt={settleMemberDebt}
+                    settlementDisabled={isSettling || isLoading || !isOnline || hasPendingExpenseWrites}
+                    isSettling={isSettling}
                     pendingTaxRefundInTWD={pendingTaxRefundInTWD}
                     offlineSyncStatus={offlineSyncStatus}
                 />
@@ -5494,7 +5515,7 @@ async function removeReceiptImage(path) {
             );
         });
 
-        const BalanceSummary = memo(({ settlements, getDisplayName, isReadOnly, settleMemberDebt, pendingTaxRefundInTWD, offlineSyncStatus }) => {
+        const BalanceSummary = memo(({ settlements, getDisplayName, isReadOnly, settleMemberDebt, pendingTaxRefundInTWD, offlineSyncStatus, settlementDisabled, isSettling }) => {
             return (
               <div className="mt-8 p-6 bg-white rounded-xl shadow-2xl">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -5552,11 +5573,12 @@ async function removeReceiptImage(path) {
                                     {canSettle && (
                                         <button
                                             onClick={() => settleMemberDebt(settlement.from, settlement.amount, settlement.to)} 
-                                            className="px-3 py-1 text-sm rounded-lg text-white transition hover:scale-105 transform shadow-md flex items-center bg-green-500 hover:bg-green-600"
+                                            disabled={settlementDisabled}
+                                            className="px-3 py-1 text-sm rounded-lg text-white transition hover:scale-105 transform shadow-md flex items-center bg-green-500 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
                                             title="新增一筆結清支出記錄"
                                         >
                                             <CircleCheck className="w-4 h-4 mr-1" />
-                                            結清
+                                            {isSettling ? '結清處理中…' : '結清'}
                                         </button>
                                     )}
                                     {isReadOnly && (

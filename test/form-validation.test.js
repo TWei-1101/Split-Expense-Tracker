@@ -33,12 +33,14 @@ test('#6 計算防禦：lib 內 convertToTWD 處理空字串/NaN 統一回 0', (
   assert.match(currencyLib, /parseFloat\([^)]+\)\s*\|\|\s*0/);
 });
 
-test('#8 結清重複點擊：現有 settleMemberDebt 沒有 isSettling 保護（記錄現況、提醒待加）', () => {
+test('#8 結清重複點擊：同步 ref 鎖與資料庫交易防止重複寫入', () => {
   const match = appSource.match(/const settleMemberDebt = useCallback\(async[\s\S]+?\}\s*,\s*\[[^\]]+\]\s*\);/);
   assert.ok(match, '找不到 settleMemberDebt');
   const fnBody = match[0];
-  // 確認目前沒有 isSettling / disable 檢查（記錄現況）
-  assert.doesNotMatch(fnBody, /isSettling|settlingRef/);
+  // 確認連點鎖定與交易寫入均已接上。
+  assert.match(fnBody, /settlingRef.current/);
+  assert.match(fnBody, /commitSettlementOnce/);
+  assert.doesNotMatch(fnBody, /await addDoc/);
   // 確認 setIsLoading(true) 有呼叫（既有保護）
   assert.match(fnBody, /setIsLoading\(true\)/);
 });
