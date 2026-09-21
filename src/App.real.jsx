@@ -79,6 +79,7 @@ import {
 import { shouldTriggerSwipeDelete } from './lib/swipe-delete.js';
 import { normalizeReceiptOcrResult, mergeReceiptOcrIntoExpense, receiptOcrReviewMessage } from './lib/receipt-ocr.js';
 import { buildExpenseMemberList } from './lib/expense-members.js';
+import { createExpenseImagePath, isGroupImagePath, deleteImageIfPresent, finalizeExpenseImageWrite, deleteRecordsWithImages } from './lib/expense-images.js';
 import { splitExpenseItems } from './lib/expense-item-split.js';
 import { computeItemSplits, isSettlement, migrateExpenseIdentity, resolveExpenseConversion, validatePayers, getSearchSpendingSummary, matchesSearchKeyword } from './lib/expense-math.js';
 // 注意：icon 元件（CircleDollarSign / Trash2 / Plus / ...）由下方 CDN 程式碼內聯 SVG 定義，
@@ -298,6 +299,11 @@ async function _getStorage() {
         })();
     }
     return _storagePromise;
+}
+
+async function removeReceiptImage(path) {
+    const { getStorage, storageRef, deleteObject } = await _getStorage();
+    await deleteImageIfPresent(p => deleteObject(storageRef(getStorage(getFirebaseApp()), p)), path);
 }
 
         
@@ -1321,6 +1327,7 @@ async function _getStorage() {
 
                 setIsLoadingModal(true);
                 setModalError(null);
+                let uploadedImagePath = '';
                 try {
                     const collectionPath = getGroupExpensesPath(collectionId);
                     const docRef = isEditing
@@ -1334,47 +1341,25 @@ async function _getStorage() {
                         imageDataUrl: newExpense.imageDataUrl || '',
                     };
 
-                    if (removeExistingImage && (newExpense.imagePath || newExpense.imageUrl || newExpense.imageDataUrl)) {
-                        if (newExpense.imagePath) {
-                            try {
-                                const { getStorage, storageRef, deleteObject } = await _getStorage();
-                                await deleteObject(storageRef(getStorage(getFirebaseApp()), newExpense.imagePath));
-                            } catch (imageDeleteError) {
-                                console.warn('Delete old expense image failed:', imageDeleteError);
-                            }
-                        }
+                    const validPayers = isMultiPayer && newExpense.payerName !== SELF_PAYER_KEY
+                        ? validatePayers(customPayers, members, newExpense.originalAmount) : null;
+
+                    if (removeExistingImage) {
                         imageFields = { imageUrl: '', imagePath: '', imageName: '', imageDataUrl: '' };
                     }
-
                     if (imageFile) {
-                        if (newExpense.imagePath) {
-                            try {
-                                const { getStorage, storageRef, deleteObject } = await _getStorage();
-                                await deleteObject(storageRef(getStorage(getFirebaseApp()), newExpense.imagePath));
-                            } catch (imageDeleteError) {
-                                console.warn('Delete replaced expense image failed:', imageDeleteError);
-                            }
-                        }
                         setUploadStatus('正在壓縮圖片...');
                         const { blob } = await compressImage(imageFile);
                         setUploadStatus('正在上傳圖片到 Firebase Storage...');
-                        // ✨ 改用 Firebase Storage 儲存圖片，路徑：groups/{groupId}/expense_images/{expenseId}.jpg
-                        const imagePath = `groups/${collectionId}/expense_images/${docRef.id}.jpg`;
+                        const imagePath = createExpenseImagePath(collectionId, docRef.id, crypto.randomUUID());
                         const { getStorage, storageRef, uploadBytes, getDownloadURL } = await _getStorage();
                         const sRef = storageRef(getStorage(getFirebaseApp()), imagePath);
+                        uploadedImagePath = imagePath;
                         const uploadResult = await uploadBytes(sRef, blob, { contentType: 'image/jpeg' });
                         const imageUrl = await getDownloadURL(uploadResult.ref);
-                        imageFields = {
-                            imageUrl,
-                            imagePath,
-                            imageName: imageFile.name,
-                            imageDataUrl: '',
-                        };
+                        imageFields = { imageUrl, imagePath, imageName: imageFile.name, imageDataUrl: '' };
                         setUploadStatus('');
                     }
-
-                    const validPayers = isMultiPayer && newExpense.payerName !== SELF_PAYER_KEY
-                        ? validatePayers(customPayers, members, newExpense.originalAmount) : null;
 
                     let customSplitsToSave = null;
                     let itemAssignmentsToSave = null;
@@ -1415,13 +1400,24 @@ async function _getStorage() {
                     // Promise itself waits for a server acknowledgement, which can hang when
                     // Safari reports an interface as online but the network is unreachable.
                     // Close on the local enqueue; report a later rejected write globally.
-                    writePromise.catch((writeError) => {
+                    finalizeExpenseImageWrite({
+                      write: writePromise,
+                      oldPath: isGroupImagePath(newExpense.imagePath, appId, collectionId) ? newExpense.imagePath : '',
+                      newPath: imageFields.imagePath,
+                      remove: removeReceiptImage,
+                      onCleanupError: error => console.warn('收據圖片清理失敗，支出資料未受影響：', error),
+                    }).catch((writeError) => {
                       console.error('支出同步失敗：', writeError);
                       onExpenseSaveFailed?.(writeError);
                     });
+                    uploadedImagePath = ''; // Cleanup ownership passed to the acknowledgement handler.
                     onExpenseSaved?.({ queued: !isOnline, isEditing });
                     onClose();
                 } catch (e) {
+                    if (uploadedImagePath) {
+                        try { await removeReceiptImage(uploadedImagePath); }
+                        catch (cleanupError) { console.warn('清理未儲存的新圖片失敗：', cleanupError); }
+                    }
                     console.error("Error saving document: ", e);
                     setModalError(`儲存支出失敗: ${e.message}`);
                     setUploadStatus('');
@@ -3105,6 +3101,7 @@ async function _getStorage() {
 		}, [db, userId, isGuest, isLoading, newGroupBookName, setError, setIsLoading, setToastMessage]);
 
 		const deleteCurrentGroupBook = () => {
+          if (!isOnline) { setError('請恢復連線後再永久刪除帳本。'); return; }
 		  if (!canDeleteGroupBook({ userId, groupOwner, isGuest }) || !db || !currentCollectionId || isLoading) {
 		    setError('只有帳本擁有者可以刪除帳本。');
 		    return;
@@ -3124,34 +3121,31 @@ async function _getStorage() {
 		            throw new Error('帳本不存在，或您已不再是擁有者。');
 		          }
 
-		          const imagePaths = new Set();
-		          const unmanagedImagePaths = new Set();
-		          const expensesPath = getGroupExpensesPath(currentCollectionId);
-		          // Firestore batch 上限為 500；每次最多刪 400 筆並重新查詢，直到目標帳本清空。
-		          while (true) {
-		            const expenseSnapshot = await getDocs(query(collection(db, expensesPath), limit(400)));
-		            if (expenseSnapshot.empty) break;
-		            const deletionPlan = createGroupDeletionPlan({
-		              appId,
-		              groupId: currentCollectionId,
-		              expenses: expenseSnapshot.docs.map((expenseDoc) => ({ id: expenseDoc.id, ...expenseDoc.data() })),
-		            });
-		            deletionPlan.safeImagePaths.forEach((path) => imagePaths.add(path));
-		            deletionPlan.unmanagedImagePaths.forEach((path) => unmanagedImagePaths.add(path));
-		            const batch = writeBatch(db);
-		            expenseSnapshot.docs.forEach((expenseDoc) => batch.delete(expenseDoc.ref));
-		            await batch.commit();
-		          }
-
-		          const finalBatch = writeBatch(db);
-		          finalBatch.delete(doc(db, getGroupMembersDocPath(currentCollectionId)));
-		          finalBatch.delete(groupRef);
-		          await finalBatch.commit();
-		          return {
-		            safeImagePaths: [...imagePaths],
-		            unmanagedImageCount: unmanagedImagePaths.size,
-		          };
-		        },
+                  const plan = createGroupDeletionPlan({ appId, groupId: currentCollectionId });
+                  // Preserve the group until all children and their referenced images
+                  // are cleaned. Failed batches remain discoverable for a retry.
+                  for (const collectionPath of [plan.expensesPath, plan.recycleBinPath, plan.settingsPath]) {
+                    while (true) {
+                      const snapshot = await getDocs(query(collection(db, collectionPath), limit(400)));
+                      if (snapshot.empty) break;
+                      const records = snapshot.docs.map(entry => {
+                        const data = entry.data();
+                        return collectionPath === plan.recycleBinPath ? (data.expense || {}) : data;
+                      });
+                      await deleteRecordsWithImages({
+                        records, appId, groupId: currentCollectionId,
+                        removeImage: removeReceiptImage,
+                        removeRecords: async () => {
+                          const batch = writeBatch(db);
+                          snapshot.docs.forEach(entry => batch.delete(entry.ref));
+                          await batch.commit();
+                        },
+                      });
+                    }
+                  }
+                  await deleteDoc(groupRef);
+                  return { safeImagePaths: [] };
+                },
 		        chooseNextBook: async () => {
 		          const remainingBooks = groupBooks.filter((book) => book.id !== currentCollectionId);
 		          if (remainingBooks.length) return { remainingBooks, nextBook: remainingBooks[0] };
@@ -3456,31 +3450,31 @@ async function _getStorage() {
 
 		  // 開啟帳本時清理逾期回收桶；每個 batch 最多 400 個 document，保留 Firestore 500 操作餘裕。
 		  useEffect(() => {
-			if (!db || !currentCollectionId || isReadOnly || recycleBinExpenses.length === 0) return;
+			if (!db || !currentCollectionId || isReadOnly || !isOnline || recycleBinExpenses.length === 0) return;
 			let cancelled = false;
 			const cleanupExpiredRecycleBin = async () => {
 			  const plan = buildExpiredRecycleBinCleanupPlan({ records: recycleBinExpenses });
 			  if (plan.batches.length === 0) return;
 			  try {
-				for (const records of plan.batches) {
-				  const batch = writeBatch(db);
-				  records.forEach(record => batch.delete(doc(db, getGroupRecycleBinPath(currentCollectionId), record.id)));
-				  await batch.commit();
-				}
-				const validPrefixes = [`groups/${currentCollectionId}/`, `artifacts/${appId}/groups/${currentCollectionId}/`];
-				const safeImagePaths = plan.imagePaths.filter(path => validPrefixes.some(prefix => path.startsWith(prefix)));
-				if (!cancelled && safeImagePaths.length) {
-				  const { getStorage, storageRef, deleteObject } = await _getStorage();
-				  const storage = getStorage(getFirebaseApp());
-				  await Promise.allSettled(safeImagePaths.map(path => deleteObject(storageRef(storage, path))));
-				}
+                for (const records of plan.batches) {
+                  if (cancelled) return;
+                  await deleteRecordsWithImages({
+                    records: records.map(record => record.expense || {}), appId, groupId: currentCollectionId,
+                    removeImage: removeReceiptImage,
+                    removeRecords: async () => {
+                      const batch = writeBatch(db);
+                      records.forEach(record => batch.delete(doc(db, getGroupRecycleBinPath(currentCollectionId), record.id)));
+                      await batch.commit();
+                    },
+                  });
+                }
 			  } catch (cleanupError) {
 				console.warn('清理逾期回收桶失敗：', cleanupError);
 			  }
 			};
 			cleanupExpiredRecycleBin();
 			return () => { cancelled = true; };
-		  }, [db, currentCollectionId, isReadOnly, recycleBinExpenses]);
+		  }, [db, currentCollectionId, isReadOnly, isOnline, recycleBinExpenses]);
 
 		  // --- 5. 衍生成員清單 ---
 			useEffect(() => {
@@ -3709,6 +3703,7 @@ async function _getStorage() {
 		  }, [db, currentCollectionId, isReadOnly, setError, setIsLoading]);
 
 		  const permanentlyDeleteRecycleBinExpense = useCallback((record) => {
+			if (!isOnline) { setError('請恢復連線後再永久刪除支出。'); return; }
 			if (isReadOnly || !db || !record?.id) return;
 			openConfirmModal('永久刪除支出', '永久刪除後無法還原，收據圖片也會一併刪除。', async () => {
 			  closeConfirmModal();
@@ -3716,20 +3711,18 @@ async function _getStorage() {
 			  await waitForMotionExit(150);
 			  setIsLoading(true);
 			  try {
-				await deleteDoc(doc(db, getGroupRecycleBinPath(currentCollectionId), record.id));
-				const imagePath = record.expense?.imagePath;
-				const validPrefixes = [`groups/${currentCollectionId}/`, `artifacts/${appId}/groups/${currentCollectionId}/`];
-				if (imagePath && validPrefixes.some(prefix => imagePath.startsWith(prefix))) {
-				  const { getStorage, storageRef, deleteObject } = await _getStorage();
-				  await deleteObject(storageRef(getStorage(getFirebaseApp()), imagePath));
-				}
+                await deleteRecordsWithImages({
+                  records: [record.expense || {}], appId, groupId: currentCollectionId,
+                  removeImage: removeReceiptImage,
+                  removeRecords: () => deleteDoc(doc(db, getGroupRecycleBinPath(currentCollectionId), record.id)),
+                });
 			} catch (deleteError) {
 			  console.error('永久刪除回收桶支出失敗：', deleteError);
 			  setError(`永久刪除支出失敗: ${deleteError.message}`);
 			  setPendingRecycleBinExpenseIds(previous => { const next = new Set(previous); next.delete(record.id); return next; });
 			  } finally { setIsLoading(false); }
 			});
-		  }, [db, currentCollectionId, isReadOnly, openConfirmModal, closeConfirmModal, setError, setIsLoading]);
+		  }, [db, currentCollectionId, isReadOnly, isOnline, openConfirmModal, closeConfirmModal, setError, setIsLoading]);
 
           // --- 7. 成員管理 ---
           const saveMembers = useCallback(async (newMemberList) => {

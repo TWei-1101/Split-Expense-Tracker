@@ -1,17 +1,18 @@
+import { isGroupImagePath } from './expense-images.js';
+
 export function canDeleteGroupBook({ userId, groupOwner, isGuest }) {
   return Boolean(userId && !isGuest && groupOwner && userId === groupOwner);
 }
 
 export function createGroupDeletionPlan({ appId, groupId, expenses = [] }) {
   const groupPath = `artifacts/${appId}/groups/${groupId}`;
-  const imagePrefix = `${groupPath}/expense-images/`;
   const safeImagePaths = [];
   const unmanagedImagePaths = [];
 
   expenses.forEach((expense) => {
     const imagePath = expense?.imagePath;
     if (!imagePath) return;
-    if (imagePath.startsWith(imagePrefix)) safeImagePaths.push(imagePath);
+    if (isGroupImagePath(imagePath, appId, groupId)) safeImagePaths.push(imagePath);
     else unmanagedImagePaths.push(imagePath);
   });
 
@@ -19,6 +20,8 @@ export function createGroupDeletionPlan({ appId, groupId, expenses = [] }) {
     groupPath,
     expensesPath: `${groupPath}/expenses`,
     membersPath: `${groupPath}/settings/members`,
+    recycleBinPath: `${groupPath}/expense-recycle-bin`,
+    settingsPath: `${groupPath}/settings`,
     safeImagePaths: [...new Set(safeImagePaths)],
     unmanagedImagePaths: [...new Set(unmanagedImagePaths)],
   };

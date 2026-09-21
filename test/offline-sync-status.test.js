@@ -42,7 +42,7 @@ test('places the offline sync status beside the balance summary heading', async 
 test('automatically closes the expense form after an offline save', async () => {
   const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
   assert.match(source, /const writePromise = isEditing/);
-  assert.match(source, /writePromise\.catch\([\s\S]*?onExpenseSaved\?\.\(\{ queued: !isOnline, isEditing \}\);\s*onClose\(\);/);
+  assert.match(source, /finalizeExpenseImageWrite\(\{[\s\S]*?write: writePromise[\s\S]*?onExpenseSaved\?\.\(\{ queued: !isOnline, isEditing \}\);\s*onClose\(\);/);
   assert.doesNotMatch(source, /await writePromise/);
   assert.doesNotMatch(source, /offlineSaveMessage/);
 });
