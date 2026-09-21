@@ -1,13 +1,66 @@
 import sys
 from pathlib import Path
 import unittest
+import io
+import json
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from parser import parse_receipt_text
 
 
+def mock_structured_response(payload):
+    return io.BytesIO(json.dumps({
+        "choices": [{"message": {"content": json.dumps(payload, ensure_ascii=False)}}],
+    }).encode("utf-8"))
+
+
 class ReceiptParserTests(unittest.TestCase):
+    def setUp(self):
+        # Unit tests must never use credentials or contact a live model server.
+        self.key_patch = patch('parser._get_minimax_key', return_value=None)
+        self.key_patch.start()
+        self.addCleanup(self.key_patch.stop)
+        self.network_patch = patch('urllib.request.urlopen', side_effect=AssertionError('Unexpected network request'))
+        self.network_patch.start()
+        self.addCleanup(self.network_patch.stop)
+
+    def test_single_item_does_not_override_tax_discount_or_partial_total(self):
+        for total in (1100, 900, 2000):
+            with self.subTest(total=total), patch('parser.extract_structured_receipt', return_value={
+                'originalAmount': total,
+                'items': [{'name': '商品', 'originalName': 'Product', 'amount': 1000, 'quantity': 1}],
+            }):
+                result = parse_receipt_text(f'SHOP\nProduct 1000\n合計 JPY {total}', extract_items=True)
+                self.assertEqual(result['originalAmount'], total)
+
+    def test_fuel_liters_are_added_once_without_error(self):
+        for name in ('汽油', '汽油 (10.00L)'):
+            with self.subTest(name=name), patch('parser.extract_structured_receipt', return_value={
+                'items': [{'name': name, 'originalName': 'レギュラー', 'amount': 1000, 'quantity': 1}],
+            }):
+                result = parse_receipt_text('ENEOS\n10.00L\n合計 JPY 1000', extract_items=True)
+                self.assertEqual(result['items'][0]['name'], '汽油 (10.00L)')
+                self.assertEqual(result['originalAmount'], 1000)
+
+    def test_balm_cosmetics_are_not_rewritten_as_cake(self):
+        for original, name in [('クレンジングバーム', '卸妝膏'), ('ヘアバーム', '直髮造型膏')]:
+            with self.subTest(original=original), patch('urllib.request.urlopen', return_value=mock_structured_response({
+                'category': 'other',
+                'items': [{'name': name, 'originalName': original, 'amount': 1800, 'quantity': 1}],
+            })):
+                result = parse_receipt_text(f'マツモトキヨシ\n{original} 1800\n合計 JPY 1800', extract_items=True)
+                self.assertEqual(result['items'][0]['name'], name)
+                self.assertEqual(result['category'], 'other')
+
+    def test_generic_baumkuchen_does_not_invent_a_brand(self):
+        with patch('urllib.request.urlopen', return_value=mock_structured_response({
+            'items': [{'name': 'バームクーヘン', 'originalName': 'バームクーヘン', 'amount': 500}],
+        })):
+            result = parse_receipt_text('SHOP\nバームクーヘン 500\n合計 JPY 500', extract_items=True)
+            self.assertEqual(result['items'][0]['name'], '年輪蛋糕')
+
     def test_parses_taiwan_receipt_total_date_currency_and_merchant(self):
         result = parse_receipt_text("""全家便利商店
 發票日期 2026/08/12
@@ -637,7 +690,11 @@ FD 243 WANG/TINGWEI
 合計 1:590
 クレジット ，500
 """
-        result = parse_receipt_text(text, extract_items=True)
+        with patch('urllib.request.urlopen', return_value=mock_structured_response({
+            'originalAmount': 1500,
+            'items': [{'name': '直髮膏', 'originalName': 'ストレートバームやわらか芽1個', 'amount': 1500, 'quantity': 1}],
+        })):
+            result = parse_receipt_text(text, extract_items=True)
         self.assertEqual(result["originalAmount"], 1500)
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-20T13:37")
