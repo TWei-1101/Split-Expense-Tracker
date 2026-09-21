@@ -1,6 +1,6 @@
 # Local receipt OCR service
 
-`POST /v1/receipts:parse` accepts a raw JPEG, PNG, or WebP body (maximum 8 MB) and returns `description`, `originalAmount`, `currency`, and `occurredAt`.
+`POST /v1/receipts:parse` accepts a raw JPEG, PNG, or WebP body (maximum 25 MB) and returns `description`, `originalAmount`, `currency`, `occurredAt`, and `items`.
 It accepts requests only from the two expense domains and requires a valid Firebase ID token in `Authorization: Bearer <currentUser.getIdToken()>`.
 
 ## Install and run on the Mac mini
@@ -16,3 +16,13 @@ curl http://127.0.0.1:8788/healthz
 The service deliberately binds to `127.0.0.1`; expose it only through an authenticated private tunnel or reverse proxy. Do not add the service-account JSON to this repository. Copy `com.example.receipt-ocr.plist.example` to `~/Library/LaunchAgents/com.example.receipt-ocr.plist`, replace `REPLACE_ME`, then run `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.receipt-ocr.plist`.
 
 RapidOCR is local. The image is written to a temporary file only while OCR runs and is deleted before the HTTP response.
+
+## Recognition and review
+
+- Apple Vision is preferred; RapidOCR is the fallback. Both keep word boxes and confidence in the response's `ocr` object. Apple coordinates are normalized; RapidOCR coordinates are pixels. Rows are grouped relative to text height to avoid merging adjacent lines on tall receipts.
+- The extraction model receives ordered original text, not the image, and extracts original item names, quantities and line subtotals. Translation is a separate name-only request; it cannot change the numeric fields. Existing known-product translations remain available. Translation failure retains the original name.
+- `warnings` and `needsReview` report missing items, low OCR confidence (threshold 0.8), conflicting totals and unfinished kana translation. The frontend shows these messages before saving. Confidence scores are engine-specific heuristics, not calibrated accuracy percentages.
+- Printed totals are not overwritten to match item sums or AI totals. Tax/discount/service-charge differences require manual confirmation. A missing total may be provisionally inferred, with a review warning. OCR evidence is not persisted as an expense by the frontend.
+- Text is still sent to the configured MiniMax service, or local oMLX fallback. No new image-model service is used. Separate translation can add latency and token usage.
+
+Run offline regression tests with `python -m unittest discover -s services/receipt_ocr/tests`. Tests use synthetic geometry, receipt text and mocked model responses; they do not establish an accuracy improvement on actual photographs. Validate deployment on a labeled set of real receipts before claiming an accuracy percentage. Restart the Mac mini OCR service after updating its checkout.

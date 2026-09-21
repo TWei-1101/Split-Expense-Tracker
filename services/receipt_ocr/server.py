@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from tempfile import NamedTemporaryFile
 
 from parser import parse_receipt_text
+from receipt_quality import build_document
 
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
 DEFAULT_ORIGINS = frozenset({"https://expense.771101.xyz", "https://expense-test.771101.xyz"})
@@ -49,7 +50,7 @@ def verify_firebase_id_token(authorization: str | None) -> dict:
     return auth.verify_id_token(token, check_revoked=True)
 
 
-def extract_text_apple_vision(image_path: str) -> str | None:
+def extract_text_apple_vision(image_path: str) -> dict | None:
     enhanced_path = image_path + ".enh.jpg"
     try:
         import Vision
@@ -84,6 +85,7 @@ def extract_text_apple_vision(image_path: str) -> str | None:
                     y_top = 1.0 - (bbox.origin.y + bbox.size.height)
                     boxes.append({
                         "text": cand[0].string().strip(),
+                        "confidence": float(cand[0].confidence()),
                         "y": y_top,
                         "x": bbox.origin.x,
                         "h": bbox.size.height,
@@ -94,31 +96,7 @@ def extract_text_apple_vision(image_path: str) -> str | None:
             if not boxes:
                 return None
 
-            boxes.sort(key=lambda b: b["y_center"])
-            lines = []
-
-            for b in boxes:
-                matched_line = None
-                for line in lines:
-                    avg_center = sum(x["y_center"] for x in line) / len(line)
-                    if abs(b["y_center"] - avg_center) < 0.013:
-                        matched_line = line
-                        break
-                if matched_line is not None:
-                    matched_line.append(b)
-                else:
-                    lines.append([b])
-
-            sorted_lines = []
-            for line in lines:
-                line.sort(key=lambda x: x["x"])
-                avg_y = sum(x["y_center"] for x in line) / len(line)
-                text = " ".join(x["text"] for x in line)
-                sorted_lines.append((avg_y, text))
-
-            sorted_lines.sort(key=lambda x: x[0])
-            if len(sorted_lines) >= 3:
-                return "\n".join(t for _, t in sorted_lines)
+            return build_document(boxes, "apple-vision")
     except Exception as e:
         print(f"Apple Vision OCR error: {e}", flush=True)
     finally:
@@ -130,7 +108,7 @@ def extract_text_apple_vision(image_path: str) -> str | None:
     return None
 
 
-def extract_text(image_path: str) -> str:
+def extract_text(image_path: str) -> dict:
     try:
         from PIL import Image, ImageOps
         with Image.open(image_path) as img:
@@ -151,7 +129,15 @@ def extract_text(image_path: str) -> str:
     except ImportError as error:
         raise RuntimeError("rapidocr_not_installed") from error
     result, _elapsed = RapidOCR()(image_path)
-    return "\n".join(str(row[1]) for row in (result or []) if len(row) > 1 and row[1])
+    boxes = []
+    for row in result or []:
+        if len(row) < 3 or not row[1]:
+            continue
+        xs = [float(point[0]) for point in row[0]]
+        ys = [float(point[1]) for point in row[0]]
+        boxes.append({"text": str(row[1]), "confidence": float(row[2]),
+                      "x": min(xs), "y": min(ys), "w": max(xs) - min(xs), "h": max(ys) - min(ys)})
+    return build_document(boxes, "rapidocr")
 
 
 def make_handler(token_verifier=verify_firebase_id_token, ocr=extract_text):
@@ -224,9 +210,16 @@ def make_handler(token_verifier=verify_firebase_id_token, ocr=extract_text):
                 with NamedTemporaryFile(suffix=SUFFIXES[mime_type]) as image_file:
                     image_file.write(image)
                     image_file.flush()
-                    ocr_text = ocr(image_file.name)
+                    document = ocr(image_file.name)
+                    ocr_text = document["text"] if isinstance(document, dict) else document
                     fields = parse_receipt_text(ocr_text, extract_items=True)
-                    print(f"[{self.date_time_string()}] Parsed receipt: {fields}", flush=True)
+                    if isinstance(document, dict):
+                        fields["ocr"] = document
+                        low_confidence = any(box.get("confidence", 1) < 0.8
+                                             for line in document.get("lines", []) for box in line["boxes"])
+                        if low_confidence:
+                            fields.setdefault("warnings", []).append("部分收據文字辨識信心偏低，請對照原圖確認品名與數字。")
+                    fields["needsReview"] = bool(fields.get("warnings"))
             except RuntimeError as error:
                 self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": str(error)})
                 return

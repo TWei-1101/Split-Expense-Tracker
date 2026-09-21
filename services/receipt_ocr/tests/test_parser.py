@@ -695,7 +695,11 @@ FD 243 WANG/TINGWEI
             'items': [{'name': '直髮膏', 'originalName': 'ストレートバームやわらか芽1個', 'amount': 1500, 'quantity': 1}],
         })):
             result = parse_receipt_text(text, extract_items=True)
-        self.assertEqual(result["originalAmount"], 1500)
+        # Printed OCR total conflicts with the model: retain it and ask the
+        # user to review, never silently correct 1590 to 1500.
+        self.assertEqual(result["originalAmount"], 1590)
+        self.assertTrue(result['needsReview'])
+        self.assertTrue(any('AI 判讀總額' in warning for warning in result['warnings']))
         self.assertEqual(result["currency"], "JPY")
         self.assertEqual(result["occurredAt"], "2026-09-20T13:37")
         self.assertEqual(result["category"], "food")

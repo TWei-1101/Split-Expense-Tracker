@@ -103,6 +103,15 @@ export function normalizeReceiptOcrResult(result = {}) {
   return normalized;
 }
 
+export function receiptOcrReviewMessage(result = {}) {
+  const warnings = Array.isArray(result.warnings)
+    ? result.warnings.filter(value => typeof value === 'string' && value.trim()).slice(0, 10)
+    : [];
+  return warnings.length
+    ? `⚠️ 辨識結果需要確認：${warnings.join('；')}`
+    : '已預填辨識結果，請確認後再儲存。';
+}
+
 // Keep form state in the same shape produced by a native number input: its
 // value is a string while the user is editing.  In particular, do not rely on
 // React coercing a numeric OCR value for a controlled <input type="number">.

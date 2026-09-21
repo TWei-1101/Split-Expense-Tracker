@@ -77,7 +77,7 @@ import {
   sortRecycleBinRecordsNewestFirst,
 } from './lib/expense-recycle-bin.js';
 import { shouldTriggerSwipeDelete } from './lib/swipe-delete.js';
-import { normalizeReceiptOcrResult, mergeReceiptOcrIntoExpense } from './lib/receipt-ocr.js';
+import { normalizeReceiptOcrResult, mergeReceiptOcrIntoExpense, receiptOcrReviewMessage } from './lib/receipt-ocr.js';
 import { buildExpenseMemberList } from './lib/expense-members.js';
 import { splitExpenseItems } from './lib/expense-item-split.js';
 import { computeItemSplits, isSettlement, migrateExpenseIdentity, resolveExpenseConversion, validatePayers, getSearchSpendingSummary, matchesSearchKeyword } from './lib/expense-math.js';
@@ -1183,7 +1183,7 @@ async function _getStorage() {
                             : previous.category,
                         };
                     });
-                    setReceiptOcrStatus('已預填辨識結果，請確認後再儲存。');
+                    setReceiptOcrStatus(receiptOcrReviewMessage(payload));
                 } catch (error) {
                     setReceiptOcrDiagnostic(null);
                     setReceiptOcrStatus(`收據未能自動辨識：${error.message}`);
@@ -1723,7 +1723,7 @@ async function _getStorage() {
                                 ✂️ 全部依數量拆開
                               </button>
                             ) : (
-                              <span className="text-[11px] text-gray-500">已自動翻譯中文</span>
+                              <span className="text-[11px] text-gray-500">請核對品名與金額</span>
                             )}
                           </div>
                           <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
