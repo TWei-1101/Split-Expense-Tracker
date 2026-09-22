@@ -31,6 +31,10 @@
           if (!cached || typeof cached.uid !== 'string' || !cached.uid
             || typeof cached.ownShortCode !== 'string' || !cached.ownShortCode) return;
 
+          // Leave the entry URL untouched so Auth can restore the selected book.
+          var lastBook = window.localStorage.getItem('expense:last-group-book:' + cached.uid);
+          if (lastBook && lastBook.indexOf('/') === -1 && lastBook !== cached.uid) return;
+
           url.pathname = '/g/' + encodeURIComponent(cached.ownShortCode);
           window.history.replaceState(null, '', url.toString());
         } catch (error) {

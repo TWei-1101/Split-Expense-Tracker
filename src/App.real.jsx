@@ -82,7 +82,7 @@ import { shouldTriggerSwipeDelete } from './lib/swipe-delete.js';
 import { normalizeReceiptOcrResult, mergeReceiptOcrIntoExpense, receiptOcrReviewMessage } from './lib/receipt-ocr.js';
 import { buildExpenseMemberList } from './lib/expense-members.js';
 import { commitSettlementOnce } from './lib/settlement-write.js';
-import { rememberGroupBook, restoreLastGroupBook, manualBookUrl } from './lib/last-group-book.js';
+import { readLastGroupBook, rememberGroupBook, restoreLastGroupBook, manualBookUrl } from './lib/last-group-book.js';
 import { createOcrRequest, ocrResponseError } from './lib/ocr-request.js';
 import { createExpenseImagePath, isGroupImagePath, deleteImageIfPresent, finalizeExpenseImageWrite, deleteRecordsWithImages } from './lib/expense-images.js';
 import { splitExpenseItems } from './lib/expense-item-split.js';
@@ -241,6 +241,11 @@ function canonicalizeCachedOwnBookUrl() {
             : null;
     }
     if (!isBareRootRequest) return null;
+
+    // Do not turn a normal launch into an explicit own-book link before Auth
+    // has a chance to restore the last manually selected book.
+    const lastBook = readLastGroupBook(cachedSignedInUser.uid);
+    if (lastBook && lastBook !== cachedSignedInUser.uid) return null;
 
     const ownBookUrl = new URL(url.toString());
     ownBookUrl.pathname = `/g/${cachedSignedInUser.ownShortCode}`;
