@@ -59,6 +59,33 @@ test('startup retains own-book bootstrap for default, absent or invalid preferen
   }
 });
 
+test('neither cached-session nor Auth bootstrap paints the default before restoring a saved book', () => {
+  const cachedStart = app.lastIndexOf('const initialUrl = new URL(window.location.href);', app.indexOf('const cachedOwnBookMatchesUrl'));
+  assert.ok(cachedStart >= 0);
+  const cachedPhase = app.slice(cachedStart, app.indexOf('let unsubscribe = () => {};', cachedStart));
+  const authStart = app.indexOf('const initialUrl = new URL(window.location.href);', app.indexOf('unsubscribe = onAuthStateChanged'));
+  const authPhase = app.slice(authStart, app.indexOf('// 1.', authStart));
+  for (const saved of ['trip', 'A', null]) {
+    const storage = memoryStorage();
+    if (saved) rememberGroupBook('A', saved, storage);
+    const updates = [];
+    const context = {
+      URL, window: { location: { href: 'https://example.test/?tg=1#data' } },
+      user: { uid: 'A' }, isAnon: false,
+      readCachedSignedInUser: () => ({ uid: 'A', ownShortCode: 'abc' }),
+      readLastGroupBook: uid => readLastGroupBook(uid, storage),
+      setUserId() {}, setIsGuest() {},
+      setCurrentCollectionId: updater => updates.push(['collection', updater(null)]),
+      setAuthReady: ready => updates.push(['ready', ready]),
+    };
+    for (const phase of [cachedPhase, authPhase]) {
+      updates.length = 0;
+      runInNewContext(phase, { ...context });
+      assert.deepEqual(updates, saved === 'trip' ? [] : [['collection', 'A'], ['ready', true]]);
+    }
+  }
+});
+
 test('last manual book selection persists independently for each account', async () => {
   const storage = memoryStorage();
   rememberGroupBook('A', 'trip1', storage);

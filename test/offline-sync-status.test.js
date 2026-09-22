@@ -59,7 +59,7 @@ test('registers the service worker immediately so the first online launch primes
 
 test('does not block a cached signed-in user from opening their own book offline', async () => {
   const source = await readFile(new URL('../src/App.real.jsx', import.meta.url), 'utf8');
-  assert.match(source, /const hasExplicitSharedBook = initialUrl\.pathname\.includes\('\/g\/'\)[\s\S]*?if \(!hasExplicitSharedBook\) \{\s*setCurrentCollectionId\(\(prev\) => prev \|\| user\.uid\);\s*setAuthReady\(true\);/);
+  assert.match(source, /const hasExplicitSharedBook = initialUrl\.pathname\.includes\('\/g\/'\)[\s\S]*?if \(!hasExplicitSharedBook && \(!lastBook \|\| lastBook === user\.uid\)\) \{\s*setCurrentCollectionId\(\(prev\) => prev \|\| user\.uid\);\s*setAuthReady\(true\);/);
 });
 
 test('boots a previously verified account into its own book before Safari finishes offline Auth restoration', async () => {

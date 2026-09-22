@@ -2747,9 +2747,11 @@ async function removeReceiptImage(path) {
               // rendering that old shared book.
               const requestedOwnBook = requestedShortCode
                 && requestedShortCode === cachedSignedInUser?.ownShortCode;
+              const cachedLastBook = readLastGroupBook(cachedSignedInUser?.uid);
               const cachedOwnBookMatchesUrl = cachedSignedInUser && (
                 !requestedShortCode || requestedOwnBook
-              );
+              ) && !initialUrl.searchParams.has('shareId')
+                && (requestedOwnBook || !cachedLastBook || cachedLastBook === cachedSignedInUser.uid);
               if (cachedOwnBookMatchesUrl) {
                 setUserId(cachedSignedInUser.uid);
                 setIsGuest(false);
@@ -2782,7 +2784,10 @@ async function removeReceiptImage(path) {
                     // disk while its Firestore reads remain pending offline.
                     const initialUrl = new URL(window.location.href);
                     const hasExplicitSharedBook = initialUrl.pathname.includes('/g/') || initialUrl.searchParams.has('shareId');
-                    if (!hasExplicitSharedBook) {
+                    const lastBook = !isAnon ? readLastGroupBook(user.uid) : null;
+                    // Keep the loading screen until the remembered book is resolved.
+                    // Publishing the default collection here would briefly paint it.
+                    if (!hasExplicitSharedBook && (!lastBook || lastBook === user.uid)) {
                       setCurrentCollectionId((prev) => prev || user.uid);
                       setAuthReady(true);
                     }
