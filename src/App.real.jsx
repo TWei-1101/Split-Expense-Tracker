@@ -21,6 +21,7 @@ import {
   setDoc,
   getDoc,
   getDocFromServer,
+  getDocFromCache,
   getDocs,
   getDocsFromServer,
   getDocsFromCache,
@@ -81,6 +82,7 @@ import { shouldTriggerSwipeDelete } from './lib/swipe-delete.js';
 import { normalizeReceiptOcrResult, mergeReceiptOcrIntoExpense, receiptOcrReviewMessage } from './lib/receipt-ocr.js';
 import { buildExpenseMemberList } from './lib/expense-members.js';
 import { commitSettlementOnce } from './lib/settlement-write.js';
+import { rememberGroupBook, restoreLastGroupBook, manualBookUrl } from './lib/last-group-book.js';
 import { createOcrRequest, ocrResponseError } from './lib/ocr-request.js';
 import { createExpenseImagePath, isGroupImagePath, deleteImageIfPresent, finalizeExpenseImageWrite, deleteRecordsWithImages } from './lib/expense-images.js';
 import { splitExpenseItems } from './lib/expense-item-split.js';
@@ -2851,6 +2853,18 @@ async function removeReceiptImage(path) {
                       // 清掉舊版 query，避免之後重複解析
                       window.history.replaceState(null, '', url.pathname);
                     }
+
+                    if (!isAnon && !shortCodeFromPath && !shareId) {
+                      targetCollectionId = await restoreLastGroupBook({
+                        uid: user.uid,
+                        readGroup: async groupId => {
+                          const groupRef = doc(_db, `artifacts/${appId}/groups/${groupId}`);
+                          const snapshot = navigator.onLine ? await getDoc(groupRef) : await getDocFromCache(groupRef);
+                          return snapshot.exists() ? snapshot.data() : null;
+                        },
+                      });
+                      if (targetCollectionId !== user.uid) targetShortCode = null;
+                    }
                     
                     // NEW: 只有非匿名用戶才確保預設群組存在
                     if (!isAnon && targetCollectionId === user.uid) {
@@ -3080,7 +3094,10 @@ async function removeReceiptImage(path) {
 		};
 
 		const switchGroupBook = useCallback(async (nextGroupId) => {
-		  if (!nextGroupId || nextGroupId === currentCollectionId || !db || isGuest) return;
+		  if (!nextGroupId || !db || isGuest) return;
+          rememberGroupBook(userId, nextGroupId);
+          window.history.replaceState(null, '', manualBookUrl(window.location.href));
+          if (nextGroupId === currentCollectionId) return;
 		  setError(null);
 		  setGroupOwner(null);
 		  setGroupMembers([]);
@@ -3117,6 +3134,8 @@ async function removeReceiptImage(path) {
 		    setGroupOwner(null);
 		    setGroupMembers([]);
 		    setCurrentCollectionId(groupRef.id);
+            rememberGroupBook(userId, groupRef.id);
+            window.history.replaceState(null, '', manualBookUrl(window.location.href));
 		    setCurrentCollectionShortCode(null);
 		    setToastMessage(`已建立「${groupBook.name}」`);
 		  } catch (createError) {
@@ -3185,6 +3204,8 @@ async function removeReceiptImage(path) {
 		          setGroupOwner(null);
 		          setGroupMembers([]);
 		          setCurrentCollectionId(nextBook.id);
+                  rememberGroupBook(userId, nextBook.id);
+                  window.history.replaceState(null, '', manualBookUrl(window.location.href));
 		          setCurrentCollectionShortCode(null);
 		          setIsGroupBookMenuOpen(false);
 		          setToastMessage('帳本已刪除。');
